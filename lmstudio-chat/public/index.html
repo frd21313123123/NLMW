@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>LM Studio Chat Studio</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app" id="app">
+      <header class="appbar" id="appbar">
+        <div class="appbar__row" id="appbarChats">
+          <div class="search">
+            <span class="search__icon" aria-hidden="true">S</span>
+            <input class="search__input" id="chatSearch" type="search" placeholder="Поиск" />
+          </div>
+        </div>
+
+        <div class="appbar__row" id="appbarChat" hidden>
+          <button class="iconBtn" id="btnBackToChats" type="button" aria-label="Назад">←</button>
+          <button class="chatTitle" id="btnOpenCharacters" type="button" aria-label="Персонаж">
+            <img class="avatar" id="charAvatar" alt="" />
+            <span class="chatTitle__text">
+              <span class="chatTitle__name" id="charName"></span>
+              <span class="chatTitle__meta" id="charMeta"></span>
+            </span>
+          </button>
+          <div class="appbar__right">
+            <select class="model__select model__select--compact" id="modelSelect" aria-label="Модель"></select>
+          </div>
+        </div>
+
+        <div class="appbar__row" id="appbarProfile" hidden>
+          <div class="appbar__title">Профиль</div>
+          <div class="appbar__right">
+            <select class="model__select model__select--compact" id="modelSelectProfile" aria-label="Модель"></select>
+          </div>
+        </div>
+
+        <div class="appbar__status" id="lmStatus" aria-live="polite"></div>
+      </header>
+
+      <main class="stage">
+        <section class="view view--active" id="viewChats">
+          <div class="chatList" id="chatList"></div>
+        </section>
+
+        <section class="view" id="viewChat">
+          <div class="chat" id="chatPanel">
+            <div class="chat__messages" id="messages" role="log" aria-live="polite"></div>
+
+            <form class="chat__composer" id="composerForm" autocomplete="off">
+              <div class="composer__row">
+                <img class="avatar avatar--me" id="userAvatar" alt="" />
+                <textarea class="composer__input" id="userInput" rows="1" placeholder="Сообщение…"></textarea>
+                <button class="btn btn--accent" id="sendBtn" type="submit" aria-label="Отправить">&gt;</button>
+              </div>
+              <div class="composer__hint" id="composerHint"></div>
+            </form>
+          </div>
+        </section>
+
+        <section class="view" id="viewProfile">
+          <div class="panel panel--flat">
+            <div class="panel__body">
+              <div class="profile__card">
+                <div class="profile__avatarRow">
+                  <img class="avatar avatar--xl" id="userAvatarPreview" alt="" />
+                  <div class="profile__avatarControls">
+                    <label class="field">
+                      <span class="field__label">Аватар (файл)</span>
+                      <input class="field__input" id="userAvatarFile" type="file" accept="image/*" />
+                    </label>
+                    <label class="field">
+                      <span class="field__label">Аватар (URL)</span>
+                      <input class="field__input" id="userAvatarUrl" type="url" placeholder="https://…" />
+                    </label>
+                  </div>
+                </div>
+
+                <label class="field">
+                  <span class="field__label">Имя</span>
+                  <input class="field__input" id="userName" type="text" placeholder="Ваше имя" />
+                </label>
+
+                <label class="field">
+                  <span class="field__label">Пол</span>
+                  <select class="field__input" id="userGender">
+                    <option value="unspecified">Не указывать</option>
+                    <option value="female">Женский</option>
+                    <option value="male">Мужской</option>
+                    <option value="other">Другое</option>
+                  </select>
+                </label>
+
+                <button class="btn" id="btnSaveProfile" type="button">Сохранить профиль</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <nav class="tabbar" aria-label="Навигация">
+        <button class="tab" id="tabChats" type="button" aria-label="Чаты">
+          <span class="tab__icon" aria-hidden="true">⌂</span>
+        </button>
+        <button class="tab" id="tabChat" type="button" aria-label="Чат">
+          <span class="tab__icon" aria-hidden="true">&lt;&gt;</span>
+        </button>
+        <button class="tab tab--plus" id="tabPlus" type="button" aria-label="Персонажи">
+          <span class="tab__icon" aria-hidden="true">+</span>
+        </button>
+        <button class="tab" id="tabProfile" type="button" aria-label="Профиль">
+          <span class="tab__icon" aria-hidden="true">@</span>
+        </button>
+      </nav>
+
+      <div class="modal" id="charactersModal" hidden>
+        <div class="modal__overlay" data-close="1"></div>
+        <div class="modal__window" role="dialog" aria-modal="true" aria-label="Персонажи">
+          <div class="modal__header">
+            <div class="modal__title">Персонажи</div>
+            <div class="modal__headerActions">
+              <button class="btn btn--ghost" id="btnNewCharacter" type="button">Новый</button>
+              <button class="btn" data-close="1" type="button">Закрыть</button>
+            </div>
+          </div>
+
+          <div class="modal__content">
+            <div class="charList" id="charList"></div>
+
+            <div class="charEditor">
+              <form class="charForm" id="charForm">
+                <div class="charEditor__top">
+                  <div class="charEditor__topLeft">
+                    <img class="avatar avatar--xl" id="charAvatarPreview" alt="" />
+                  </div>
+                  <div class="charEditor__topRight">
+                    <label class="field">
+                      <span class="field__label">Имя персонажа</span>
+                      <input class="field__input" id="charNameInput" type="text" placeholder="Например: Алиса" />
+                    </label>
+                    <label class="field">
+                      <span class="field__label">Пол персонажа</span>
+                      <select class="field__input" id="charGenderInput">
+                        <option value="unspecified">Не указывать</option>
+                        <option value="female">Женский</option>
+                        <option value="male">Мужской</option>
+                        <option value="other">Другое</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="grid2">
+                  <label class="field">
+                    <span class="field__label">Фото (файл)</span>
+                    <input class="field__input" id="charAvatarFile" type="file" accept="image/*" />
+                  </label>
+                  <label class="field">
+                    <span class="field__label">Фото (URL)</span>
+                    <input class="field__input" id="charAvatarUrl" type="url" placeholder="https://…" />
+                  </label>
+                  <label class="field">
+                    <span class="field__label">Задний фон чата (файл)</span>
+                    <input class="field__input" id="charBgFile" type="file" accept="image/*" />
+                  </label>
+                  <label class="field">
+                    <span class="field__label">Задний фон чата (URL)</span>
+                    <input class="field__input" id="charBgUrl" type="url" placeholder="https://…" />
+                  </label>
+                </div>
+
+                <label class="field">
+                  <span class="field__label">Описание (одежда / внешность)</span>
+                  <textarea class="field__input field__input--area" id="charOutfitInput" rows="3" placeholder="В чем он одет, детали внешности…"></textarea>
+                </label>
+
+                <label class="field">
+                  <span class="field__label">Обстановка (сцена / место)</span>
+                  <textarea class="field__input field__input--area" id="charSettingInput" rows="3" placeholder="Где происходит диалог, предметы вокруг…"></textarea>
+                </label>
+
+                <label class="field">
+                  <span class="field__label">Фон для ИИ (коротко)</span>
+                  <input class="field__input" id="charBgHintInput" type="text" placeholder="Например: ночной город, дождь, неон" />
+                </label>
+
+                <label class="field">
+                  <span class="field__label">Предыстория (видна нейросети)</span>
+                  <textarea class="field__input field__input--area" id="charBackstoryInput" rows="5" placeholder="Кто он, что пережил, мотивация, важные детали…"></textarea>
+                </label>
+
+                <label class="field">
+                  <span class="field__label">Стиль диалога</span>
+                  <select class="field__input" id="charStyleInput"></select>
+                </label>
+
+                <label class="field">
+                  <span class="field__label">Начальное сообщение (с чего начинается чат)</span>
+                  <textarea class="field__input field__input--area" id="charInitialMessageInput" rows="3" placeholder="Первое сообщение персонажа…"></textarea>
+                </label>
+
+                <div class="row row--actions">
+                  <button class="btn btn--accent" id="btnSaveCharacter" type="submit">Сохранить</button>
+                  <button class="btn btn--ghost" id="btnUseCharacter" type="button">Использовать в чате</button>
+                  <button class="btn btn--danger" id="btnDeleteCharacter" type="button">Удалить</button>
+                </div>
+
+                <div class="smallNote" id="charFormNote"></div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sheet" id="msgActions" hidden>
+        <div class="sheet__overlay" data-close="1"></div>
+        <div class="sheet__panel" role="dialog" aria-modal="true" aria-label="Действия с сообщением">
+          <div class="sheet__title" id="msgActionsTitle">Сообщение</div>
+          <div class="sheet__buttons">
+            <button class="btn" id="btnMsgEdit" type="button">Редактировать</button>
+            <button class="btn btn--danger" id="btnMsgDelete" type="button">Удалить</button>
+            <button class="btn btn--ghost" data-close="1" type="button">Отмена</button>
+          </div>
+          <div class="sheet__note">Подсказка: зажмите сообщение, чтобы открыть это меню.</div>
+        </div>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
