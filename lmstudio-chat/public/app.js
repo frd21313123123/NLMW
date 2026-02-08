@@ -186,12 +186,16 @@
       return tb - ta;
     });
 
+    let matchCount = 0;
+
     for (const c of chars) {
       const last = lastNonPendingMessage(c.id);
       const preview = last?.content || c.initialMessage || "";
       const time = last?.ts || 0;
       const searchable = `${c.name || ""} ${preview}`.toLowerCase();
       if (q && !searchable.includes(q)) continue;
+
+      matchCount++;
 
       const item = document.createElement("div");
       item.className = "chatItem";
@@ -202,13 +206,19 @@
       setImg(av, c.avatar, c.name);
 
       const mid = document.createElement("div");
+      mid.className = "chatItem__mid";
+
+      const nameRow = document.createElement("div");
+      nameRow.className = "chatItem__nameRow";
       const name = document.createElement("div");
       name.className = "chatItem__name";
       name.textContent = c.name || "(без имени)";
+      nameRow.appendChild(name);
+
       const prev = document.createElement("div");
       prev.className = "chatItem__preview";
       prev.textContent = String(preview || "").replace(/\s+/g, " ").trim();
-      mid.appendChild(name);
+      mid.appendChild(nameRow);
       mid.appendChild(prev);
 
       const right = document.createElement("div");
@@ -229,6 +239,13 @@
       });
 
       el.appendChild(item);
+    }
+
+    if (matchCount === 0) {
+      const empty = document.createElement("div");
+      empty.className = "chatList__empty";
+      empty.textContent = q ? "Ничего не найдено" : "Нет чатов. Нажмите +, чтобы создать персонажа.";
+      el.appendChild(empty);
     }
   }
 
@@ -350,6 +367,15 @@
       const sameDay =
         d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
       if (sameDay) return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+
+      const yesterday = new Date(now);
+      yesterday.setDate(yesterday.getDate() - 1);
+      const isYesterday =
+        d.getFullYear() === yesterday.getFullYear() &&
+        d.getMonth() === yesterday.getMonth() &&
+        d.getDate() === yesterday.getDate();
+      if (isYesterday) return "Вчера";
+
       return d.toLocaleDateString("ru-RU", { year: "numeric", month: "2-digit", day: "2-digit" });
     } catch {
       return "";
@@ -388,14 +414,8 @@
       .replace(/[&<>"']/g, "")
       || "?";
     const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'>
-      <defs>
-        <linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
-          <stop offset='0' stop-color='rgba(246,176,30,0.35)'/>
-          <stop offset='1' stop-color='rgba(109,225,193,0.30)'/>
-        </linearGradient>
-      </defs>
-      <rect width='80' height='80' rx='40' fill='url(#g)' />
-      <text x='50%' y='54%' text-anchor='middle' font-size='26' fill='rgba(255,255,255,0.90)' font-family='Instrument Sans, sans-serif'>${initials}</text>
+      <rect width='80' height='80' rx='40' fill='%231a1a1a' />
+      <text x='50%' y='54%' text-anchor='middle' font-size='26' fill='%23888' font-family='Inter, sans-serif' dominant-baseline='middle'>${initials}</text>
     </svg>`;
     el.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
     el.alt = "";
@@ -819,10 +839,11 @@
 
     saveJson(STORAGE_KEYS.profile, state.profile);
     renderHeader();
-    $("#composerHint").textContent = "Профиль сохранен";
+    setStatus("Профиль сохранен");
     setTimeout(() => {
-      if ($("#composerHint").textContent === "Профиль сохранен") $("#composerHint").textContent = "";
-    }, 1200);
+      const el = $("#lmStatus");
+      if (el && el.textContent === "Профиль сохранен") el.textContent = "";
+    }, 1500);
   }
 
   function fillProfileUI() {
@@ -1483,6 +1504,7 @@
     const tabChats = $("#tabChats");
     const tabChat = $("#tabChat");
     const tabPlus = $("#tabPlus");
+    const tabExplore = $("#tabExplore");
     const tabProfile = $("#tabProfile");
 
     if (tabChats) {
@@ -1502,6 +1524,7 @@
     }
 
     if (tabPlus) tabPlus.addEventListener("click", () => openModal());
+    if (tabExplore) tabExplore.addEventListener("click", () => openModal());
     if (tabProfile) tabProfile.addEventListener("click", () => setView("profile"));
 
     const btnBack = $("#btnBackToChats");
@@ -1748,7 +1771,8 @@
       }
     });
 
-    $("#composerHint").textContent = "Enter — отправить, Shift+Enter — новая строка";
+    const hint = $("#composerHint");
+    if (hint) hint.textContent = "";
   }
 
   function bootstrap() {
