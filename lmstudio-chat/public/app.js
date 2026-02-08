@@ -337,17 +337,10 @@
     if (appbarChat) appbarChat.hidden = v !== "chat";
     if (appbarProfile) appbarProfile.hidden = v !== "profile";
 
-    const tabs = {
-      chats: $("#tabChats"),
-      chat: $("#tabChat"),
-      profile: $("#tabProfile")
-    };
-
-    for (const k of Object.keys(tabs)) {
-      const el = tabs[k];
-      if (!el) continue;
-      el.classList.toggle("tab--active", k === v);
-    }
+    const tChats = $("#tabChats");
+    const tProfile = $("#tabProfile");
+    if (tChats) tChats.classList.toggle("tab--active", v === "chats" || v === "chat");
+    if (tProfile) tProfile.classList.toggle("tab--active", v === "profile");
   }
 
   function formatTime(ts) {
@@ -1502,29 +1495,31 @@
     if (btnOpenCharacters) btnOpenCharacters.addEventListener("click", () => openModal());
 
     const tabChats = $("#tabChats");
-    const tabChat = $("#tabChat");
     const tabPlus = $("#tabPlus");
-    const tabExplore = $("#tabExplore");
     const tabProfile = $("#tabProfile");
 
     if (tabChats) {
       tabChats.addEventListener("click", () => {
-        setView("chats");
-        renderChatList($("#chatSearch")?.value || "");
-      });
-    }
-
-    if (tabChat) {
-      tabChat.addEventListener("click", () => {
-        ensureInitialMessage();
-        renderHeader();
-        renderMessages();
-        setView("chat");
+        if (state.view === "chat") {
+          setView("chats");
+          renderChatList($("#chatSearch")?.value || "");
+        } else if (state.view === "chats") {
+          // Already on chats — if there's a selected character, open its chat
+          const ch = activeCharacter();
+          if (ch) {
+            ensureInitialMessage();
+            renderHeader();
+            renderMessages();
+            setView("chat");
+          }
+        } else {
+          setView("chats");
+          renderChatList($("#chatSearch")?.value || "");
+        }
       });
     }
 
     if (tabPlus) tabPlus.addEventListener("click", () => openModal());
-    if (tabExplore) tabExplore.addEventListener("click", () => openModal());
     if (tabProfile) tabProfile.addEventListener("click", () => setView("profile"));
 
     const btnBack = $("#btnBackToChats");

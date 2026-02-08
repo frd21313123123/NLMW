@@ -262,7 +262,7 @@ body {
   flex-shrink: 0;
   height: 56px;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   border-top: 1px solid var(--border);
   background: var(--bg);
 }
