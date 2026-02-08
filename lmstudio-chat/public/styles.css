@@ -330,7 +330,6 @@ body {
 .iconBtn svg {
   width: 22px;
   height: 22px;
-  fill: currentColor;
 }
 
 .iconBtn:hover {
@@ -795,6 +794,8 @@ body {
 .modal__headerActions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .modal__content {

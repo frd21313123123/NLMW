@@ -137,12 +137,15 @@
           <div class="modal__header">
             <div class="modal__title">Персонажи</div>
             <div class="modal__headerActions">
+              <button class="btn btn--ghost" id="btnImportCharacters" type="button">Импорт</button>
+              <button class="btn btn--ghost" id="btnExportCharacters" type="button">Экспорт</button>
               <button class="btn btn--ghost" id="btnNewCharacter" type="button">Новый</button>
               <button class="btn" data-close="1" type="button">Закрыть</button>
             </div>
           </div>
 
           <div class="modal__content">
+            <input id="importCharactersFile" type="file" accept="application/json,.json,image/png" hidden />
             <div class="charList" id="charList"></div>
 
             <div class="charEditor">

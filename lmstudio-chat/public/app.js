@@ -115,6 +115,65 @@
     };
   }
 
+  function normalizeGender(g) {
+    const s = String(g || "").trim().toLowerCase();
+    if (!s) return "unspecified";
+    if (s === "female" || s === "f" || s === "woman" || s === "girl" || s === "женский" || s === "ж") return "female";
+    if (s === "male" || s === "m" || s === "man" || s === "boy" || s === "мужской" || s === "м") return "male";
+    if (s === "other" || s === "nonbinary" || s === "non-binary" || s === "nb") return "other";
+    return "unspecified";
+  }
+
+  function normalizeDialogueStyleId(styleIdOrName, styleText) {
+    const raw = String(styleIdOrName || "").trim().toLowerCase();
+    const txt = String(styleText || "").trim().toLowerCase();
+
+    if (DIALOGUE_STYLES.some((s) => s.id === raw)) return raw;
+
+    const probe = `${raw} ${txt}`;
+    if (probe.includes("flirt") || probe.includes("флирт")) return "flirty";
+    if (probe.includes("formal") || probe.includes("официал")) return "formal";
+    if (probe.includes("short") || probe.includes("кратк") || probe.includes("корот")) return "short";
+    if (probe.includes("detail") || probe.includes("подроб")) return "detailed";
+    if (probe.includes("role") || probe.includes("rp") || probe.includes("рол") || probe.includes("сцена")) return "roleplay";
+    if (probe.includes("friend") || probe.includes("друж")) return "friendly";
+    return "natural";
+  }
+
+  function appendSection(base, title, text) {
+    const b = String(base || "").trim();
+    const t = String(text || "").trim();
+    if (!t) return b;
+    const section = `${title}: ${t}`;
+    if (!b) return section;
+    if (b.includes(section)) return b;
+    return `${b}\n\n${section}`;
+  }
+
+  function normalizeCharacterRecord(c) {
+    const base = defaultCharacter();
+
+    const id = typeof c?.id === "string" && c.id.trim() ? c.id.trim() : uuid();
+    const createdAt = typeof c?.createdAt === "number" && Number.isFinite(c.createdAt) ? c.createdAt : nowTs();
+    const updatedAt = typeof c?.updatedAt === "number" && Number.isFinite(c.updatedAt) ? c.updatedAt : createdAt;
+
+    // Merge defaults with stored record; then sanitize core fields.
+    const merged = { ...base, ...(c && typeof c === "object" ? c : {}), id, createdAt, updatedAt };
+
+    merged.name = String(merged.name || "").trim() || "(без имени)";
+    merged.gender = normalizeGender(merged.gender);
+    merged.avatar = typeof merged.avatar === "string" ? merged.avatar : "";
+    merged.background = typeof merged.background === "string" ? merged.background : "";
+    merged.backgroundHint = String(merged.backgroundHint || "");
+    merged.outfit = String(merged.outfit || "");
+    merged.setting = String(merged.setting || "");
+    merged.backstory = String(merged.backstory || "");
+    merged.dialogueStyle = normalizeDialogueStyleId(merged.dialogueStyle, "");
+    merged.initialMessage = String(merged.initialMessage || "");
+
+    return merged;
+  }
+
   function ensureSeed() {
     state.profile = loadJson(STORAGE_KEYS.profile, defaultProfile());
     state.characters = loadJson(STORAGE_KEYS.characters, []);
@@ -123,6 +182,11 @@
     state.responseIds = loadJson(STORAGE_KEYS.responseIds, {});
     state.responseIdChains = loadJson(STORAGE_KEYS.responseIdChains, {});
     state.modelId = String(loadJson(STORAGE_KEYS.modelId, ""));
+
+    if (Array.isArray(state.characters)) {
+      state.characters = state.characters.filter((x) => x && typeof x === "object").map(normalizeCharacterRecord);
+      saveJson(STORAGE_KEYS.characters, state.characters);
+    }
 
     if (!Array.isArray(state.characters) || state.characters.length === 0) {
       const seed = defaultCharacter();
@@ -143,6 +207,297 @@
     if (!state.conversations || typeof state.conversations !== "object") state.conversations = {};
     if (!state.responseIds || typeof state.responseIds !== "object") state.responseIds = {};
     if (!state.responseIdChains || typeof state.responseIdChains !== "object") state.responseIdChains = {};
+  }
+
+  function normalizeImportedCharacter(raw) {
+    if (!raw || typeof raw !== "object") return null;
+
+    // Common wrappers: { data: {...} }, { character: {...} }, { card: {...} }
+    const obj =
+      (raw.data && typeof raw.data === "object" && raw.data) ||
+      (raw.character && typeof raw.character === "object" && raw.character) ||
+      (raw.card && typeof raw.card === "object" && raw.card) ||
+      raw;
+
+    const name = String(
+      obj.name ?? obj.char_name ?? obj.character_name ?? obj.display_name ?? obj.displayName ?? ""
+    ).trim();
+
+    const greeting = String(
+      obj.initialMessage ?? obj.greeting ?? obj.first_mes ?? obj.char_greeting ?? obj.firstMessage ?? ""
+    ).trim();
+
+    // "Intro" / persona / description.
+    const intro = String(
+      obj.intro ?? obj.description ?? obj.char_persona ?? obj.persona ?? obj.profile ?? ""
+    ).trim();
+
+    // "Scenario" / world.
+    const scenario = String(
+      obj.setting ?? obj.scenario ?? obj.world_scenario ?? obj.worldScenario ?? ""
+    ).trim();
+
+    const backgroundText = String(obj.background ?? obj.backstory ?? "").trim();
+    const dialogueStyleText = String(obj.dialogue_style ?? obj.dialogueStyle ?? obj.style ?? "").trim();
+    const example = String(obj.mes_example ?? obj.example_dialogue ?? obj.exampleDialogue ?? "").trim();
+
+    // Images: try common keys. (Polybuzz often has avatar + cover.)
+    const avatar = String(
+      obj.avatar ?? obj.avatar_url ?? obj.avatarUrl ?? obj.image ?? obj.image_url ?? obj.profile_image ?? ""
+    ).trim();
+
+    const backgroundImage = String(
+      obj.background_image ?? obj.background_url ?? obj.backgroundUrl ?? obj.cover ?? obj.cover_url ?? obj.coverUrl ?? ""
+    ).trim();
+
+    let backstory = String(obj.backstory ?? "").trim();
+    backstory = backstory || intro || "";
+    backstory = appendSection(backstory, "Бэкграунд", backgroundText);
+    backstory = appendSection(backstory, "Стиль диалога", dialogueStyleText);
+    backstory = appendSection(backstory, "Пример диалога", example);
+
+    const out = normalizeCharacterRecord({
+      id: typeof obj.id === "string" ? obj.id : "",
+      name: name || "Импортированный персонаж",
+      gender: normalizeGender(obj.gender ?? obj.sex ?? ""),
+      avatar,
+      background: backgroundImage,
+      backgroundHint: String(obj.backgroundHint ?? obj.background_hint ?? "").trim(),
+      outfit: String(obj.outfit ?? obj.appearance ?? "").trim(),
+      setting: scenario,
+      backstory,
+      dialogueStyle: normalizeDialogueStyleId(obj.dialogueStyle ?? obj.dialogue_style_id ?? "", dialogueStyleText),
+      initialMessage: greeting
+    });
+
+    return out;
+  }
+
+  function normalizeImportedCharactersPayload(payload) {
+    if (Array.isArray(payload)) return payload;
+    if (payload && typeof payload === "object") {
+      if (Array.isArray(payload.characters)) return payload.characters;
+      if (Array.isArray(payload.data)) return payload.data;
+      // Single character object.
+      return [payload];
+    }
+    return [];
+  }
+
+  function importCharactersFromJsonPayload(payload) {
+    const items = normalizeImportedCharactersPayload(payload);
+    if (!items.length) return { imported: 0, firstId: "" };
+
+    const existingIds = new Set(state.characters.map((c) => c.id));
+    let imported = 0;
+    let firstId = "";
+
+    for (const raw of items) {
+      const c = normalizeImportedCharacter(raw);
+      if (!c) continue;
+
+      // Avoid id collisions.
+      let id = c.id;
+      if (!id || existingIds.has(id)) id = uuid();
+      c.id = id;
+      if (!firstId) firstId = id;
+      existingIds.add(id);
+
+      c.createdAt = nowTs();
+      c.updatedAt = nowTs();
+
+      upsertCharacter(c);
+      imported++;
+    }
+
+    return { imported, firstId };
+  }
+
+  function downloadText(filename, text) {
+    const blob = new Blob([String(text || "")], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function parsePngTextChunks(arrayBuffer) {
+    const u8 = new Uint8Array(arrayBuffer);
+    if (u8.length < 8) return [];
+    const sig = [137, 80, 78, 71, 13, 10, 26, 10];
+    for (let i = 0; i < sig.length; i++) if (u8[i] !== sig[i]) return [];
+
+    const dv = new DataView(arrayBuffer);
+    let off = 8;
+    const out = [];
+
+    const readAscii = (start, len) => {
+      let s = "";
+      for (let i = 0; i < len; i++) s += String.fromCharCode(u8[start + i]);
+      return s;
+    };
+
+    const readLatin1 = (bytes) => {
+      let s = "";
+      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      return s;
+    };
+
+    while (off + 8 <= u8.length) {
+      const len = dv.getUint32(off, false);
+      off += 4;
+      const type = readAscii(off, 4);
+      off += 4;
+      if (off + len + 4 > u8.length) break;
+      const data = u8.slice(off, off + len);
+      off += len;
+      off += 4; // CRC
+
+      if (type === "tEXt") {
+        const nul = data.indexOf(0);
+        if (nul > 0) {
+          const keyword = readLatin1(data.slice(0, nul));
+          const text = readLatin1(data.slice(nul + 1));
+          out.push({ type, keyword, text });
+        }
+      } else if (type === "iTXt") {
+        // keyword\0 compFlag\0 compMethod\0 lang\0 translated\0 text (UTF-8)
+        const nul1 = data.indexOf(0);
+        if (nul1 > 0 && nul1 + 2 < data.length) {
+          const keyword = readLatin1(data.slice(0, nul1));
+          const compFlag = data[nul1 + 1];
+          const compMethod = data[nul1 + 2];
+          if (compFlag === 0 && compMethod === 0) {
+            let p = nul1 + 3;
+            const readNullTerm = () => {
+              const n = data.indexOf(0, p);
+              if (n === -1) return null;
+              const s = readLatin1(data.slice(p, n));
+              p = n + 1;
+              return s;
+            };
+            readNullTerm(); // language tag
+            readNullTerm(); // translated keyword
+            const textBytes = data.slice(p);
+            try {
+              const text = new TextDecoder("utf-8").decode(textBytes);
+              out.push({ type, keyword, text });
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
+    }
+
+    return out;
+  }
+
+  function tryParseJsonFromCharacterCardText(text) {
+    const s = String(text || "").trim();
+    if (!s) return null;
+
+    if (s.startsWith("{") || s.startsWith("[")) {
+      const obj = safeJsonParse(s);
+      if (obj) return obj;
+    }
+
+    // Most character cards store base64(JSON).
+    try {
+      const decoded = atob(s.replace(/\s+/g, ""));
+      const obj = safeJsonParse(decoded);
+      if (obj) return obj;
+    } catch {
+      // ignore
+    }
+
+    return null;
+  }
+
+  async function importFromFile(file) {
+    const n = String(file?.name || "").toLowerCase();
+    const t = String(file?.type || "").toLowerCase();
+
+    if (t.includes("json") || n.endsWith(".json")) {
+      const text = await file.text();
+      const payload = safeJsonParse(text);
+      if (!payload) throw new Error("Не удалось прочитать JSON (проверьте формат).");
+      return importCharactersFromJsonPayload(payload);
+    }
+
+    if (t === "image/png" || n.endsWith(".png")) {
+      const ab = await file.arrayBuffer();
+      const chunks = parsePngTextChunks(ab);
+      const candidates = chunks
+        .filter((c) => String(c.keyword || "").toLowerCase().includes("chara") || String(c.keyword || "").toLowerCase().includes("character"))
+        .map((c) => c.text)
+        .concat(chunks.map((c) => c.text));
+
+      let payload = null;
+      for (const txt of candidates) {
+        payload = tryParseJsonFromCharacterCardText(txt);
+        if (payload) break;
+      }
+
+      if (!payload) throw new Error("Не нашел JSON в PNG character card (tEXt/iTXt). Попробуйте JSON-файл.");
+
+      const result = importCharactersFromJsonPayload(payload);
+
+      // If card import didn't include an avatar, use the PNG itself (within size limit).
+      try {
+        const url = await fileToDataUrl(file);
+        if (result.firstId) {
+          const c = state.characters.find((x) => x.id === result.firstId);
+          if (c && (!c.avatar || String(c.avatar).trim() === "")) {
+            upsertCharacter({ ...c, avatar: url, updatedAt: nowTs() });
+          }
+        }
+      } catch {
+        // PNG might be too big for localStorage; still import text fields.
+      }
+
+      return result;
+    }
+
+    throw new Error("Поддерживаются только .json и .png");
+  }
+
+  function isPolybuzzUrl(text) {
+    const s = String(text || "").trim();
+    if (!s) return false;
+    try {
+      const u = new URL(s);
+      const host = String(u.hostname || "").toLowerCase();
+      return (u.protocol === "https:" || u.protocol === "http:") && (host === "polybuzz.ai" || host.endsWith(".polybuzz.ai"));
+    } catch {
+      return false;
+    }
+  }
+
+  async function importFromPolybuzzUrl(url) {
+    const u = String(url || "").trim();
+    if (!isPolybuzzUrl(u)) throw new Error("Нужна ссылка polybuzz.ai");
+
+    const res = await fetch("/api/import/polybuzz", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: u })
+    });
+
+    const text = await res.text();
+    const data = safeJsonParse(text);
+
+    if (!res.ok) {
+      const msg = data?.error || `Ошибка импорта (${res.status})`;
+      throw new Error(String(msg));
+    }
+
+    if (!data || data.ok !== true || !data.character) throw new Error("Неожиданный ответ сервера импорта");
+    return data.character;
   }
 
   function activeCharacter() {
@@ -407,8 +762,8 @@
       .replace(/[&<>"']/g, "")
       || "?";
     const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'>
-      <rect width='80' height='80' rx='40' fill='%231a1a1a' />
-      <text x='50%' y='54%' text-anchor='middle' font-size='26' fill='%23888' font-family='Inter, sans-serif' dominant-baseline='middle'>${initials}</text>
+      <rect width='80' height='80' rx='40' fill='#1a1a1a' />
+      <text x='50%' y='54%' text-anchor='middle' font-size='26' fill='#888' font-family='Inter, sans-serif' dominant-baseline='middle'>${initials}</text>
     </svg>`;
     el.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
     el.alt = "";
@@ -1523,7 +1878,12 @@
     if (tabProfile) tabProfile.addEventListener("click", () => setView("profile"));
 
     const btnBack = $("#btnBackToChats");
-    if (btnBack) btnBack.addEventListener("click", () => setView("chats"));
+    if (btnBack) {
+      btnBack.addEventListener("click", () => {
+        setView("chats");
+        renderChatList($("#chatSearch")?.value || "");
+      });
+    }
 
     const search = $("#chatSearch");
     if (search) {
@@ -1608,6 +1968,120 @@
       $("#charFormNote").textContent = 'Создан новый персонаж. Заполните поля и нажмите "Сохранить".';
       refreshChatsView();
     });
+
+    const btnImport = $("#btnImportCharacters");
+    const importFile = $("#importCharactersFile");
+    if (btnImport) {
+      btnImport.addEventListener("click", async () => {
+        $("#charFormNote").textContent = "";
+        try {
+
+          // First try clipboard (JSON or polybuzz link).
+          let clip = "";
+          try {
+            if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
+              clip = await navigator.clipboard.readText();
+            }
+          } catch {
+            clip = "";
+          }
+
+          const applyImportedResult = ({ imported, firstId }) => {
+            if (imported <= 0) return false;
+
+            state.editingCharacterId = firstId || state.editingCharacterId;
+            fillCharacterForm();
+            refreshChatsView();
+            $("#charFormNote").textContent = `Импортировано: ${imported}`;
+            return true;
+          };
+
+          const tryImportTextOrUrl = async (text) => {
+            const s = String(text || "").trim();
+            if (!s) return false;
+
+            const payload = safeJsonParse(s);
+            if (payload) return applyImportedResult(importCharactersFromJsonPayload(payload));
+
+            if (isPolybuzzUrl(s)) {
+              $("#charFormNote").textContent = "Импортирую с PolyBuzz…";
+              const character = await importFromPolybuzzUrl(s);
+              return applyImportedResult(importCharactersFromJsonPayload(character));
+            }
+
+            return false;
+          };
+
+          if (clip && (await tryImportTextOrUrl(clip))) return;
+
+          const mode = window.prompt(
+            "Импорт персонажей:\n1) вставить JSON или ссылку polybuzz.ai\n2) выбрать файл (.json/.png)\n\nВведите 1 или 2:",
+            "1"
+          );
+
+          if (String(mode || "").trim() === "2") {
+            if (importFile) importFile.click();
+            return;
+          }
+
+          const pasted = window.prompt("Вставьте JSON или ссылку на персонажа polybuzz.ai:", "");
+          if (pasted === null) return;
+          if (!(await tryImportTextOrUrl(pasted))) $("#charFormNote").textContent = "Не удалось импортировать: проверьте JSON или ссылку.";
+        } catch (err) {
+          $("#charFormNote").textContent = String(err?.message || err);
+        }
+      });
+    }
+
+    if (importFile) {
+      importFile.addEventListener("change", async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        try {
+          const { imported, firstId } = await importFromFile(file);
+          if (imported <= 0) {
+            $("#charFormNote").textContent = "Ничего не импортировано.";
+            return;
+          }
+
+          state.editingCharacterId = firstId || state.editingCharacterId;
+          fillCharacterForm();
+          refreshChatsView();
+          $("#charFormNote").textContent = `Импортировано: ${imported}`;
+        } catch (err) {
+          $("#charFormNote").textContent = String(err?.message || err);
+        } finally {
+          e.target.value = "";
+        }
+      });
+    }
+
+    const btnExport = $("#btnExportCharacters");
+    if (btnExport) {
+      btnExport.addEventListener("click", async () => {
+        const current = editingCharacter();
+        if (!current) return;
+
+        const all = window.confirm("Экспортировать всех персонажей?\nOK: все\nCancel: только текущего");
+        const payload = all ? state.characters : current;
+        const json = JSON.stringify(payload, null, 2);
+
+        try {
+          if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+            await navigator.clipboard.writeText(json);
+            $("#charFormNote").textContent = all ? "Экспортировано в буфер: все персонажи" : "Экспортировано в буфер: персонаж";
+            return;
+          }
+        } catch {
+          // ignore -> fall back to download
+        }
+
+        const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+        const filename = all ? `nlmw-characters-${ts}.json` : `nlmw-character-${ts}.json`;
+        downloadText(filename, json);
+        $("#charFormNote").textContent = `Экспорт: ${filename}`;
+      });
+    }
 
     $("#btnUseCharacter").addEventListener("click", () => {
       const c = editingCharacter();
@@ -1717,7 +2191,7 @@
         fillProfileUI();
         renderHeader();
       } catch (err) {
-        $("#composerHint").textContent = String(err?.message || err);
+        setStatus(String(err?.message || err), false);
       } finally {
         e.target.value = "";
       }
