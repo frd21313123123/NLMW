@@ -1639,9 +1639,9 @@
     return /[Ѐ-ӿ]/.test(String(text || ""));
   }
 
-  async function translateBackstoryText(sourceText) {
+  async function translateTextByDirection(sourceText, emptyErrorMessage) {
     const src = String(sourceText || "").trim();
-    if (!src) throw new Error("Введите текст в поле предыстории.");
+    if (!src) throw new Error(emptyErrorMessage || "Введите текст для перевода.");
 
     const toRussian = !detectCyrillic(src);
     const target = toRussian ? "русский" : "английский";
@@ -1721,6 +1721,24 @@
 
     return { translated: out, directionLabel: `${source} → ${target}` };
   }
+  async function translateBackstoryText(sourceText) {
+    return translateTextByDirection(sourceText, "Введите текст в поле предыстории.");
+  }
+
+  async function translateCharacterFields(fields) {
+    const translated = {};
+    for (const field of fields) {
+      const key = field?.key;
+      if (!key) continue;
+      const value = String(field.value || "").trim();
+      if (!value) continue;
+      const result = await translateTextByDirection(value, `Поле «${field.label || key}» пустое.`);
+      translated[key] = result.translated;
+    }
+    return translated;
+  }
+
+
 
   async function streamLmStudioRestToMessage({
     character,
@@ -2670,6 +2688,53 @@
 
 
     const btnTranslateBackstory = $("#btnTranslateBackstory");
+    const btnTranslateAllCharacterFields = $("#btnTranslateAllCharacterFields");
+
+    if (btnTranslateAllCharacterFields) {
+      btnTranslateAllCharacterFields.addEventListener("click", async () => {
+        const note = $("#charTranslateNote");
+        const fields = [
+          { key: "outfit", label: "Описание", input: $("#charOutfitInput") },
+          { key: "setting", label: "Обстановка", input: $("#charSettingInput") },
+          { key: "backgroundHint", label: "Фон для ИИ", input: $("#charBgHintInput") },
+          { key: "backstory", label: "Предыстория", input: $("#charBackstoryInput") },
+          { key: "initialMessage", label: "Начальное сообщение", input: $("#charInitialMessageInput") }
+        ].filter((x) => x.input);
+
+        const nonEmptyFields = fields.filter((x) => String(x.input.value || "").trim());
+        if (!nonEmptyFields.length) {
+          if (note) note.textContent = "Заполните хотя бы одно текстовое поле персонажа.";
+          return;
+        }
+
+        if (note) note.textContent = "Перевод всех полей…";
+        btnTranslateAllCharacterFields.disabled = true;
+        if (btnTranslateBackstory) btnTranslateBackstory.disabled = true;
+
+        try {
+          const translated = await translateCharacterFields(nonEmptyFields.map((x) => ({
+            key: x.key,
+            label: x.label,
+            value: x.input.value
+          })));
+          let changed = 0;
+          for (const field of nonEmptyFields) {
+            if (Object.prototype.hasOwnProperty.call(translated, field.key)) {
+              field.input.value = translated[field.key];
+              changed += 1;
+            }
+          }
+          if (note) note.textContent = `Готово: переведено полей ${changed}.`;
+        } catch (err) {
+          const msg = String(err?.message || err || "Ошибка перевода");
+          if (note) note.textContent = msg;
+        } finally {
+          btnTranslateAllCharacterFields.disabled = false;
+          if (btnTranslateBackstory) btnTranslateBackstory.disabled = false;
+        }
+      });
+    }
+
     if (btnTranslateBackstory) {
       btnTranslateBackstory.addEventListener("click", async () => {
         const input = $("#charBackstoryInput");
@@ -2678,6 +2743,7 @@
 
         if (note) note.textContent = "Перевод…";
         btnTranslateBackstory.disabled = true;
+        if (btnTranslateAllCharacterFields) btnTranslateAllCharacterFields.disabled = true;
 
         try {
           const { translated, directionLabel } = await translateBackstoryText(input.value);
@@ -2688,6 +2754,7 @@
           if (note) note.textContent = msg;
         } finally {
           btnTranslateBackstory.disabled = false;
+          if (btnTranslateAllCharacterFields) btnTranslateAllCharacterFields.disabled = false;
         }
       });
     }
