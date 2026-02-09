@@ -995,6 +995,58 @@ body {
   color: var(--muted2);
 }
 
+.promptManager {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.promptManager__create {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.promptManager__list {
+  max-height: 34vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.promptCard {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  padding: 10px;
+}
+
+.promptCard__title {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.promptCard__text {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  max-height: 90px;
+  overflow: auto;
+}
+
+.promptCard__actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
 /* ===== ANIMATIONS ===== */
 
 @keyframes fadeIn {
