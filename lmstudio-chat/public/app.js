@@ -1275,7 +1275,35 @@
     setImg($("#charAvatarPreview"), c.avatar, c.name);
     $("#charFormNote").textContent = "";
 
+    renderCharacterHeroPreview(c);
+
     renderCharacterList();
+  }
+
+  function renderCharacterHeroPreview(c) {
+    if (!c) return;
+
+    const hero = $("#charHeroPreview");
+    const titleEl = $("#charHeroName");
+    const metaEl = $("#charHeroMeta");
+    const styleTag = $("#charHeroStyleTag");
+    const genderTag = $("#charHeroGenderTag");
+
+    if (titleEl) titleEl.textContent = c.name || "(без имени)";
+    if (metaEl) {
+      const desc = String(c.backstory || c.setting || c.outfit || "").trim();
+      metaEl.textContent = desc ? desc.slice(0, 140) : "Заполните карточку персонажа";
+    }
+    if (styleTag) styleTag.textContent = `Стиль: ${styleById(c.dialogueStyle).label}`;
+    if (genderTag) genderTag.textContent = `Пол: ${genderLabel(c.gender)}`;
+
+    if (hero) {
+      hero.style.backgroundImage = c.background
+        ? `linear-gradient(180deg, rgba(0,0,0,0.18) 0%, rgba(5,6,10,0.86) 56%, rgba(5,6,10,1) 100%), url("${String(c.background).replace(/"/g, '\\"')}")`
+        : "";
+      hero.style.backgroundSize = c.background ? "cover" : "";
+      hero.style.backgroundPosition = c.background ? "center" : "";
+    }
   }
 
   async function fileToDataUrl(file) {
@@ -2904,6 +2932,36 @@ ${item.text}` : item.text;
       }
       refreshChatsView();
     });
+
+    const previewInputs = [
+      "#charNameInput",
+      "#charGenderInput",
+      "#charOutfitInput",
+      "#charSettingInput",
+      "#charBackstoryInput",
+      "#charStyleInput"
+    ]
+      .map((sel) => $(sel))
+      .filter(Boolean);
+
+    const rerenderCharacterHeroFromInputs = () => {
+      const c = editingCharacter();
+      if (!c) return;
+      renderCharacterHeroPreview({
+        ...c,
+        name: String($("#charNameInput")?.value || "").trim() || c.name,
+        gender: String($("#charGenderInput")?.value || c.gender || "unspecified"),
+        outfit: String($("#charOutfitInput")?.value || ""),
+        setting: String($("#charSettingInput")?.value || ""),
+        backstory: String($("#charBackstoryInput")?.value || ""),
+        dialogueStyle: String($("#charStyleInput")?.value || c.dialogueStyle || "natural")
+      });
+    };
+
+    for (const input of previewInputs) {
+      input.addEventListener("input", rerenderCharacterHeroFromInputs);
+      input.addEventListener("change", rerenderCharacterHeroFromInputs);
+    }
 
     $("#charAvatarFile").addEventListener("change", async (e) => {
       const file = e.target.files && e.target.files[0];
