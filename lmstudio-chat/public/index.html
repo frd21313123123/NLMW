@@ -176,25 +176,49 @@
 
             <div class="charEditor">
               <form class="charForm" id="charForm">
-                <div class="charEditor__top">
-                  <div class="charEditor__topLeft">
-                    <img class="avatar avatar--xl" id="charAvatarPreview" alt="" />
+                <div class="charHero" id="charHeroPreview">
+                  <div class="charHero__topBar">
+                    <button class="iconBtn charHero__icon" type="button" tabindex="-1" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></svg>
+                    </button>
+                    <div class="charHero__topActions">
+                      <button class="iconBtn charHero__icon" type="button" tabindex="-1" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4h16v16H4z"/><path d="M8 8h8"/></svg>
+                      </button>
+                      <button class="iconBtn charHero__icon" type="button" tabindex="-1" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+                      </button>
+                    </div>
                   </div>
-                  <div class="charEditor__topRight">
-                    <label class="field">
-                      <span class="field__label">Имя персонажа</span>
-                      <input class="field__input" id="charNameInput" type="text" placeholder="Например: Алиса" />
-                    </label>
-                    <label class="field">
-                      <span class="field__label">Пол персонажа</span>
-                      <select class="field__input" id="charGenderInput">
-                        <option value="unspecified">Не указывать</option>
-                        <option value="female">Женский</option>
-                        <option value="male">Мужской</option>
-                        <option value="other">Другое</option>
-                      </select>
-                    </label>
+                  <div class="charHero__content">
+                    <img class="avatar avatar--xl charHero__avatar" id="charAvatarPreview" alt="" />
+                    <div class="charHero__title" id="charHeroName">Новый персонаж</div>
+                    <div class="charHero__subtitle" id="charHeroMeta">Заполните карточку персонажа</div>
+                    <div class="charHero__tags">
+                      <span class="chip" id="charHeroStyleTag">Стиль</span>
+                      <span class="chip" id="charHeroGenderTag">Пол</span>
+                    </div>
+                    <div class="charHero__actions">
+                      <button class="btn btn--accent charHero__chatBtn" id="btnUseCharacter" type="button">Чат</button>
+                      <button class="btn btn--danger" id="btnDeleteCharacter" type="button">Удалить</button>
+                    </div>
                   </div>
+                </div>
+
+                <div class="grid2">
+                  <label class="field">
+                    <span class="field__label">Имя персонажа</span>
+                    <input class="field__input" id="charNameInput" type="text" placeholder="Например: Алиса" />
+                  </label>
+                  <label class="field">
+                    <span class="field__label">Пол персонажа</span>
+                    <select class="field__input" id="charGenderInput">
+                      <option value="unspecified">Не указывать</option>
+                      <option value="female">Женский</option>
+                      <option value="male">Мужской</option>
+                      <option value="other">Другое</option>
+                    </select>
+                  </label>
                 </div>
 
                 <div class="row row--genAvatar">
@@ -258,8 +282,7 @@
 
                 <div class="row row--actions">
                   <button class="btn btn--accent" id="btnSaveCharacter" type="submit">Сохранить</button>
-                  <button class="btn" id="btnUseCharacter" type="button">Открыть чат</button>
-                  <button class="btn btn--danger" id="btnDeleteCharacter" type="button">Удалить</button>
+                  <button class="btn" type="button" disabled>Действия чата в превью</button>
                 </div>
 
                 <div class="smallNote" id="charFormNote"></div>
