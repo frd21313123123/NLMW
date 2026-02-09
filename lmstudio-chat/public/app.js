@@ -1056,7 +1056,7 @@
       const action = b.dataset.action;
       const msgId = b.dataset.msgId;
       const canTarget = !disableAll && msgId && msgId === lastAssistantId;
-      if (action === "cont") b.disabled = !canTarget;
+      if (action === "cont" || action === "thoughts") b.disabled = !canTarget;
       else if (action === "regen") b.disabled = !(canTarget && hasUserBefore);
     }
   }
@@ -1153,12 +1153,22 @@
         btnCont.dataset.action = "cont";
         btnCont.dataset.msgId = m.id;
 
+        const btnThoughts = document.createElement("button");
+        btnThoughts.className = "miniBtn";
+        btnThoughts.type = "button";
+        btnThoughts.textContent = "💭";
+        btnThoughts.title = "Внутренние мысли";
+        btnThoughts.dataset.action = "thoughts";
+        btnThoughts.dataset.msgId = m.id;
+
         const canTarget = !state.generating && state.lmOk && !m.pending && m.id === lastAssistantId;
         btnCont.disabled = !canTarget;
+        btnThoughts.disabled = !canTarget;
         btnRegen.disabled = !(canTarget && hasUserBeforeLastAssistant);
 
         actions.appendChild(btnRegen);
         actions.appendChild(btnCont);
+        actions.appendChild(btnThoughts);
         actionsEl = actions;
       }
 
@@ -2272,7 +2282,7 @@
     }
   }
 
-  async function continueLastAnswer() {
+  async function continueLastAnswerWithPrompt({ inputText, hintText, failurePrefix }) {
     const ch = activeCharacter();
     if (!ch) return;
     if (!state.lmOk) {
@@ -2297,13 +2307,13 @@
     renderMessages();
 
     setGenerating(true);
-    $("#composerHint").textContent = "Продолжаю ответ…";
+    $("#composerHint").textContent = hintText;
 
     try {
       let content;
 
       if (state.provider === "openrouter") {
-        const continueMsg = { role: "user", content: "Продолжи свой предыдущий ответ. Не повторяй уже сказанное. Продолжай с того места, где остановился. Без вступлений." };
+        const continueMsg = { role: "user", content: inputText };
         const messages = buildOpenAiMessages(ch.id);
         messages.push(continueMsg);
 
@@ -2317,9 +2327,6 @@
       } else {
         const prevResponseId = lastResponseIdFor(ch.id);
         const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, history, true);
-
-        const inputText =
-          "Продолжи свой предыдущий ответ. Не повторяй уже сказанное. Продолжай с того места, где остановился. Без вступлений.";
 
         const { fullContent, respId } = await streamLmStudioRestToMessage({
           character: ch,
@@ -2355,7 +2362,7 @@
       setChatHistory(
         ch.id,
         chatHistoryFor(ch.id).map((m) =>
-          m.id === assistantMsgId ? { id: m.id, role: "assistant", content: base + `\n\n(прервано: ${msg})`, ts: nowTs() } : m
+          m.id === assistantMsgId ? { id: m.id, role: "assistant", content: base + `\n\n(${failurePrefix}: ${msg})`, ts: nowTs() } : m
         )
       );
       renderMessages();
@@ -2364,6 +2371,23 @@
     } finally {
       setGenerating(false);
     }
+  }
+
+  async function continueLastAnswer() {
+    return continueLastAnswerWithPrompt({
+      inputText: "Продолжи свой предыдущий ответ. Не повторяй уже сказанное. Продолжай с того места, где остановился. Без вступлений.",
+      hintText: "Продолжаю ответ…",
+      failurePrefix: "прервано"
+    });
+  }
+
+  async function continueLastAnswerAsThoughts() {
+    return continueLastAnswerWithPrompt({
+      inputText:
+        "Продолжи свой предыдущий ответ в формате внутренних мыслей персонажа. Пиши как поток мыслей в текущий момент, в первом лице, без обращения к собеседнику и без повторов уже сказанного.",
+      hintText: "Генерирую внутренние мысли…",
+      failurePrefix: "мысли прерваны"
+    });
   }
 
   function clearChatForActiveCharacter() {
@@ -2446,6 +2470,8 @@
           regenerateLastAnswer();
         } else if (action === "cont") {
           continueLastAnswer();
+        } else if (action === "thoughts") {
+          continueLastAnswerAsThoughts();
         }
       });
     }
