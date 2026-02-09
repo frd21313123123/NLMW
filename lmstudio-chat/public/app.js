@@ -1623,6 +1623,142 @@
     return msgs.map((x) => x.content).join("\n\n");
   }
 
+
+
+  function detectCyrillic(text) {
+    return /[Ѐ-ӿ]/.test(String(text || ""));
+  }
+
+  async function requestTranslation(systemPrompt, userPrompt) {
+    if (state.provider === "openrouter") {
+      const headers = { "Content-Type": "application/json" };
+      if (state.openrouterKey) headers["X-OpenRouter-Key"] = state.openrouterKey;
+
+      const payload = {
+        model: state.modelId || "venice/uncensored:free",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ],
+        temperature: 0.2,
+        stream: false
+      };
+
+      const res = await fetch("/api/openrouter/chat", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      const text = await res.text();
+      const data = safeJsonParse(text);
+      if (!res.ok) {
+        const errMsg = data?.error?.message || data?.error || data?.message || `OpenRouter error (${res.status})`;
+        throw new Error(String(errMsg));
+      }
+
+      const out = data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || "";
+      return String(out || "").trim();
+    }
+
+    const payload = {
+      api: "rest",
+      model: state.modelId || "local-model",
+      input: userPrompt,
+      temperature: 0.2,
+      stream: false,
+      store: false,
+      system_prompt: systemPrompt
+    };
+
+    const res = await fetch("/api/lmstudio/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    const text = await res.text();
+    const data = safeJsonParse(text);
+
+    if (!res.ok) {
+      const errMsg = data?.error || data?.message || `Ошибка LM Studio (${res.status})`;
+      throw new Error(String(errMsg));
+    }
+
+    if (data && Array.isArray(data.output)) return String(extractRestMessagesFromResult(data) || "").trim();
+    return String(data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || "").trim();
+  }
+
+  function parseJsonFromModelText(text) {
+    const raw = String(text || "").trim();
+    if (!raw) return null;
+
+    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced && fenced[1]) {
+      const parsed = safeJsonParse(fenced[1].trim());
+      if (parsed && typeof parsed === "object") return parsed;
+    }
+
+    const direct = safeJsonParse(raw);
+    if (direct && typeof direct === "object") return direct;
+
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    if (start !== -1 && end > start) {
+      const cut = safeJsonParse(raw.slice(start, end + 1));
+      if (cut && typeof cut === "object") return cut;
+    }
+
+    return null;
+  }
+
+  async function translateCharacterSettings(fields) {
+    const values = {
+      name: String(fields.name || "").trim(),
+      outfit: String(fields.outfit || "").trim(),
+      setting: String(fields.setting || "").trim(),
+      backgroundHint: String(fields.backgroundHint || "").trim(),
+      backstory: String(fields.backstory || "").trim(),
+      initialMessage: String(fields.initialMessage || "").trim()
+    };
+
+    const corpus = Object.values(values).filter(Boolean).join("\n");
+    if (!corpus.trim()) throw new Error("Заполните хотя бы одно текстовое поле персонажа.");
+
+    const toRussian = !detectCyrillic(corpus);
+    const target = toRussian ? "русский" : "английский";
+    const source = toRussian ? "английский" : "русский";
+
+    const userPrompt = [
+      `Переведи все значения объекта с ${source} на ${target}.`,
+      "Сохрани смысл, стиль и формат текста (переносы строк и структуру абзацев).",
+      "Верни строго JSON-объект с ключами: name, outfit, setting, backgroundHint, backstory, initialMessage.",
+      "Не добавляй новые ключи, комментарии или пояснения.",
+      "Если значение пустое — оставь пустую строку.",
+      "JSON для перевода:",
+      JSON.stringify(values)
+    ].join("\n");
+
+    const systemPrompt = "Ты профессиональный переводчик. Возвращай только корректный JSON без пояснений.";
+    const raw = await requestTranslation(systemPrompt, userPrompt);
+    if (!raw) throw new Error("Модель вернула пустой перевод.");
+
+    const parsed = parseJsonFromModelText(raw);
+    if (!parsed) throw new Error("Не удалось распознать JSON перевода.");
+
+    return {
+      directionLabel: `${source} → ${target}`,
+      translated: {
+        name: String(parsed.name ?? values.name),
+        outfit: String(parsed.outfit ?? values.outfit),
+        setting: String(parsed.setting ?? values.setting),
+        backgroundHint: String(parsed.backgroundHint ?? values.backgroundHint),
+        backstory: String(parsed.backstory ?? values.backstory),
+        initialMessage: String(parsed.initialMessage ?? values.initialMessage)
+      }
+    };
+  }
+
   async function streamLmStudioRestToMessage({
     character,
     assistantMsgId,
@@ -2551,6 +2687,51 @@
       closeModal();
       setView("chat");
     });
+
+
+
+    const btnTranslateBackstory = $("#btnTranslateBackstory");
+    if (btnTranslateBackstory) {
+      btnTranslateBackstory.addEventListener("click", async () => {
+        const nameInput = $("#charNameInput");
+        const outfitInput = $("#charOutfitInput");
+        const settingInput = $("#charSettingInput");
+        const bgHintInput = $("#charBgHintInput");
+        const backstoryInput = $("#charBackstoryInput");
+        const initialInput = $("#charInitialMessageInput");
+        const note = $("#charTranslateNote");
+
+        if (!nameInput || !outfitInput || !settingInput || !bgHintInput || !backstoryInput || !initialInput) return;
+
+        if (note) note.textContent = "Перевод настроек…";
+        btnTranslateBackstory.disabled = true;
+
+        try {
+          const { translated, directionLabel } = await translateCharacterSettings({
+            name: nameInput.value,
+            outfit: outfitInput.value,
+            setting: settingInput.value,
+            backgroundHint: bgHintInput.value,
+            backstory: backstoryInput.value,
+            initialMessage: initialInput.value
+          });
+
+          nameInput.value = translated.name;
+          outfitInput.value = translated.outfit;
+          settingInput.value = translated.setting;
+          bgHintInput.value = translated.backgroundHint;
+          backstoryInput.value = translated.backstory;
+          initialInput.value = translated.initialMessage;
+
+          if (note) note.textContent = `Готово: ${directionLabel}`;
+        } catch (err) {
+          const msg = String(err?.message || err || "Ошибка перевода");
+          if (note) note.textContent = msg;
+        } finally {
+          btnTranslateBackstory.disabled = false;
+        }
+      });
+    }
 
     const btnGenAvatar = $("#btnGenAvatar");
     if (btnGenAvatar) btnGenAvatar.addEventListener("click", () => generateCharacterAvatar());

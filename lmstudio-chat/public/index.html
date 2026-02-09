@@ -234,8 +234,12 @@
                 </label>
 
                 <label class="field">
-                  <span class="field__label">Предыстория (видна нейросети)</span>
+                  <span class="field__label field__labelRow">
+                    <span>Предыстория (видна нейросети)</span>
+                    <button class="btn btn--tiny" id="btnTranslateBackstory" type="button">↔ Перевести всё</button>
+                  </span>
                   <textarea class="field__input field__input--area" id="charBackstoryInput" rows="5" placeholder="Кто он, что пережил, мотивация..."></textarea>
+                  <span class="smallNote" id="charTranslateNote"></span>
                 </label>
 
                 <label class="field">
