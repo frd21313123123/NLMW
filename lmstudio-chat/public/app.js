@@ -8,7 +8,9 @@
     conversations: "nlmw.conversations",
     modelId: "nlmw.lmstudioModelId",
     responseIds: "nlmw.lmstudioResponseIds",
-    responseIdChains: "nlmw.lmstudioResponseIdChains"
+    responseIdChains: "nlmw.lmstudioResponseIdChains",
+    provider: "nlmw.provider",
+    openrouterKey: "nlmw.openrouterKey"
   };
 
   const DIALOGUE_STYLES = [
@@ -38,6 +40,8 @@
     responseIds: {},
     responseIdChains: {},
     modelId: "",
+    provider: "lmstudio",
+    openrouterKey: "",
     lmOk: false,
     generating: false,
     msgActionsTargetId: "",
@@ -191,6 +195,10 @@
     state.responseIds = loadJson(STORAGE_KEYS.responseIds, {});
     state.responseIdChains = loadJson(STORAGE_KEYS.responseIdChains, {});
     state.modelId = String(loadJson(STORAGE_KEYS.modelId, ""));
+    state.provider = String(loadJson(STORAGE_KEYS.provider, "lmstudio"));
+    state.openrouterKey = String(loadJson(STORAGE_KEYS.openrouterKey, ""));
+
+    if (state.provider !== "lmstudio" && state.provider !== "openrouter") state.provider = "lmstudio";
 
     saveJson(STORAGE_KEYS.profile, state.profile);
 
@@ -1296,6 +1304,15 @@
     $("#userGender").value = state.profile?.gender || "unspecified";
     $("#userAvatarUrl").value = "";
     setImg($("#userAvatarPreview"), state.profile?.avatar, state.profile?.name);
+
+    const providerSel = $("#providerSelect");
+    if (providerSel) providerSel.value = state.provider || "lmstudio";
+
+    const orKeyInput = $("#openrouterKeyInput");
+    if (orKeyInput) orKeyInput.value = state.openrouterKey || "";
+
+    const orSection = $("#openrouterSettings");
+    if (orSection) orSection.hidden = state.provider !== "openrouter";
   }
 
   function buildSystemPrompt(profile, character) {
@@ -1393,6 +1410,15 @@
       s.innerHTML = "";
       s.disabled = true;
     }
+
+    if (state.provider === "openrouter") {
+      await refreshOpenRouterModels(selects);
+    } else {
+      await refreshLmStudioModels(selects);
+    }
+  }
+
+  async function refreshLmStudioModels(selects) {
     setStatus("Проверяю LM Studio…");
 
     try {
@@ -1461,6 +1487,61 @@
     } catch {
       state.lmOk = false;
       setStatus("LM Studio недоступна. Запустите сервер в LM Studio.", false);
+      for (const s of selects) s.innerHTML = "<option value=''>—</option>";
+    }
+  }
+
+  async function refreshOpenRouterModels(selects) {
+    setStatus("Загружаю модели OpenRouter…");
+
+    try {
+      const headers = {};
+      if (state.openrouterKey) headers["X-OpenRouter-Key"] = state.openrouterKey;
+
+      const res = await fetch("/api/openrouter/models", { headers });
+      const data = await res.json();
+
+      const models = Array.isArray(data?.data) ? data.data : [];
+      const items = [];
+      for (const m of models) {
+        if (!m || typeof m.id !== "string") continue;
+        const label = m.name || m.id;
+        items.push({ id: m.id, label });
+      }
+
+      if (items.length === 0) {
+        state.lmOk = true;
+        setStatus("OpenRouter: бесплатных моделей не найдено", false);
+        for (const s of selects) {
+          s.innerHTML = "<option value='venice/uncensored:free'>venice/uncensored:free</option>";
+          s.disabled = false;
+        }
+        return;
+      }
+
+      for (const s of selects) s.innerHTML = "";
+
+      for (const it of items) {
+        for (const s of selects) {
+          const opt = document.createElement("option");
+          opt.value = it.id;
+          opt.textContent = it.label;
+          s.appendChild(opt);
+        }
+      }
+
+      const ids = items.map((m) => m.id);
+      if (!state.modelId || !ids.includes(state.modelId)) state.modelId = ids[0];
+      for (const s of selects) {
+        s.value = state.modelId;
+        s.disabled = false;
+      }
+      state.lmOk = true;
+      setStatus(`OpenRouter: ${items.length} бесплатных моделей`);
+      saveJson(STORAGE_KEYS.modelId, state.modelId);
+    } catch (err) {
+      state.lmOk = false;
+      setStatus("OpenRouter недоступен: " + String(err?.message || err), false);
       for (const s of selects) s.innerHTML = "<option value=''>—</option>";
     }
   }
@@ -1812,6 +1893,100 @@
     img.src = imageUrl;
   }
 
+  async function streamOpenRouterToMessage({ character, assistantMsgId, messages, baseText }) {
+    let generated = "";
+    const base = String(baseText || "");
+
+    const bubble = getStreamingBubble(assistantMsgId);
+    const list = $("#messages");
+
+    const renderNow = () => {
+      if (!bubble) return;
+      renderInlineEmphasis(bubble, base + generated);
+      if (list) list.scrollTop = list.scrollHeight;
+    };
+
+    const headers = { "Content-Type": "application/json" };
+    if (state.openrouterKey) headers["X-OpenRouter-Key"] = state.openrouterKey;
+
+    const payload = {
+      model: state.modelId || "venice/uncensored:free",
+      messages,
+      temperature: 0.75,
+      stream: true
+    };
+
+    const res = await fetch("/api/openrouter/chat", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      const data = safeJsonParse(text);
+      const errMsg = data?.error?.message || data?.error || data?.message || `OpenRouter error (${res.status})`;
+      throw new Error(String(errMsg));
+    }
+
+    const contentType = res.headers.get("content-type") || "";
+    const isSSE = contentType.includes("text/event-stream");
+
+    if (isSSE && res.body) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let started = base.length > 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data:")) continue;
+          const jsonStr = trimmed.slice(5).trim();
+          if (jsonStr === "[DONE]") continue;
+
+          const chunk = safeJsonParse(jsonStr);
+          if (!chunk) continue;
+
+          if (chunk.error) {
+            const msg = chunk.error.message || chunk.error || "OpenRouter stream error";
+            throw new Error(String(msg));
+          }
+
+          const choice0 = chunk.choices?.[0];
+          const delta =
+            (typeof choice0?.delta?.content === "string" ? choice0.delta.content : "") ||
+            (typeof choice0?.text === "string" ? choice0.text : "");
+
+          if (typeof delta === "string" && delta.length > 0) {
+            if (!started) {
+              started = true;
+              if (bubble && bubble.textContent === "…") bubble.textContent = "";
+            }
+            generated += delta;
+            renderNow();
+          }
+        }
+      }
+    } else {
+      const text = await res.text();
+      const data = safeJsonParse(text);
+      const content = data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || "";
+      generated = String(content || "");
+      renderNow();
+    }
+
+    const fullContent = (base + generated) || "";
+    return { fullContent };
+  }
+
   async function sendMessage(userText) {
     const imgMatch = userText.match(/^\/img\s+(.+)/i);
     if (imgMatch) {
@@ -1822,7 +1997,8 @@
     const ch = activeCharacter();
     if (!ch) return;
     if (!state.lmOk) {
-      $("#composerHint").textContent = "LM Studio недоступна. Запустите Local Server в LM Studio.";
+      const providerName = state.provider === "openrouter" ? "OpenRouter" : "LM Studio";
+      $("#composerHint").textContent = `${providerName} недоступна.`;
       return;
     }
 
@@ -1844,28 +2020,40 @@
     $("#composerHint").textContent = "Генерирую ответ…";
 
     try {
-      const prevResponseId = lastResponseIdFor(ch.id);
-      const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, historyBefore, true);
+      let content;
 
-      const { fullContent, respId, streamErrorMessage } = await streamLmStudioRestToMessage({
-        character: ch,
-        assistantMsgId: placeholderId,
-        inputText: userText,
-        previousResponseId: prevResponseId,
-        systemPrompt,
-        baseText: ""
-      });
+      if (state.provider === "openrouter") {
+        const messages = buildOpenAiMessages(ch.id);
+        const { fullContent } = await streamOpenRouterToMessage({
+          character: ch,
+          assistantMsgId: placeholderId,
+          messages,
+          baseText: ""
+        });
+        content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
+      } else {
+        const prevResponseId = lastResponseIdFor(ch.id);
+        const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, historyBefore, true);
 
-      const content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
+        const { fullContent, respId, streamErrorMessage } = await streamLmStudioRestToMessage({
+          character: ch,
+          assistantMsgId: placeholderId,
+          inputText: userText,
+          previousResponseId: prevResponseId,
+          systemPrompt,
+          baseText: ""
+        });
+        content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
 
-      if (respId) {
-        const chain = responseIdChainFor(ch.id);
-        let nextChain = chain;
-        if (nextChain.length === 0 && prevResponseId) nextChain = [prevResponseId, respId];
-        else nextChain = nextChain.concat([respId]);
-        saveResponseIdChain(ch.id, nextChain);
-      } else if (streamErrorMessage && String(streamErrorMessage).toLowerCase().includes("job_not_found")) {
-        resetLmContextFor(ch.id);
+        if (respId) {
+          const chain = responseIdChainFor(ch.id);
+          let nextChain = chain;
+          if (nextChain.length === 0 && prevResponseId) nextChain = [prevResponseId, respId];
+          else nextChain = nextChain.concat([respId]);
+          saveResponseIdChain(ch.id, nextChain);
+        } else if (streamErrorMessage && String(streamErrorMessage).toLowerCase().includes("job_not_found")) {
+          resetLmContextFor(ch.id);
+        }
       }
 
       setChatHistory(
@@ -1897,7 +2085,8 @@
     const ch = activeCharacter();
     if (!ch) return;
     if (!state.lmOk) {
-      $("#composerHint").textContent = "LM Studio недоступна. Запустите Local Server в LM Studio.";
+      const providerName = state.provider === "openrouter" ? "OpenRouter" : "LM Studio";
+      $("#composerHint").textContent = `${providerName} недоступна.`;
       return;
     }
     if (state.generating) return;
@@ -1930,25 +2119,43 @@
     $("#composerHint").textContent = "Перегенерирую ответ…";
 
     try {
-      const chain = responseIdChainFor(ch.id);
-      const prevResponseId = chain.length >= 2 ? chain[chain.length - 2] : "";
-      const historyForPrompt = history.slice(0, userIdx);
-      const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, historyForPrompt, true);
+      let content;
 
-      const { fullContent, respId } = await streamLmStudioRestToMessage({
-        character: ch,
-        assistantMsgId,
-        inputText: userText,
-        previousResponseId: prevResponseId,
-        systemPrompt,
-        baseText: ""
-      });
+      if (state.provider === "openrouter") {
+        // For regeneration with OpenRouter, rebuild messages without the last assistant reply.
+        const truncatedHistory = history.slice(0, lastIdx);
+        setChatHistory(ch.id, truncatedHistory.concat([{ ...last, content: "…", pending: true, ts: nowTs() }]));
+        const messages = buildOpenAiMessages(ch.id);
+        // Remove the pending placeholder from messages.
+        const filteredMessages = messages.filter((m) => m.content !== "…");
 
-      const content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
+        const { fullContent } = await streamOpenRouterToMessage({
+          character: ch,
+          assistantMsgId,
+          messages: filteredMessages,
+          baseText: ""
+        });
+        content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
+      } else {
+        const chain = responseIdChainFor(ch.id);
+        const prevResponseId = chain.length >= 2 ? chain[chain.length - 2] : "";
+        const historyForPrompt = history.slice(0, userIdx);
+        const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, historyForPrompt, true);
 
-      if (respId) {
-        const nextChain = chain.length > 0 ? chain.slice(0, chain.length - 1).concat([respId]) : [respId];
-        saveResponseIdChain(ch.id, nextChain);
+        const { fullContent, respId } = await streamLmStudioRestToMessage({
+          character: ch,
+          assistantMsgId,
+          inputText: userText,
+          previousResponseId: prevResponseId,
+          systemPrompt,
+          baseText: ""
+        });
+        content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
+
+        if (respId) {
+          const nextChain = chain.length > 0 ? chain.slice(0, chain.length - 1).concat([respId]) : [respId];
+          saveResponseIdChain(ch.id, nextChain);
+        }
       }
 
       setChatHistory(
@@ -1980,7 +2187,8 @@
     const ch = activeCharacter();
     if (!ch) return;
     if (!state.lmOk) {
-      $("#composerHint").textContent = "LM Studio недоступна. Запустите Local Server в LM Studio.";
+      const providerName = state.provider === "openrouter" ? "OpenRouter" : "LM Studio";
+      $("#composerHint").textContent = `${providerName} недоступна.`;
       return;
     }
     if (state.generating) return;
@@ -2003,30 +2211,45 @@
     $("#composerHint").textContent = "Продолжаю ответ…";
 
     try {
-      const prevResponseId = lastResponseIdFor(ch.id);
-      const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, history, true);
+      let content;
 
-      const inputText =
-        "Продолжи свой предыдущий ответ. Не повторяй уже сказанное. Продолжай с того места, где остановился. Без вступлений.";
+      if (state.provider === "openrouter") {
+        const continueMsg = { role: "user", content: "Продолжи свой предыдущий ответ. Не повторяй уже сказанное. Продолжай с того места, где остановился. Без вступлений." };
+        const messages = buildOpenAiMessages(ch.id);
+        messages.push(continueMsg);
 
-      const { fullContent, respId } = await streamLmStudioRestToMessage({
-        character: ch,
-        assistantMsgId,
-        inputText,
-        previousResponseId: prevResponseId,
-        systemPrompt,
-        baseText: base
-      });
+        const { fullContent } = await streamOpenRouterToMessage({
+          character: ch,
+          assistantMsgId,
+          messages,
+          baseText: base
+        });
+        content = String(fullContent || "").trim() ? String(fullContent) : (base || "(пустой ответ)");
+      } else {
+        const prevResponseId = lastResponseIdFor(ch.id);
+        const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, history, true);
 
-      const content = String(fullContent || "").trim() ? String(fullContent) : (base || "(пустой ответ)");
+        const inputText =
+          "Продолжи свой предыдущий ответ. Не повторяй уже сказанное. Продолжай с того места, где остановился. Без вступлений.";
 
-      if (respId) {
-        const chain = responseIdChainFor(ch.id);
-        let nextChain = chain;
-        if (nextChain.length === 0 && prevResponseId) nextChain = [prevResponseId, respId];
-        else if (nextChain.length === 0) nextChain = [respId];
-        else nextChain = nextChain.slice(0, nextChain.length - 1).concat([respId]);
-        saveResponseIdChain(ch.id, nextChain);
+        const { fullContent, respId } = await streamLmStudioRestToMessage({
+          character: ch,
+          assistantMsgId,
+          inputText,
+          previousResponseId: prevResponseId,
+          systemPrompt,
+          baseText: base
+        });
+        content = String(fullContent || "").trim() ? String(fullContent) : (base || "(пустой ответ)");
+
+        if (respId) {
+          const chain = responseIdChainFor(ch.id);
+          let nextChain = chain;
+          if (nextChain.length === 0 && prevResponseId) nextChain = [prevResponseId, respId];
+          else if (nextChain.length === 0) nextChain = [respId];
+          else nextChain = nextChain.slice(0, nextChain.length - 1).concat([respId]);
+          saveResponseIdChain(ch.id, nextChain);
+        }
       }
 
       setChatHistory(
@@ -2442,6 +2665,30 @@
         state.modelId = String(e.target.value || "");
         saveJson(STORAGE_KEYS.modelId, state.modelId);
         for (const other of modelSelects) other.value = state.modelId;
+      });
+    }
+
+    const providerSel = $("#providerSelect");
+    if (providerSel) {
+      providerSel.addEventListener("change", (e) => {
+        state.provider = String(e.target.value || "lmstudio");
+        saveJson(STORAGE_KEYS.provider, state.provider);
+
+        const orSection = $("#openrouterSettings");
+        if (orSection) orSection.hidden = state.provider !== "openrouter";
+
+        state.modelId = "";
+        saveJson(STORAGE_KEYS.modelId, "");
+        refreshModels();
+      });
+    }
+
+    const orKeyInput = $("#openrouterKeyInput");
+    if (orKeyInput) {
+      orKeyInput.addEventListener("change", () => {
+        state.openrouterKey = String(orKeyInput.value || "").trim();
+        saveJson(STORAGE_KEYS.openrouterKey, state.openrouterKey);
+        if (state.provider === "openrouter") refreshModels();
       });
     }
 

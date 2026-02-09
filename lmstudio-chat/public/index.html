@@ -112,6 +112,29 @@
 
                 <button class="btn btn--accent" id="btnSaveProfile" type="button">Сохранить профиль</button>
               </div>
+
+              <div class="profile__card" style="margin-top: 1rem;">
+                <div style="font-weight: 600; margin-bottom: 0.5rem; font-size: 0.95rem; color: rgba(255,255,255,0.7);">Провайдер LLM</div>
+
+                <label class="field">
+                  <span class="field__label">Источник моделей</span>
+                  <select class="field__input" id="providerSelect">
+                    <option value="lmstudio">LM Studio (локальный)</option>
+                    <option value="openrouter">OpenRouter (бесплатные онлайн-модели)</option>
+                  </select>
+                </label>
+
+                <div id="openrouterSettings" hidden>
+                  <label class="field">
+                    <span class="field__label">OpenRouter API Key (необязательно)</span>
+                    <input class="field__input" id="openrouterKeyInput" type="password" placeholder="sk-or-..." autocomplete="off" />
+                  </label>
+                  <div style="font-size: 0.78rem; color: rgba(255,255,255,0.45); margin-top: 0.25rem;">
+                    Бесплатные модели работают без ключа (до 50 запросов/день). Ключ увеличивает лимиты.
+                    Получить на <a href="https://openrouter.ai/keys" target="_blank" rel="noopener" style="color: rgba(140,180,255,0.8);">openrouter.ai/keys</a>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </section>

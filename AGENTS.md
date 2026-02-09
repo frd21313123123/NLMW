@@ -40,6 +40,7 @@ npm start
 - `PORT` (по умолчанию `3000`)
 - `LMSTUDIO_BASE_URL` (по умолчанию `http://localhost:1234/v1`)
 - `LMSTUDIO_API_KEY` (если в LM Studio включен ключ)
+- `OPENROUTER_API_KEY` (необязательно, для увеличения лимитов OpenRouter)
 
 Примечание: значение `LMSTUDIO_BASE_URL` может заканчиваться на `/v1` или `/api/v1`.
 Сервер сам выведет базовые URL для REST и OpenAI-compat.
@@ -57,6 +58,8 @@ npm start
   - `POST /api/lmstudio/chat`
     - REST режим (если в payload есть `api:"rest"`/`input`/`system_prompt`/`previous_response_id`): `${REST_BASE}/api/v1/chat`
     - иначе OpenAI-compat: `${OPENAI_BASE}/chat/completions`
+  - `GET /api/openrouter/models` — список бесплатных моделей OpenRouter
+  - `POST /api/openrouter/chat` — проксирует запросы к OpenRouter API
   - `GET /api/health` — отдает вычисленные base URL
 
 ### Client: `lmstudio-chat/public/app.js`
