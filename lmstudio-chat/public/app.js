@@ -97,6 +97,15 @@
     };
   }
 
+  function normalizeProfileRecord(p) {
+    const base = defaultProfile();
+    const merged = { ...base, ...(p && typeof p === "object" ? p : {}) };
+    merged.name = String(merged.name || "").trim() || base.name;
+    merged.gender = normalizeGender(merged.gender);
+    merged.avatar = typeof merged.avatar === "string" ? merged.avatar : "";
+    return merged;
+  }
+
   function defaultCharacter() {
     return {
       id: uuid(),
@@ -175,13 +184,15 @@
   }
 
   function ensureSeed() {
-    state.profile = loadJson(STORAGE_KEYS.profile, defaultProfile());
+    state.profile = normalizeProfileRecord(loadJson(STORAGE_KEYS.profile, defaultProfile()));
     state.characters = loadJson(STORAGE_KEYS.characters, []);
     state.selectedCharacterId = String(loadJson(STORAGE_KEYS.selectedCharacterId, ""));
     state.conversations = loadJson(STORAGE_KEYS.conversations, {});
     state.responseIds = loadJson(STORAGE_KEYS.responseIds, {});
     state.responseIdChains = loadJson(STORAGE_KEYS.responseIdChains, {});
     state.modelId = String(loadJson(STORAGE_KEYS.modelId, ""));
+
+    saveJson(STORAGE_KEYS.profile, state.profile);
 
     if (Array.isArray(state.characters)) {
       state.characters = state.characters.filter((x) => x && typeof x === "object").map(normalizeCharacterRecord);
@@ -204,9 +215,9 @@
 
     if (!state.editingCharacterId) state.editingCharacterId = state.selectedCharacterId;
 
-    if (!state.conversations || typeof state.conversations !== "object") state.conversations = {};
-    if (!state.responseIds || typeof state.responseIds !== "object") state.responseIds = {};
-    if (!state.responseIdChains || typeof state.responseIdChains !== "object") state.responseIdChains = {};
+    if (!state.conversations || typeof state.conversations !== "object" || Array.isArray(state.conversations)) state.conversations = {};
+    if (!state.responseIds || typeof state.responseIds !== "object" || Array.isArray(state.responseIds)) state.responseIds = {};
+    if (!state.responseIdChains || typeof state.responseIdChains !== "object" || Array.isArray(state.responseIdChains)) state.responseIdChains = {};
   }
 
   function normalizeImportedCharacter(raw) {
@@ -1582,6 +1593,10 @@
         generated = fallback;
         renderNow();
       }
+    }
+
+    if (!generated && streamErrorMessage) {
+      throw new Error(String(streamErrorMessage));
     }
 
     const fullContent = (base + generated) || "";
