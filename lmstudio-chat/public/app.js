@@ -1623,6 +1623,95 @@
     return msgs.map((x) => x.content).join("\n\n");
   }
 
+
+
+  function detectCyrillic(text) {
+    return /[Ѐ-ӿ]/.test(String(text || ""));
+  }
+
+  async function translateBackstoryText(sourceText) {
+    const src = String(sourceText || "").trim();
+    if (!src) throw new Error("Введите текст в поле предыстории.");
+
+    const toRussian = !detectCyrillic(src);
+    const target = toRussian ? "русский" : "английский";
+    const source = toRussian ? "английский" : "русский";
+
+    const prompt = [
+      `Переведи текст с ${source} на ${target}.`,
+      "Сохрани смысл, стиль и структуру абзацев.",
+      "Верни только перевод, без пояснений и кавычек.",
+      "Текст:",
+      src
+    ].join("\n");
+
+    if (state.provider === "openrouter") {
+      const headers = { "Content-Type": "application/json" };
+      if (state.openrouterKey) headers["X-OpenRouter-Key"] = state.openrouterKey;
+
+      const payload = {
+        model: state.modelId || "venice/uncensored:free",
+        messages: [
+          { role: "system", content: "Ты профессиональный переводчик." },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.2,
+        stream: false
+      };
+
+      const res = await fetch("/api/openrouter/chat", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      const text = await res.text();
+      const data = safeJsonParse(text);
+      if (!res.ok) {
+        const errMsg = data?.error?.message || data?.error || data?.message || `OpenRouter error (${res.status})`;
+        throw new Error(String(errMsg));
+      }
+
+      const translated = data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || "";
+      const out = String(translated || "").trim();
+      if (!out) throw new Error("Модель вернула пустой перевод.");
+      return { translated: out, directionLabel: `${source} → ${target}` };
+    }
+
+    const payload = {
+      api: "rest",
+      model: state.modelId || "local-model",
+      input: prompt,
+      temperature: 0.2,
+      stream: false,
+      store: false,
+      system_prompt: "Ты профессиональный переводчик. Возвращай только перевод без пояснений."
+    };
+
+    const res = await fetch("/api/lmstudio/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    const text = await res.text();
+    const data = safeJsonParse(text);
+
+    if (!res.ok) {
+      const errMsg = data?.error || data?.message || `Ошибка LM Studio (${res.status})`;
+      throw new Error(String(errMsg));
+    }
+
+    let translated = "";
+    if (data && Array.isArray(data.output)) translated = extractRestMessagesFromResult(data);
+    else translated = data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || "";
+
+    const out = String(translated || "").trim();
+    if (!out) throw new Error("Модель вернула пустой перевод.");
+
+    return { translated: out, directionLabel: `${source} → ${target}` };
+  }
+
   async function streamLmStudioRestToMessage({
     character,
     assistantMsgId,
@@ -2551,6 +2640,31 @@
       closeModal();
       setView("chat");
     });
+
+
+
+    const btnTranslateBackstory = $("#btnTranslateBackstory");
+    if (btnTranslateBackstory) {
+      btnTranslateBackstory.addEventListener("click", async () => {
+        const input = $("#charBackstoryInput");
+        const note = $("#charTranslateNote");
+        if (!input) return;
+
+        if (note) note.textContent = "Перевод…";
+        btnTranslateBackstory.disabled = true;
+
+        try {
+          const { translated, directionLabel } = await translateBackstoryText(input.value);
+          input.value = translated;
+          if (note) note.textContent = `Готово: ${directionLabel}`;
+        } catch (err) {
+          const msg = String(err?.message || err || "Ошибка перевода");
+          if (note) note.textContent = msg;
+        } finally {
+          btnTranslateBackstory.disabled = false;
+        }
+      });
+    }
 
     const btnGenAvatar = $("#btnGenAvatar");
     if (btnGenAvatar) btnGenAvatar.addEventListener("click", () => generateCharacterAvatar());

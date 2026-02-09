@@ -750,6 +750,22 @@ body {
   border-color: rgba(109, 225, 193, 0.4);
 }
 
+
+.field__labelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.btn--tiny {
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1;
+}
+
 .field__input[type="file"] {
   font-size: 13px;
   padding: 8px;
