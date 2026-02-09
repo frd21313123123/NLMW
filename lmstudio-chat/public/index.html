@@ -35,6 +35,9 @@
           </button>
           <div class="appbar__right">
             <select class="model__select model__select--compact" id="modelSelect" aria-label="Модель"></select>
+            <button class="iconBtn" id="btnOpenPrompts" type="button" aria-label="Сохраненные промты" title="Сохраненные промты">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg>
+            </button>
             <button class="iconBtn" id="btnClearChat" type="button" aria-label="Очистить чат">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-.867 12.142A2 2 0 0 1 16.138 20H7.862a2 2 0 0 1-1.995-1.858L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg>
             </button>
@@ -266,6 +269,35 @@
         </div>
       </div>
 
+
+      <!-- Saved prompts sheet -->
+      <div class="sheet" id="promptsSheet" hidden>
+        <div class="sheet__overlay" data-close-prompts="1"></div>
+        <div class="sheet__panel" role="dialog" aria-modal="true" aria-label="Сохраненные промты">
+          <div class="sheet__title">Сохраненные промты</div>
+          <div class="promptManager">
+            <div class="promptManager__create">
+              <label class="field">
+                <span class="field__label">Название</span>
+                <input class="field__input" id="promptTitleInput" type="text" maxlength="80" placeholder="Например: Промт для ролевой сцены" />
+              </label>
+              <label class="field">
+                <span class="field__label">Текст промта</span>
+                <textarea class="field__input field__input--area" id="promptTextInput" rows="4" maxlength="4000" placeholder="Введите текст промта..."></textarea>
+              </label>
+              <div class="row row--actions">
+                <button class="btn btn--accent" id="btnSavePrompt" type="button">Сохранить промт</button>
+                <button class="btn btn--ghost" id="btnClearPromptDraft" type="button">Очистить</button>
+              </div>
+              <div class="smallNote" id="promptSheetNote"></div>
+            </div>
+            <div class="promptManager__list" id="savedPromptsList"></div>
+          </div>
+          <div class="sheet__buttons">
+            <button class="btn btn--ghost" data-close-prompts="1" type="button">Закрыть</button>
+          </div>
+        </div>
+      </div>
       <!-- Message actions sheet -->
       <div class="sheet" id="msgActions" hidden>
         <div class="sheet__overlay" data-close="1"></div>

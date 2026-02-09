@@ -10,7 +10,8 @@
     responseIds: "nlmw.lmstudioResponseIds",
     responseIdChains: "nlmw.lmstudioResponseIdChains",
     provider: "nlmw.provider",
-    openrouterKey: "nlmw.openrouterKey"
+    openrouterKey: "nlmw.openrouterKey",
+    savedPrompts: "nlmw.savedPrompts"
   };
 
   const DIALOGUE_STYLES = [
@@ -42,6 +43,7 @@
     modelId: "",
     provider: "lmstudio",
     openrouterKey: "",
+    savedPrompts: [],
     lmOk: false,
     generating: false,
     msgActionsTargetId: "",
@@ -197,6 +199,7 @@
     state.modelId = String(loadJson(STORAGE_KEYS.modelId, ""));
     state.provider = String(loadJson(STORAGE_KEYS.provider, "lmstudio"));
     state.openrouterKey = String(loadJson(STORAGE_KEYS.openrouterKey, ""));
+    state.savedPrompts = loadJson(STORAGE_KEYS.savedPrompts, []);
 
     if (state.provider !== "lmstudio" && state.provider !== "openrouter") state.provider = "lmstudio";
 
@@ -226,6 +229,19 @@
     if (!state.conversations || typeof state.conversations !== "object" || Array.isArray(state.conversations)) state.conversations = {};
     if (!state.responseIds || typeof state.responseIds !== "object" || Array.isArray(state.responseIds)) state.responseIds = {};
     if (!state.responseIdChains || typeof state.responseIdChains !== "object" || Array.isArray(state.responseIdChains)) state.responseIdChains = {};
+    if (!Array.isArray(state.savedPrompts)) state.savedPrompts = [];
+
+    state.savedPrompts = state.savedPrompts
+      .filter((x) => x && typeof x === "object")
+      .map((x) => ({
+        id: typeof x.id === "string" && x.id.trim() ? x.id.trim() : uuid(),
+        title: clampText(String(x.title || "").trim() || "Промт", 80),
+        text: clampText(String(x.text || "").trim(), 4000),
+        createdAt: typeof x.createdAt === "number" && Number.isFinite(x.createdAt) ? x.createdAt : nowTs(),
+        updatedAt: typeof x.updatedAt === "number" && Number.isFinite(x.updatedAt) ? x.updatedAt : nowTs()
+      }))
+      .filter((x) => x.text);
+    saveJson(STORAGE_KEYS.savedPrompts, state.savedPrompts);
   }
 
   function normalizeImportedCharacter(raw) {
@@ -2104,6 +2120,109 @@
     return { fullContent };
   }
 
+  function openPromptsSheet() {
+    const sheet = $("#promptsSheet");
+    if (!sheet) return;
+    sheet.hidden = false;
+    renderSavedPrompts();
+  }
+
+  function closePromptsSheet() {
+    const sheet = $("#promptsSheet");
+    if (!sheet) return;
+    sheet.hidden = true;
+  }
+
+  function renderSavedPrompts() {
+    const list = $("#savedPromptsList");
+    if (!list) return;
+    list.innerHTML = "";
+
+    const items = Array.isArray(state.savedPrompts) ? state.savedPrompts.slice() : [];
+    items.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "smallNote";
+      empty.textContent = "Пока нет сохраненных промтов.";
+      list.appendChild(empty);
+      return;
+    }
+
+    for (const item of items) {
+      const card = document.createElement("div");
+      card.className = "promptCard";
+
+      const title = document.createElement("div");
+      title.className = "promptCard__title";
+      title.textContent = item.title || "Промт";
+
+      const text = document.createElement("div");
+      text.className = "promptCard__text";
+      text.textContent = item.text || "";
+
+      const actions = document.createElement("div");
+      actions.className = "promptCard__actions";
+
+      const btnUse = document.createElement("button");
+      btnUse.className = "btn btn--tiny";
+      btnUse.type = "button";
+      btnUse.textContent = "Вставить";
+      btnUse.addEventListener("click", () => {
+        const input = $("#userInput");
+        if (!input) return;
+        const current = String(input.value || "");
+        input.value = current ? `${current}
+${item.text}` : item.text;
+        autoGrowTextarea(input);
+        input.focus();
+        $("#promptSheetNote").textContent = "Промт вставлен в поле сообщения.";
+      });
+
+      const btnDelete = document.createElement("button");
+      btnDelete.className = "btn btn--tiny btn--danger";
+      btnDelete.type = "button";
+      btnDelete.textContent = "Удалить";
+      btnDelete.addEventListener("click", () => {
+        const ok = window.confirm(`Удалить промт «${item.title || "Промт"}»?`);
+        if (!ok) return;
+        state.savedPrompts = state.savedPrompts.filter((x) => x && x.id !== item.id);
+        saveJson(STORAGE_KEYS.savedPrompts, state.savedPrompts);
+        renderSavedPrompts();
+        $("#promptSheetNote").textContent = "Промт удален.";
+      });
+
+      actions.appendChild(btnUse);
+      actions.appendChild(btnDelete);
+      card.appendChild(title);
+      card.appendChild(text);
+      card.appendChild(actions);
+      list.appendChild(card);
+    }
+  }
+
+  function savePromptFromDraft() {
+    const titleInput = $("#promptTitleInput");
+    const textInput = $("#promptTextInput");
+    const note = $("#promptSheetNote");
+    if (!titleInput || !textInput || !note) return;
+
+    const title = clampText(String(titleInput.value || "").trim() || "Промт", 80);
+    const text = clampText(String(textInput.value || "").trim(), 4000);
+    if (!text) {
+      note.textContent = "Введите текст промта.";
+      return;
+    }
+
+    state.savedPrompts.unshift({ id: uuid(), title, text, createdAt: nowTs(), updatedAt: nowTs() });
+    saveJson(STORAGE_KEYS.savedPrompts, state.savedPrompts);
+
+    titleInput.value = "";
+    textInput.value = "";
+    note.textContent = "Промт сохранен.";
+    renderSavedPrompts();
+  }
+
   async function sendMessage(userText) {
     const imgMatch = userText.match(/^\/img\s+(.+)/i);
     if (imgMatch) {
@@ -2535,8 +2654,10 @@
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
       const msgSheet = $("#msgActions");
+      const promptsSheet = $("#promptsSheet");
       const charModal = $("#charactersModal");
       if (msgSheet && !msgSheet.hidden) closeMsgActions();
+      else if (promptsSheet && !promptsSheet.hidden) closePromptsSheet();
       else if (charModal && !charModal.hidden) closeModal();
     });
 
@@ -2896,6 +3017,34 @@
         state.openrouterKey = String(orKeyInput.value || "").trim();
         saveJson(STORAGE_KEYS.openrouterKey, state.openrouterKey);
         if (state.provider === "openrouter") refreshModels();
+      });
+    }
+
+    const btnOpenPrompts = $("#btnOpenPrompts");
+    if (btnOpenPrompts) {
+      btnOpenPrompts.addEventListener("click", () => openPromptsSheet());
+    }
+
+    const promptsSheet = $("#promptsSheet");
+    if (promptsSheet) {
+      promptsSheet.addEventListener("click", (e) => {
+        const t = e.target;
+        if (t && t.dataset && t.dataset.closePrompts) closePromptsSheet();
+      });
+    }
+
+    const btnSavePrompt = $("#btnSavePrompt");
+    if (btnSavePrompt) btnSavePrompt.addEventListener("click", () => savePromptFromDraft());
+
+    const btnClearPromptDraft = $("#btnClearPromptDraft");
+    if (btnClearPromptDraft) {
+      btnClearPromptDraft.addEventListener("click", () => {
+        const titleInput = $("#promptTitleInput");
+        const textInput = $("#promptTextInput");
+        if (titleInput) titleInput.value = "";
+        if (textInput) textInput.value = "";
+        const note = $("#promptSheetNote");
+        if (note) note.textContent = "";
       });
     }
 
