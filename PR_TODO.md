@@ -6,9 +6,17 @@
 - Import dialog accepts:
   - JSON (single character or array)
   - PolyBuzz link (`https://www.polybuzz.ai/...`) and will call the local server endpoint.
+- Paste-to-import:
+  - If you copy a PolyBuzz character link and press `Ctrl+V` (not inside an input/textarea), the app will auto-import it.
+  - JSON auto-import via paste only runs while the Characters modal is open (to avoid surprises).
 - Server has `POST /api/import/polybuzz` which tries:
   - PolyBuzz public API (`api.polybuzz.ai`) first
   - HTML meta fallback second
+  - plus retries/backoff and upstream timeouts to handle transient errors (e.g. `errNo=5002 system busy now`).
+- (Extra) Image helpers:
+  - Character editor has a `Сгенерировать фото` button.
+  - Chat supports `/img <prompt>` to generate an image bubble.
+  - Currently implemented via a public image endpoint (external network call).
 
 ## What I Didn't Finish (And What Still Needs Doing)
 
@@ -28,24 +36,24 @@
     - splitting `systemRole` into structured parts (persona vs rules vs scenario) if present
     - respecting language (RU/EN) and mapping `dialogueStyle` better
 - Robustness and rate-limits:
-  - Add retries/backoff for PolyBuzz API `errNo=5002 system busy now`.
-  - Add server-side timeouts for upstream fetch.
   - Add caching (e.g. per `secretSceneID`) to avoid hammering PolyBuzz.
 - Authentication edge-cases:
   - PolyBuzz HTML pages frequently show "view limit / log in". We avoid that by calling their public API.
   - If PolyBuzz changes and starts requiring auth for API calls, we may need to support user-supplied cookies or tokens more explicitly.
 - UI feedback:
-  - Right now UI sets a short status line; no progress indicator, and errors are shown as text.
+  - Right now UI uses a small note + a short status flash; no progress indicator, and errors are shown as text.
   - Add a dedicated import modal state (loading/spinner + detailed error).
+- Privacy / local-only decision:
+  - The image generation feature uses an external service and will send prompts over the network.
+  - Decide if this should stay (and maybe be gated by a setting/env var), or be removed to keep the project strictly local.
 
 ## How To Create a PR
 
-This repo is currently on a single branch `feature/lmstudio-chat-improvements` tracking `origin/feature/lmstudio-chat-improvements`.
+Default branch is currently `feature/lmstudio-chat-improvements`.
 
 If you want a separate PR branch:
 
-1. `git checkout -b feature/polybuzz-import`
+1. `git checkout -b feature/polybuzz-import-ux`
 2. Commit changes
-3. Push: `git push -u origin feature/polybuzz-import`
-4. Open PR on GitHub from `feature/polybuzz-import` into the default branch.
-
+3. Push: `git push -u origin feature/polybuzz-import-ux`
+4. Open PR on GitHub from `feature/polybuzz-import-ux` into `feature/lmstudio-chat-improvements`.

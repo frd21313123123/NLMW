@@ -398,8 +398,66 @@ function polybuzzBaseHeaders({ accept = "application/json" } = {}) {
   return headers;
 }
 
-async function fetchJsonOrThrow(url, opts, ctx) {
-  const r = await fetch(url, opts);
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+function shouldRetryPolybuzzError(err) {
+  const msg = String(err?.message || err || "");
+  return (
+    /\(5002\)/.test(msg) || // system busy now
+    /HTTP (429|502|503|504)\b/.test(msg) ||
+    /timeout/i.test(msg) ||
+    /fetch failed/i.test(msg) ||
+    /ECONNRESET/i.test(msg) ||
+    /ETIMEDOUT/i.test(msg)
+  );
+}
+
+async function withRetry(fn, { retries = 3, baseDelayMs = 450 } = {}) {
+  let lastErr = null;
+  const n = Math.max(0, Number(retries) || 0);
+
+  for (let attempt = 0; attempt <= n; attempt++) {
+    try {
+      return await fn(attempt);
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= n || !shouldRetryPolybuzzError(err)) throw err;
+      const jitter = Math.floor(Math.random() * 150);
+      const delay = baseDelayMs * Math.pow(2, attempt) + jitter;
+      await sleep(delay);
+    }
+  }
+
+  throw lastErr;
+}
+
+async function fetchJsonOrThrow(url, opts, ctx, { timeoutMs = 15_000 } = {}) {
+  const timeout = Math.max(1_000, Number(timeoutMs) || 15_000);
+  let signal = opts && opts.signal ? opts.signal : undefined;
+  let timeoutSignal = undefined;
+
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    timeoutSignal = AbortSignal.timeout(timeout);
+  }
+
+  if (timeoutSignal) {
+    if (signal && typeof AbortSignal !== "undefined" && typeof AbortSignal.any === "function") {
+      signal = AbortSignal.any([signal, timeoutSignal]);
+    } else if (!signal) {
+      signal = timeoutSignal;
+    }
+  }
+
+  let r;
+  try {
+    r = await fetch(url, { ...(opts || {}), signal });
+  } catch (err) {
+    if (err && err.name === "AbortError") throw new Error(`${ctx}: timeout after ${timeout}ms`);
+    throw err;
+  }
+
   const text = await r.text();
   let data = null;
   try {
@@ -408,45 +466,60 @@ async function fetchJsonOrThrow(url, opts, ctx) {
     const snippet = text.slice(0, 400);
     throw new Error(`${ctx}: invalid JSON (HTTP ${r.status}). ${snippet}`);
   }
+
+  if (!r.ok) {
+    const msg =
+      data && typeof data === "object" && (data.errMsg || data.message)
+        ? String(data.errMsg || data.message)
+        : text.slice(0, 400);
+    throw new Error(`${ctx}: HTTP ${r.status}. ${msg}`);
+  }
+
   return { status: r.status, data };
 }
 
 async function polybuzzGetCuid() {
-  const { data } = await fetchJsonOrThrow(
-    "https://api.polybuzz.ai/api/user/getcuid",
-    { method: "GET", headers: polybuzzBaseHeaders() },
-    "polybuzz getcuid"
-  );
+  return await withRetry(async () => {
+    const { data } = await fetchJsonOrThrow(
+      "https://api.polybuzz.ai/api/user/getcuid",
+      { method: "GET", headers: polybuzzBaseHeaders() },
+      "polybuzz getcuid"
+    );
 
-  if (!data || typeof data !== "object") throw new Error("polybuzz getcuid: empty response");
-  if (data.errNo !== 0) throw new Error(`polybuzz getcuid: ${data.errMsg || "error"} (${data.errNo})`);
+    if (!data || typeof data !== "object") throw new Error("polybuzz getcuid: empty response");
+    if (data.errNo !== 0) throw new Error(`polybuzz getcuid: ${data.errMsg || "error"} (${data.errNo})`);
 
-  const cuid = data?.data?.cuid;
-  if (typeof cuid !== "string" || !cuid.trim()) throw new Error("polybuzz getcuid: missing cuid");
-  return cuid.trim();
+    const cuid = data?.data?.cuid;
+    if (typeof cuid !== "string" || !cuid.trim()) throw new Error("polybuzz getcuid: missing cuid");
+    return cuid.trim();
+  });
 }
 
 async function polybuzzSceneDetailGuest(secretSceneID, cuid) {
-  const headers = { ...polybuzzBaseHeaders(), cuid, "Content-Type": "application/json" };
-  const { data } = await fetchJsonOrThrow(
-    "https://api.polybuzz.ai/api/scene/detailguest",
-    { method: "POST", headers, body: JSON.stringify({ secretSceneID }) },
-    "polybuzz detailguest"
-  );
+  return await withRetry(async () => {
+    const headers = { ...polybuzzBaseHeaders(), cuid, "Content-Type": "application/json" };
+    const { data } = await fetchJsonOrThrow(
+      "https://api.polybuzz.ai/api/scene/detailguest",
+      { method: "POST", headers, body: JSON.stringify({ secretSceneID }) },
+      "polybuzz detailguest"
+    );
 
-  if (!data || typeof data !== "object") throw new Error("polybuzz detailguest: empty response");
-  if (data.errNo !== 0) throw new Error(`polybuzz detailguest: ${data.errMsg || "error"} (${data.errNo})`);
-  return data.data && typeof data.data === "object" ? data.data : {};
+    if (!data || typeof data !== "object") throw new Error("polybuzz detailguest: empty response");
+    if (data.errNo !== 0) throw new Error(`polybuzz detailguest: ${data.errMsg || "error"} (${data.errNo})`);
+    return data.data && typeof data.data === "object" ? data.data : {};
+  });
 }
 
 async function polybuzzSceneProfileGuest(secretSceneID, cuid) {
-  const headers = { ...polybuzzBaseHeaders(), cuid };
-  const url = `https://api.polybuzz.ai/api/scene/profileguest?secretSceneID=${encodeURIComponent(secretSceneID)}`;
-  const { data } = await fetchJsonOrThrow(url, { method: "GET", headers }, "polybuzz profileguest");
+  return await withRetry(async () => {
+    const headers = { ...polybuzzBaseHeaders(), cuid };
+    const url = `https://api.polybuzz.ai/api/scene/profileguest?secretSceneID=${encodeURIComponent(secretSceneID)}`;
+    const { data } = await fetchJsonOrThrow(url, { method: "GET", headers }, "polybuzz profileguest");
 
-  if (!data || typeof data !== "object") throw new Error("polybuzz profileguest: empty response");
-  if (data.errNo !== 0) throw new Error(`polybuzz profileguest: ${data.errMsg || "error"} (${data.errNo})`);
-  return data.data && typeof data.data === "object" ? data.data : {};
+    if (!data || typeof data !== "object") throw new Error("polybuzz profileguest: empty response");
+    if (data.errNo !== 0) throw new Error(`polybuzz profileguest: ${data.errMsg || "error"} (${data.errNo})`);
+    return data.data && typeof data.data === "object" ? data.data : {};
+  });
 }
 
 function polybuzzGenderToLocal(g) {
@@ -457,15 +530,40 @@ function polybuzzGenderToLocal(g) {
 }
 
 function extractFirstAssistantLine(speechText, sceneName) {
-  const name = String(sceneName || "").trim();
   const text = String(speechText || "");
-  if (!name || !text) return "";
+  const name = String(sceneName || "").trim();
+  if (!text) return "";
 
   const lines = text.split(/\r?\n/).map((l) => String(l || "").trim()).filter(Boolean);
-  const prefix = name.toLowerCase() + ":";
+  const isEllipsis = (s) => s === "..." || s === "…" || /^(\.|…)+$/.test(s);
+  const isStage = (s) => s.startsWith("*") && s.endsWith("*") && s.length >= 3;
+  const isUserLine = (s) => {
+    const low = s.toLowerCase();
+    return low.startsWith("guest:") || low.startsWith("user:") || low.startsWith("you:");
+  };
+
+  const assistantPrefixes = [];
+  if (name) assistantPrefixes.push(name.toLowerCase() + ":");
+  assistantPrefixes.push("assistant:", "ai:");
 
   for (const l of lines) {
-    if (l.toLowerCase().startsWith(prefix)) return l.slice(prefix.length).trim();
+    if (isEllipsis(l)) continue;
+    const low = l.toLowerCase();
+    for (const p of assistantPrefixes) {
+      if (low.startsWith(p)) {
+        const msg = l.slice(p.length).trim();
+        if (msg && !isEllipsis(msg)) return msg;
+      }
+    }
+  }
+
+  for (const l of lines) {
+    if (isEllipsis(l) || isStage(l) || isUserLine(l)) continue;
+    if (l.includes(":")) {
+      const [head, tail] = l.split(":", 2);
+      if (head && tail && head.length <= 24 && !isUserLine(head + ":")) return tail.trim();
+    }
+    return l;
   }
 
   return "";

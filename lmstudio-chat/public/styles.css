@@ -469,6 +469,18 @@ body {
   font-style: italic;
 }
 
+.bubble--image {
+  padding: 4px;
+  background: transparent;
+  white-space: normal;
+}
+
+.bubble__img {
+  max-width: 100%;
+  border-radius: 14px;
+  display: block;
+}
+
 .msg--me .bubble {
   background: #0d2620;
   margin-left: auto;
@@ -890,6 +902,20 @@ body {
 
 .row--actions {
   justify-content: flex-start;
+}
+
+.row--genAvatar {
+  justify-content: flex-start;
+}
+
+.btn--genAvatar {
+  font-size: 13px;
+  padding: 6px 14px;
+}
+
+.btn--genAvatar:disabled {
+  opacity: 0.5;
+  cursor: wait;
 }
 
 .smallNote {

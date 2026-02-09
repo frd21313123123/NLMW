@@ -500,6 +500,62 @@
     return data.character;
   }
 
+  let importCharactersBusy = false;
+
+  function applyImportedCharactersResult(result, { openModalOnSuccess = false } = {}) {
+    const imported = Number(result?.imported || 0);
+    const firstId = String(result?.firstId || "");
+    if (!(imported > 0)) return false;
+
+    if (firstId) state.editingCharacterId = firstId;
+    if (openModalOnSuccess) openModal();
+
+    fillCharacterForm();
+    refreshChatsView();
+
+    const note = `Импортировано: ${imported}`;
+    $("#charFormNote").textContent = note;
+    flashStatus(note, true);
+    return true;
+  }
+
+  async function importCharactersFromTextOrUrl(text, { openModalOnSuccess = false, showErrors = true } = {}) {
+    const s = String(text || "").trim();
+    if (!s) return false;
+    if (importCharactersBusy) return false;
+
+    importCharactersBusy = true;
+    try {
+      const payload = safeJsonParse(s);
+      if (payload) {
+        return applyImportedCharactersResult(importCharactersFromJsonPayload(payload), { openModalOnSuccess });
+      }
+
+      if (isPolybuzzUrl(s)) {
+        $("#charFormNote").textContent = "Импортирую с PolyBuzz…";
+        flashStatus("Импорт PolyBuzz…", true, 2500);
+
+        const character = await importFromPolybuzzUrl(s);
+        return applyImportedCharactersResult(importCharactersFromJsonPayload(character), { openModalOnSuccess });
+      }
+
+      if (showErrors) {
+        $("#charFormNote").textContent = "Не удалось импортировать: проверьте JSON или ссылку.";
+        flashStatus("Не удалось импортировать", false);
+      }
+      return false;
+    } catch (err) {
+      if (showErrors) {
+        const msg = String(err?.message || err);
+        $("#charFormNote").textContent = msg;
+        flashStatus(msg, false);
+      }
+      return false;
+    } finally {
+      importCharactersBusy = false;
+    }
+  }
+
   function activeCharacter() {
     return state.characters.find((c) => c.id === state.selectedCharacterId) || state.characters[0];
   }
@@ -667,6 +723,23 @@
     if (!el) return;
     el.textContent = text;
     el.style.color = ok ? "" : "rgba(255,110,110,0.92)";
+  }
+
+  let statusFlashToken = 0;
+  function flashStatus(text, ok = true, ms = 4500) {
+    const el = $("#lmStatus");
+    if (!el) return;
+    const prevText = el.textContent;
+    const prevColor = el.style.color;
+    const token = ++statusFlashToken;
+
+    setStatus(text, ok);
+
+    window.setTimeout(() => {
+      if (statusFlashToken !== token) return;
+      el.textContent = prevText;
+      el.style.color = prevColor;
+    }, ms);
   }
 
   function setView(next) {
@@ -1023,12 +1096,25 @@
       const bubbleWrap = document.createElement("div");
       const bubble = document.createElement("div");
       bubble.className = "bubble";
-      renderInlineEmphasis(bubble, m.content);
+
+      if (m.image_url) {
+        bubble.classList.add("bubble--image");
+        const img = document.createElement("img");
+        img.className = "bubble__img";
+        img.src = m.image_url;
+        img.alt = m.content || "image";
+        img.loading = "lazy";
+        bubble.appendChild(img);
+      } else if (m.image_loading) {
+        bubble.textContent = "Генерация изображения…";
+      } else {
+        renderInlineEmphasis(bubble, m.content);
+      }
       wireHoldToMessage(bubble, m.id);
 
       let actionsEl = null;
 
-      if (m.role === "assistant") {
+      if (m.role === "assistant" && !m.image_url && !m.image_loading) {
         const actions = document.createElement("div");
         actions.className = "msg__actions";
 
@@ -1391,7 +1477,20 @@
     const bubbleWrap = document.createElement("div");
     const bubble = document.createElement("div");
     bubble.className = "bubble";
-    renderInlineEmphasis(bubble, m.content);
+
+    if (m.image_url) {
+      bubble.classList.add("bubble--image");
+      const img = document.createElement("img");
+      img.className = "bubble__img";
+      img.src = m.image_url;
+      img.alt = m.content || "image";
+      img.loading = "lazy";
+      bubble.appendChild(img);
+    } else if (m.image_loading) {
+      bubble.textContent = "Генерация изображения…";
+    } else {
+      renderInlineEmphasis(bubble, m.content);
+    }
     wireHoldToMessage(bubble, m.id);
 
     const meta = document.createElement("div");
@@ -1590,7 +1689,121 @@
     return { fullContent, respId, streamErrorMessage };
   }
 
+  function buildAvatarPrompt(character) {
+    const parts = [];
+    const name = String(character.name || "").trim();
+    const gender = character.gender;
+    const outfit = String(character.outfit || "").trim();
+    const bgHint = String(character.backgroundHint || "").trim();
+
+    parts.push("character portrait");
+    if (gender === "female") parts.push("female");
+    else if (gender === "male") parts.push("male");
+    if (name) parts.push("named " + name);
+    if (outfit) parts.push(outfit);
+    if (bgHint) parts.push(bgHint + " background");
+    parts.push("detailed face, high quality, digital art, bust shot");
+
+    return parts.join(", ");
+  }
+
+  async function generateCharacterAvatar() {
+    const c = editingCharacter();
+    if (!c) return;
+
+    const note = $("#genAvatarNote");
+    const btn = $("#btnGenAvatar");
+    if (btn) btn.disabled = true;
+    if (note) note.textContent = "Генерация…";
+
+    const prompt = buildAvatarPrompt(c);
+    const imageUrl = "https://image.pollinations.ai/prompt/"
+      + encodeURIComponent(prompt)
+      + "?width=512&height=512&nologo=true&model=flux&seed=" + Math.floor(Math.random() * 1e9);
+
+    const img = new Image();
+    img.onload = () => {
+      upsertCharacter({ ...c, avatar: imageUrl, updatedAt: nowTs() });
+      fillCharacterForm();
+      if (state.selectedCharacterId === c.id) renderHeader();
+      refreshChatsView();
+      if (note) note.textContent = "Готово!";
+      if (btn) btn.disabled = false;
+      setTimeout(() => { if (note && note.textContent === "Готово!") note.textContent = ""; }, 2000);
+    };
+    img.onerror = () => {
+      if (note) note.textContent = "Ошибка генерации";
+      if (btn) btn.disabled = false;
+    };
+    img.src = imageUrl;
+  }
+
+  async function generateImage(prompt) {
+    const ch = activeCharacter();
+    if (!ch) return;
+    if (state.generating) return;
+
+    const historyBefore = chatHistoryFor(ch.id);
+
+    const userMsg = { id: uuid(), role: "user", content: "/img " + prompt, ts: nowTs() };
+    setChatHistory(ch.id, historyBefore.concat([userMsg]));
+    renderMessages();
+    refreshChatsView();
+
+    const placeholderId = uuid();
+    const placeholder = {
+      id: placeholderId, role: "assistant", content: "",
+      ts: nowTs(), pending: true, image_loading: true
+    };
+    setChatHistory(ch.id, chatHistoryFor(ch.id).concat([placeholder]));
+    appendMessageRow(placeholder, ch);
+
+    setGenerating(true);
+    $("#composerHint").textContent = "Генерация изображения…";
+
+    const imageUrl = "https://image.pollinations.ai/prompt/"
+      + encodeURIComponent(prompt)
+      + "?width=1024&height=1024&nologo=true&model=flux&seed=" + Math.floor(Math.random() * 1e9);
+
+    const img = new Image();
+    img.onload = () => {
+      setChatHistory(
+        ch.id,
+        chatHistoryFor(ch.id).map((m) =>
+          m.id === placeholderId
+            ? { id: m.id, role: "assistant", content: prompt, image_url: imageUrl, ts: nowTs() }
+            : m
+        )
+      );
+      renderMessages();
+      refreshChatsView();
+      $("#composerHint").textContent = "";
+      setGenerating(false);
+    };
+    img.onerror = () => {
+      setChatHistory(
+        ch.id,
+        chatHistoryFor(ch.id).map((m) =>
+          m.id === placeholderId
+            ? { id: m.id, role: "assistant", content: "Не удалось сгенерировать изображение.", ts: nowTs() }
+            : m
+        )
+      );
+      renderMessages();
+      refreshChatsView();
+      $("#composerHint").textContent = "Ошибка генерации изображения";
+      setGenerating(false);
+    };
+    img.src = imageUrl;
+  }
+
   async function sendMessage(userText) {
+    const imgMatch = userText.match(/^\/img\s+(.+)/i);
+    if (imgMatch) {
+      generateImage(imgMatch[1].trim());
+      return;
+    }
+
     const ch = activeCharacter();
     if (!ch) return;
     if (!state.lmOk) {
@@ -1916,6 +2129,38 @@
       if (t && t.dataset && t.dataset.close) closeModal();
     });
 
+    // Paste-to-import:
+    // - PolyBuzz links: works anywhere (as long as you're not pasting into an input/textarea).
+    // - JSON: only auto-import when the Characters modal is open, to avoid surprises.
+    document.addEventListener("paste", async (e) => {
+      try {
+        const t = e.target;
+        const tag = t && t.tagName ? String(t.tagName).toUpperCase() : "";
+        if (tag === "INPUT" || tag === "TEXTAREA" || (t && t.isContentEditable)) return;
+
+        const raw = e.clipboardData ? e.clipboardData.getData("text") : "";
+        const s = String(raw || "").trim();
+        if (!s) return;
+
+        const isPb = isPolybuzzUrl(s);
+        const looksJson = s.startsWith("{") || s.startsWith("[");
+
+        const charModal = $("#charactersModal");
+        const modalOpen = !!(charModal && !charModal.hidden);
+
+        if (isPb && !modalOpen) openModal();
+        else if (looksJson && !modalOpen) return;
+        else if (!isPb && !looksJson) return;
+
+        e.preventDefault();
+        await importCharactersFromTextOrUrl(s, { openModalOnSuccess: true, showErrors: true });
+      } catch (err) {
+        const msg = String(err?.message || err);
+        $("#charFormNote").textContent = msg;
+        flashStatus(msg, false);
+      }
+    });
+
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
       const msgSheet = $("#msgActions");
@@ -1986,33 +2231,7 @@
             clip = "";
           }
 
-          const applyImportedResult = ({ imported, firstId }) => {
-            if (imported <= 0) return false;
-
-            state.editingCharacterId = firstId || state.editingCharacterId;
-            fillCharacterForm();
-            refreshChatsView();
-            $("#charFormNote").textContent = `Импортировано: ${imported}`;
-            return true;
-          };
-
-          const tryImportTextOrUrl = async (text) => {
-            const s = String(text || "").trim();
-            if (!s) return false;
-
-            const payload = safeJsonParse(s);
-            if (payload) return applyImportedResult(importCharactersFromJsonPayload(payload));
-
-            if (isPolybuzzUrl(s)) {
-              $("#charFormNote").textContent = "Импортирую с PolyBuzz…";
-              const character = await importFromPolybuzzUrl(s);
-              return applyImportedResult(importCharactersFromJsonPayload(character));
-            }
-
-            return false;
-          };
-
-          if (clip && (await tryImportTextOrUrl(clip))) return;
+          if (clip && (await importCharactersFromTextOrUrl(clip, { openModalOnSuccess: true, showErrors: false }))) return;
 
           const mode = window.prompt(
             "Импорт персонажей:\n1) вставить JSON или ссылку polybuzz.ai\n2) выбрать файл (.json/.png)\n\nВведите 1 или 2:",
@@ -2026,9 +2245,11 @@
 
           const pasted = window.prompt("Вставьте JSON или ссылку на персонажа polybuzz.ai:", "");
           if (pasted === null) return;
-          if (!(await tryImportTextOrUrl(pasted))) $("#charFormNote").textContent = "Не удалось импортировать: проверьте JSON или ссылку.";
+          await importCharactersFromTextOrUrl(pasted, { openModalOnSuccess: true, showErrors: true });
         } catch (err) {
-          $("#charFormNote").textContent = String(err?.message || err);
+          const msg = String(err?.message || err);
+          $("#charFormNote").textContent = msg;
+          flashStatus(msg, false);
         }
       });
     }
@@ -2038,18 +2259,16 @@
         const file = e.target.files && e.target.files[0];
         if (!file) return;
         try {
-          const { imported, firstId } = await importFromFile(file);
-          if (imported <= 0) {
+          const result = await importFromFile(file);
+          if (!applyImportedCharactersResult(result, { openModalOnSuccess: true })) {
             $("#charFormNote").textContent = "Ничего не импортировано.";
+            flashStatus("Ничего не импортировано", false);
             return;
           }
-
-          state.editingCharacterId = firstId || state.editingCharacterId;
-          fillCharacterForm();
-          refreshChatsView();
-          $("#charFormNote").textContent = `Импортировано: ${imported}`;
         } catch (err) {
-          $("#charFormNote").textContent = String(err?.message || err);
+          const msg = String(err?.message || err);
+          $("#charFormNote").textContent = msg;
+          flashStatus(msg, false);
         } finally {
           e.target.value = "";
         }
@@ -2094,6 +2313,9 @@
       closeModal();
       setView("chat");
     });
+
+    const btnGenAvatar = $("#btnGenAvatar");
+    if (btnGenAvatar) btnGenAvatar.addEventListener("click", () => generateCharacterAvatar());
 
     $("#btnDeleteCharacter").addEventListener("click", () => {
       const c = editingCharacter();
