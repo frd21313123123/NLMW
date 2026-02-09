@@ -1737,10 +1737,6 @@
 
     return { translated: out, directionLabel: `${source} → ${target}` };
   }
-  async function translateBackstoryText(sourceText) {
-    return translateTextByDirection(sourceText, "Введите текст в поле предыстории.");
-  }
-
   async function translateCharacterFields(fields) {
     const translated = {};
     for (const field of fields) {
@@ -2808,13 +2804,13 @@ ${item.text}` : item.text;
 
 
 
-    const btnTranslateBackstory = $("#btnTranslateBackstory");
-    const btnTranslateAllCharacterFields = $("#btnTranslateAllCharacterFields");
+    const btnTranslateAll = $("#btnTranslateAll");
 
-    if (btnTranslateAllCharacterFields) {
-      btnTranslateAllCharacterFields.addEventListener("click", async () => {
+    if (btnTranslateAll) {
+      btnTranslateAll.addEventListener("click", async () => {
         const note = $("#charTranslateNote");
         const fields = [
+          { key: "name", label: "Имя", input: $("#charNameInput") },
           { key: "outfit", label: "Описание", input: $("#charOutfitInput") },
           { key: "setting", label: "Обстановка", input: $("#charSettingInput") },
           { key: "backgroundHint", label: "Фон для ИИ", input: $("#charBgHintInput") },
@@ -2829,8 +2825,7 @@ ${item.text}` : item.text;
         }
 
         if (note) note.textContent = "Перевод всех полей…";
-        btnTranslateAllCharacterFields.disabled = true;
-        if (btnTranslateBackstory) btnTranslateBackstory.disabled = true;
+        btnTranslateAll.disabled = true;
 
         try {
           const translated = await translateCharacterFields(nonEmptyFields.map((x) => ({
@@ -2850,32 +2845,7 @@ ${item.text}` : item.text;
           const msg = String(err?.message || err || "Ошибка перевода");
           if (note) note.textContent = msg;
         } finally {
-          btnTranslateAllCharacterFields.disabled = false;
-          if (btnTranslateBackstory) btnTranslateBackstory.disabled = false;
-        }
-      });
-    }
-
-    if (btnTranslateBackstory) {
-      btnTranslateBackstory.addEventListener("click", async () => {
-        const input = $("#charBackstoryInput");
-        const note = $("#charTranslateNote");
-        if (!input) return;
-
-        if (note) note.textContent = "Перевод…";
-        btnTranslateBackstory.disabled = true;
-        if (btnTranslateAllCharacterFields) btnTranslateAllCharacterFields.disabled = true;
-
-        try {
-          const { translated, directionLabel } = await translateBackstoryText(input.value);
-          input.value = translated;
-          if (note) note.textContent = `Готово: ${directionLabel}`;
-        } catch (err) {
-          const msg = String(err?.message || err || "Ошибка перевода");
-          if (note) note.textContent = msg;
-        } finally {
-          btnTranslateBackstory.disabled = false;
-          if (btnTranslateAllCharacterFields) btnTranslateAllCharacterFields.disabled = false;
+          btnTranslateAll.disabled = false;
         }
       });
     }

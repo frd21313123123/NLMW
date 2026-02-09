@@ -237,13 +237,8 @@
                 </label>
 
                 <label class="field">
-                  <span class="field__label field__labelRow">
-                    <span>Предыстория (видна нейросети)</span>
-                    <button class="btn btn--tiny" id="btnTranslateAllCharacterFields" type="button">↔ Перевести все поля</button>
-                    <button class="btn btn--tiny" id="btnTranslateBackstory" type="button">↔ Перевод</button>
-                  </span>
+                  <span class="field__label">Предыстория (видна нейросети)</span>
                   <textarea class="field__input field__input--area" id="charBackstoryInput" rows="5" placeholder="Кто он, что пережил, мотивация..."></textarea>
-                  <span class="smallNote" id="charTranslateNote"></span>
                 </label>
 
                 <label class="field">
@@ -255,6 +250,11 @@
                   <span class="field__label">Начальное сообщение</span>
                   <textarea class="field__input field__input--area" id="charInitialMessageInput" rows="3" placeholder="Первое сообщение персонажа..."></textarea>
                 </label>
+
+                <div class="row row--translate">
+                  <button class="btn btn--accent" id="btnTranslateAll" type="button">↔ Перевести всё</button>
+                  <span class="smallNote" id="charTranslateNote"></span>
+                </div>
 
                 <div class="row row--actions">
                   <button class="btn btn--accent" id="btnSaveCharacter" type="submit">Сохранить</button>
