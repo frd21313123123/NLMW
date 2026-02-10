@@ -11,6 +11,7 @@
     responseIdChains: "nlmw.lmstudioResponseIdChains",
     provider: "nlmw.provider",
     openrouterKey: "nlmw.openrouterKey",
+    mistralKey: "nlmw.mistralKey",
     savedPrompts: "nlmw.savedPrompts"
   };
 
@@ -43,6 +44,7 @@
     modelId: "",
     provider: "lmstudio",
     openrouterKey: "",
+    mistralKey: "",
     savedPrompts: [],
     lmOk: false,
     generating: false,
@@ -93,6 +95,12 @@
 
   function styleById(id) {
     return DIALOGUE_STYLES.find((x) => x.id === id) || DIALOGUE_STYLES[0];
+  }
+
+  function providerLabel() {
+    if (state.provider === "openrouter") return "OpenRouter";
+    if (state.provider === "mistral") return "Mistral";
+    return "LM Studio";
   }
 
   function defaultProfile() {
@@ -199,9 +207,12 @@
     state.modelId = String(loadJson(STORAGE_KEYS.modelId, ""));
     state.provider = String(loadJson(STORAGE_KEYS.provider, "lmstudio"));
     state.openrouterKey = String(loadJson(STORAGE_KEYS.openrouterKey, ""));
+    state.mistralKey = String(loadJson(STORAGE_KEYS.mistralKey, ""));
     state.savedPrompts = loadJson(STORAGE_KEYS.savedPrompts, []);
 
-    if (state.provider !== "lmstudio" && state.provider !== "openrouter") state.provider = "lmstudio";
+    if (state.provider !== "lmstudio" && state.provider !== "openrouter" && state.provider !== "mistral") {
+      state.provider = "lmstudio";
+    }
 
     saveJson(STORAGE_KEYS.profile, state.profile);
 
@@ -1449,8 +1460,14 @@
     const orKeyInput = $("#openrouterKeyInput");
     if (orKeyInput) orKeyInput.value = state.openrouterKey || "";
 
+    const mistralKeyInput = $("#mistralKeyInput");
+    if (mistralKeyInput) mistralKeyInput.value = state.mistralKey || "";
+
     const orSection = $("#openrouterSettings");
     if (orSection) orSection.hidden = state.provider !== "openrouter";
+
+    const mistralSection = $("#mistralSettings");
+    if (mistralSection) mistralSection.hidden = state.provider !== "mistral";
   }
 
   function buildSystemPrompt(profile, character) {
@@ -1555,6 +1572,8 @@
 
     if (state.provider === "openrouter") {
       await refreshOpenRouterModels(selects);
+    } else if (state.provider === "mistral") {
+      await refreshMistralModels(selects);
     } else {
       await refreshLmStudioModels(selects);
     }
@@ -1688,6 +1707,63 @@
     }
   }
 
+  async function refreshMistralModels(selects) {
+    setStatus("Загружаю модели Mistral…");
+
+    try {
+      const headers = {};
+      if (state.mistralKey) headers["X-Mistral-Key"] = state.mistralKey;
+
+      const res = await fetch("/api/mistral/models", { headers });
+      const text = await res.text();
+      const data = safeJsonParse(text);
+
+      if (!res.ok) {
+        const msg = data?.error || data?.message || `Ошибка Mistral (${res.status})`;
+        state.lmOk = false;
+        setStatus(String(msg), false);
+        for (const s of selects) s.innerHTML = "<option value=''>—</option>";
+        return;
+      }
+
+      state.lmOk = true;
+      const models = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+      const items = models
+        .map((m) => ({
+          id: String(m?.id || m?.name || "").trim(),
+          name: String(m?.name || m?.id || "").trim()
+        }))
+        .filter((m) => m.id);
+
+      if (items.length === 0) {
+        state.lmOk = false;
+        setStatus("Mistral: моделей не найдено", false);
+        for (const s of selects) s.innerHTML = "<option value=''>—</option>";
+        return;
+      }
+
+      for (const s of selects) {
+        s.innerHTML = "";
+        for (const m of items) {
+          const opt = document.createElement("option");
+          opt.value = m.id;
+          opt.textContent = m.name || m.id;
+          s.appendChild(opt);
+        }
+      }
+
+      const ids = items.map((x) => x.id);
+      if (!state.modelId || !ids.includes(state.modelId)) state.modelId = ids[0];
+      for (const s of selects) s.value = state.modelId;
+      setStatus(`Mistral: ${items.length} моделей`);
+      saveJson(STORAGE_KEYS.modelId, state.modelId);
+    } catch (err) {
+      state.lmOk = false;
+      setStatus("Mistral недоступен: " + String(err?.message || err), false);
+      for (const s of selects) s.innerHTML = "<option value=''>—</option>";
+    }
+  }
+
   function getStreamingBubble(placeholderId) {
     const list = $("#messages");
     if (!list) return null;
@@ -1812,6 +1888,38 @@
       const data = safeJsonParse(text);
       if (!res.ok) {
         const errMsg = data?.error?.message || data?.error || data?.message || `OpenRouter error (${res.status})`;
+        throw new Error(String(errMsg));
+      }
+
+      const translated = data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || "";
+      const out = String(translated || "").trim();
+      if (!out) throw new Error("Модель вернула пустой перевод.");
+      return { translated: out, directionLabel: `${source} → ${target}` };
+    } else if (state.provider === "mistral") {
+      const headers = { "Content-Type": "application/json" };
+      if (state.mistralKey) headers["X-Mistral-Key"] = state.mistralKey;
+
+      const payload = {
+        model: state.modelId || "mistral-small-latest",
+        messages: [
+          { role: "system", content: "Ты профессиональный переводчик." },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.2,
+        max_tokens: 4096,
+        stream: false
+      };
+
+      const res = await fetch("/api/mistral/chat", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      const text = await res.text();
+      const data = safeJsonParse(text);
+      if (!res.ok) {
+        const errMsg = data?.error?.message || data?.error || data?.message || `Mistral error (${res.status})`;
         throw new Error(String(errMsg));
       }
 
@@ -2243,6 +2351,100 @@
     return { fullContent };
   }
 
+  async function streamMistralToMessage({ character, assistantMsgId, messages, baseText }) {
+    let generated = "";
+    const base = String(baseText || "");
+
+    const bubble = getStreamingBubble(assistantMsgId);
+    const list = $("#messages");
+
+    const renderNow = () => {
+      if (!bubble) return;
+      renderInlineEmphasis(bubble, base + generated, { role: "assistant" });
+      if (list) list.scrollTop = list.scrollHeight;
+    };
+
+    const headers = { "Content-Type": "application/json" };
+    if (state.mistralKey) headers["X-Mistral-Key"] = state.mistralKey;
+
+    const payload = {
+      model: state.modelId || "mistral-small-latest",
+      messages,
+      temperature: 0.75,
+      stream: true
+    };
+
+    const res = await fetch("/api/mistral/chat", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      const data = safeJsonParse(text);
+      const errMsg = data?.error?.message || data?.error || data?.message || `Mistral error (${res.status})`;
+      throw new Error(String(errMsg));
+    }
+
+    const contentType = res.headers.get("content-type") || "";
+    const isSSE = contentType.includes("text/event-stream");
+
+    if (isSSE && res.body) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let started = base.length > 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data:")) continue;
+          const jsonStr = trimmed.slice(5).trim();
+          if (jsonStr === "[DONE]") continue;
+
+          const chunk = safeJsonParse(jsonStr);
+          if (!chunk) continue;
+
+          if (chunk.error) {
+            const msg = chunk.error.message || chunk.error || "Mistral stream error";
+            throw new Error(String(msg));
+          }
+
+          const choice0 = chunk.choices?.[0];
+          const delta =
+            (typeof choice0?.delta?.content === "string" ? choice0.delta.content : "") ||
+            (typeof choice0?.text === "string" ? choice0.text : "");
+
+          if (typeof delta === "string" && delta.length > 0) {
+            if (!started) {
+              started = true;
+              if (bubble && bubble.textContent === "…") bubble.textContent = "";
+            }
+            generated += delta;
+            renderNow();
+          }
+        }
+      }
+    } else {
+      const text = await res.text();
+      const data = safeJsonParse(text);
+      const content = data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || "";
+      generated = String(content || "");
+      renderNow();
+    }
+
+    const fullContent = (base + generated) || "";
+    return { fullContent };
+  }
+
   function openPromptsSheet() {
     const sheet = $("#promptsSheet");
     if (!sheet) return;
@@ -2356,8 +2558,7 @@ ${item.text}` : item.text;
     const ch = activeCharacter();
     if (!ch) return;
     if (!state.lmOk) {
-      const providerName = state.provider === "openrouter" ? "OpenRouter" : "LM Studio";
-      $("#composerHint").textContent = `${providerName} недоступна.`;
+      $("#composerHint").textContent = `${providerLabel()} недоступна.`;
       return;
     }
 
@@ -2384,6 +2585,15 @@ ${item.text}` : item.text;
       if (state.provider === "openrouter") {
         const messages = buildOpenAiMessages(ch.id);
         const { fullContent } = await streamOpenRouterToMessage({
+          character: ch,
+          assistantMsgId: placeholderId,
+          messages,
+          baseText: ""
+        });
+        content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
+      } else if (state.provider === "mistral") {
+        const messages = buildOpenAiMessages(ch.id);
+        const { fullContent } = await streamMistralToMessage({
           character: ch,
           assistantMsgId: placeholderId,
           messages,
@@ -2444,8 +2654,7 @@ ${item.text}` : item.text;
     const ch = activeCharacter();
     if (!ch) return;
     if (!state.lmOk) {
-      const providerName = state.provider === "openrouter" ? "OpenRouter" : "LM Studio";
-      $("#composerHint").textContent = `${providerName} недоступна.`;
+      $("#composerHint").textContent = `${providerLabel()} недоступна.`;
       return;
     }
     if (state.generating) return;
@@ -2489,6 +2698,20 @@ ${item.text}` : item.text;
         const filteredMessages = messages.filter((m) => m.content !== "…");
 
         const { fullContent } = await streamOpenRouterToMessage({
+          character: ch,
+          assistantMsgId,
+          messages: filteredMessages,
+          baseText: ""
+        });
+        content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
+      } else if (state.provider === "mistral") {
+        // For regeneration with Mistral, rebuild messages without the last assistant reply.
+        const truncatedHistory = history.slice(0, lastIdx);
+        setChatHistory(ch.id, truncatedHistory.concat([{ ...last, content: "…", pending: true, ts: nowTs() }]));
+        const messages = buildOpenAiMessages(ch.id);
+        const filteredMessages = messages.filter((m) => m.content !== "…");
+
+        const { fullContent } = await streamMistralToMessage({
           character: ch,
           assistantMsgId,
           messages: filteredMessages,
@@ -2546,8 +2769,7 @@ ${item.text}` : item.text;
     const ch = activeCharacter();
     if (!ch) return;
     if (!state.lmOk) {
-      const providerName = state.provider === "openrouter" ? "OpenRouter" : "LM Studio";
-      $("#composerHint").textContent = `${providerName} недоступна.`;
+      $("#composerHint").textContent = `${providerLabel()} недоступна.`;
       return;
     }
     if (state.generating) return;
@@ -2578,6 +2800,18 @@ ${item.text}` : item.text;
         messages.push(continueMsg);
 
         const { fullContent } = await streamOpenRouterToMessage({
+          character: ch,
+          assistantMsgId,
+          messages,
+          baseText: base
+        });
+        content = String(fullContent || "").trim() ? String(fullContent) : (base || "(пустой ответ)");
+      } else if (state.provider === "mistral") {
+        const continueMsg = { role: "user", content: inputText };
+        const messages = buildOpenAiMessages(ch.id);
+        messages.push(continueMsg);
+
+        const { fullContent } = await streamMistralToMessage({
           character: ch,
           assistantMsgId,
           messages,
@@ -3188,6 +3422,8 @@ ${item.text}` : item.text;
 
         const orSection = $("#openrouterSettings");
         if (orSection) orSection.hidden = state.provider !== "openrouter";
+        const mistralSection = $("#mistralSettings");
+        if (mistralSection) mistralSection.hidden = state.provider !== "mistral";
 
         state.modelId = "";
         saveJson(STORAGE_KEYS.modelId, "");
@@ -3201,6 +3437,26 @@ ${item.text}` : item.text;
         state.openrouterKey = String(orKeyInput.value || "").trim();
         saveJson(STORAGE_KEYS.openrouterKey, state.openrouterKey);
         if (state.provider === "openrouter") refreshModels();
+      });
+    }
+
+    let mistralKeyTimer = null;
+    const mistralKeyInput = $("#mistralKeyInput");
+    if (mistralKeyInput) {
+      mistralKeyInput.addEventListener("change", () => {
+        state.mistralKey = String(mistralKeyInput.value || "").trim();
+        saveJson(STORAGE_KEYS.mistralKey, state.mistralKey);
+        if (state.provider === "mistral") refreshModels();
+      });
+
+      mistralKeyInput.addEventListener("input", () => {
+        state.mistralKey = String(mistralKeyInput.value || "").trim();
+        saveJson(STORAGE_KEYS.mistralKey, state.mistralKey);
+        if (state.provider !== "mistral") return;
+        if (mistralKeyTimer) clearTimeout(mistralKeyTimer);
+        mistralKeyTimer = setTimeout(() => {
+          refreshModels();
+        }, 400);
       });
     }
 

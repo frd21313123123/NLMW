@@ -12,6 +12,8 @@ const PORT = Number(process.env.PORT || 3000);
 const LMSTUDIO_BASE_URL = String(process.env.LMSTUDIO_BASE_URL || "http://localhost:1234/v1").replace(/\/+$/, "");
 const LMSTUDIO_API_KEY = process.env.LMSTUDIO_API_KEY ? String(process.env.LMSTUDIO_API_KEY) : "";
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY ? String(process.env.OPENROUTER_API_KEY) : "";
+const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY ? String(process.env.MISTRAL_API_KEY) : "";
+const MISTRAL_BASE_URL = String(process.env.MISTRAL_BASE_URL || "https://api.mistral.ai/v1").replace(/\/+$/, "");
 const POLYBUZZ_COOKIE = process.env.POLYBUZZ_COOKIE ? String(process.env.POLYBUZZ_COOKIE) : "";
 
 function stripSlashes(u) {
@@ -40,7 +42,8 @@ app.get("/api/health", (_req, res) => {
     ok: true,
     lmstudioBaseUrl: LMSTUDIO_BASE_URL,
     lmstudioRestBaseUrl: LMSTUDIO_REST_BASE_URL,
-    lmstudioOpenAiBaseUrl: LMSTUDIO_OPENAI_BASE_URL
+    lmstudioOpenAiBaseUrl: LMSTUDIO_OPENAI_BASE_URL,
+    mistralBaseUrl: MISTRAL_BASE_URL
   });
 });
 
@@ -222,6 +225,114 @@ app.post("/api/lmstudio/chat", async (req, res) => {
   } catch (err) {
     console.error("[chat]", err);
     res.status(502).json({ error: "Не удалось получить ответ от LM Studio", details: String(err) });
+  }
+});
+
+function mistralHeaders(apiKey) {
+  const key = apiKey || MISTRAL_API_KEY;
+  const headers = {
+    "Content-Type": "application/json"
+  };
+  if (key) headers.Authorization = `Bearer ${key}`;
+  return headers;
+}
+
+const MISTRAL_FALLBACK_MODELS = [
+  { id: "codestral-latest", name: "Codestral" },
+  { id: "devstral-latest", name: "Devstral" },
+  { id: "devstral-medium-latest", name: "Devstral Medium" },
+  { id: "devstral-small-latest", name: "Devstral Small" },
+  { id: "magistral-medium-latest", name: "Magistral Medium" },
+  { id: "magistral-small-latest", name: "Magistral Small" }
+];
+
+// --- Mistral API integration ---
+
+app.get("/api/mistral/models", async (req, res) => {
+  const clientKey = req.headers["x-mistral-key"] || "";
+  const key = clientKey || MISTRAL_API_KEY;
+  if (!key) {
+    res.status(401).json({ error: "Mistral API key required" });
+    return;
+  }
+
+  try {
+    const upstream = await fetch(`${MISTRAL_BASE_URL}/models`, {
+      method: "GET",
+      headers: mistralHeaders(clientKey)
+    });
+
+    const text = await upstream.text();
+    if (!upstream.ok) {
+      res.status(upstream.status);
+      res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
+      res.send(text);
+      return;
+    }
+
+    try {
+      const data = JSON.parse(text);
+      const models = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+      if (!models.length) {
+        res.json({ data: MISTRAL_FALLBACK_MODELS });
+        return;
+      }
+    } catch {
+      // If parsing fails, fall back to raw text below.
+    }
+
+    res.status(upstream.status);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
+    res.send(text);
+  } catch (err) {
+    console.error("[mistral models]", err);
+    res.status(502).json({ error: "Не удалось получить список моделей Mistral", details: String(err), data: MISTRAL_FALLBACK_MODELS });
+  }
+});
+
+app.post("/api/mistral/chat", async (req, res) => {
+  const clientKey = req.headers["x-mistral-key"] || "";
+  const key = clientKey || MISTRAL_API_KEY;
+  if (!key) {
+    res.status(401).json({ error: "Mistral API key required" });
+    return;
+  }
+
+  try {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const wantStream = body.stream === true;
+
+    const payload = {
+      model: typeof body.model === "string" && body.model.trim() ? body.model.trim() : "mistral-small-latest",
+      messages: Array.isArray(body.messages) ? body.messages : [],
+      temperature: typeof body.temperature === "number" ? body.temperature : 0.75,
+      max_tokens: typeof body.max_tokens === "number" ? body.max_tokens : undefined,
+      stream: wantStream
+    };
+
+    if (wantStream) {
+      await proxyStream(
+        `${MISTRAL_BASE_URL}/chat/completions`,
+        payload,
+        mistralHeaders(clientKey),
+        res
+      );
+      return;
+    }
+
+    const upstream = await fetch(`${MISTRAL_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: mistralHeaders(clientKey),
+      body: JSON.stringify(payload)
+    });
+
+    const text = await upstream.text();
+    res.status(upstream.status);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
+    res.send(text);
+  } catch (err) {
+    console.error("[mistral chat]", err);
+    res.status(502).json({ error: "Не удалось получить ответ от Mistral", details: String(err) });
   }
 });
 

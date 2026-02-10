@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
@@ -151,6 +151,7 @@
                   <select class="field__input" id="providerSelect">
                     <option value="lmstudio">LM Studio (локальный)</option>
                     <option value="openrouter">OpenRouter (бесплатные онлайн-модели)</option>
+                    <option value="mistral">Mistral (официальный API)</option>
                   </select>
                 </label>
 
@@ -162,6 +163,16 @@
                   <div style="font-size: 0.78rem; color: rgba(255,255,255,0.45); margin-top: 0.25rem;">
                     Бесплатные модели работают без ключа (до 50 запросов/день). Ключ увеличивает лимиты.
                     Получить на <a href="https://openrouter.ai/keys" target="_blank" rel="noopener" style="color: rgba(140,180,255,0.8);">openrouter.ai/keys</a>
+                  </div>
+                </div>
+
+                <div id="mistralSettings" hidden>
+                  <label class="field">
+                    <span class="field__label">Mistral API Key</span>
+                    <input class="field__input" id="mistralKeyInput" type="password" placeholder="mistral-..." autocomplete="off" />
+                  </label>
+                  <div style="font-size: 0.78rem; color: rgba(255,255,255,0.45); margin-top: 0.25rem;">
+                    Ключ обязателен для доступа к Mistral API.
                   </div>
                 </div>
               </div>
