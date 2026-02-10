@@ -238,6 +238,61 @@
     if (!state.responseIdChains || typeof state.responseIdChains !== "object" || Array.isArray(state.responseIdChains)) state.responseIdChains = {};
     if (!Array.isArray(state.savedPrompts)) state.savedPrompts = [];
 
+    // Normalize conversations to support multiple chats per character.
+    const normalizedConversations = {};
+    for (const c of state.characters) {
+      const bucket = normalizeConversationBucket(c.id, state.conversations?.[c.id]);
+      if (!bucket.chats || bucket.chats.length === 0) {
+        const chat = normalizeChatRecord({}, defaultChatTitle(1));
+        bucket.chats = [chat];
+        bucket.activeChatId = chat.id;
+      }
+      if (!bucket.activeChatId || !bucket.chats.some((x) => x.id === bucket.activeChatId)) {
+        bucket.activeChatId = bucket.chats[0]?.id || "";
+      }
+      normalizedConversations[c.id] = bucket;
+    }
+    state.conversations = normalizedConversations;
+    saveJson(STORAGE_KEYS.conversations, state.conversations);
+
+    // Migrate response ids from characterId-based to chatId-based (if needed).
+    const legacyChains = state.responseIdChains || {};
+    const legacyIds = state.responseIds || {};
+    const nextChains = {};
+    const nextIds = {};
+
+    const readChain = (key) => (Array.isArray(legacyChains[key]) ? legacyChains[key] : []);
+    const readId = (key) => (typeof legacyIds[key] === "string" && legacyIds[key].trim() ? legacyIds[key].trim() : "");
+
+    for (const c of state.characters) {
+      const bucket = state.conversations[c.id];
+      if (!bucket) continue;
+
+      for (const chat of bucket.chats) {
+        const chain = readChain(chat.id);
+        if (chain.length > 0) nextChains[chat.id] = chain;
+        const id = readId(chat.id);
+        if (id) nextIds[chat.id] = id;
+      }
+
+      const activeId = bucket.activeChatId;
+      if (activeId) {
+        if (!nextChains[activeId]) {
+          const chain = readChain(c.id);
+          if (chain.length > 0) nextChains[activeId] = chain;
+        }
+        if (!nextIds[activeId]) {
+          const id = readId(c.id);
+          if (id) nextIds[activeId] = id;
+        }
+      }
+    }
+
+    state.responseIdChains = nextChains;
+    state.responseIds = nextIds;
+    saveJson(STORAGE_KEYS.responseIdChains, state.responseIdChains);
+    saveJson(STORAGE_KEYS.responseIds, state.responseIds);
+
     state.savedPrompts = state.savedPrompts
       .filter((x) => x && typeof x === "object")
       .map((x) => ({
@@ -606,9 +661,97 @@
     return state.characters.find((c) => c.id === state.editingCharacterId) || activeCharacter();
   }
 
+  function defaultChatTitle(index) {
+    return `Чат ${index}`;
+  }
+
+  function normalizeChatRecord(raw, fallbackTitle) {
+    const isObj = raw && typeof raw === "object" && !Array.isArray(raw);
+    const messages = Array.isArray(raw)
+      ? raw
+      : Array.isArray(raw?.messages)
+        ? raw.messages
+        : Array.isArray(raw?.history)
+          ? raw.history
+          : [];
+
+    const id = typeof raw?.id === "string" && raw.id.trim() ? raw.id.trim() : uuid();
+    const title = String((isObj && raw.title) || fallbackTitle || "Чат").trim() || "Чат";
+    const createdAt =
+      typeof raw?.createdAt === "number" && Number.isFinite(raw.createdAt) ? raw.createdAt : nowTs();
+    let updatedAt =
+      typeof raw?.updatedAt === "number" && Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0;
+
+    if (!updatedAt) {
+      const last = messages[messages.length - 1];
+      updatedAt = typeof last?.ts === "number" ? last.ts : createdAt;
+    }
+
+    return { id, title, createdAt, updatedAt, messages };
+  }
+
+  function normalizeConversationBucket(characterId, raw) {
+    if (Array.isArray(raw)) {
+      const chat = normalizeChatRecord({ messages: raw }, defaultChatTitle(1));
+      return { activeChatId: chat.id, chats: [chat] };
+    }
+
+    if (raw && typeof raw === "object" && Array.isArray(raw.chats)) {
+      const chats = raw.chats
+        .map((c, idx) => normalizeChatRecord(c, defaultChatTitle(idx + 1)))
+        .filter((c) => c && c.id);
+      let activeChatId = typeof raw.activeChatId === "string" ? raw.activeChatId.trim() : "";
+      if (!chats.some((c) => c.id === activeChatId)) activeChatId = chats[0]?.id || "";
+      return { activeChatId, chats };
+    }
+
+    return { activeChatId: "", chats: [] };
+  }
+
+  function conversationBucketFor(characterId) {
+    if (!state.conversations || typeof state.conversations !== "object") state.conversations = {};
+    let bucket = state.conversations[characterId];
+
+    if (!bucket || typeof bucket !== "object" || !Array.isArray(bucket.chats)) {
+      bucket = normalizeConversationBucket(characterId, bucket);
+    }
+
+    if (!Array.isArray(bucket.chats) || bucket.chats.length === 0) {
+      const chat = normalizeChatRecord({}, defaultChatTitle(1));
+      bucket.chats = [chat];
+      bucket.activeChatId = chat.id;
+    }
+
+    if (!bucket.activeChatId || !bucket.chats.some((c) => c.id === bucket.activeChatId)) {
+      bucket.activeChatId = bucket.chats[0]?.id || "";
+    }
+
+    state.conversations[characterId] = bucket;
+    saveJson(STORAGE_KEYS.conversations, state.conversations);
+    return bucket;
+  }
+
+  function activeChatIdFor(characterId) {
+    return conversationBucketFor(characterId).activeChatId || "";
+  }
+
+  function activeChatFor(characterId) {
+    const bucket = conversationBucketFor(characterId);
+    return bucket.chats.find((c) => c.id === bucket.activeChatId) || bucket.chats[0];
+  }
+
+  function setActiveChat(characterId, chatId) {
+    const bucket = conversationBucketFor(characterId);
+    if (bucket.chats.some((c) => c.id === chatId)) {
+      bucket.activeChatId = chatId;
+      state.conversations[characterId] = bucket;
+      saveJson(STORAGE_KEYS.conversations, state.conversations);
+    }
+  }
+
   function chatHistoryFor(characterId) {
-    const arr = state.conversations[characterId];
-    return Array.isArray(arr) ? arr : [];
+    const chat = activeChatFor(characterId);
+    return Array.isArray(chat?.messages) ? chat.messages : [];
   }
 
   function lastNonPendingMessage(characterId) {
@@ -622,6 +765,28 @@
     return null;
   }
 
+  function lastNonPendingMessageForChat(chat) {
+    const history = Array.isArray(chat?.messages) ? chat.messages : [];
+    for (let i = history.length - 1; i >= 0; i--) {
+      const m = history[i];
+      if (!m || m.pending) continue;
+      if (m.role !== "user" && m.role !== "assistant") continue;
+      return m;
+    }
+    return null;
+  }
+
+  function lastNonPendingMessageForCharacter(characterId) {
+    const bucket = conversationBucketFor(characterId);
+    let best = null;
+    for (const chat of bucket.chats) {
+      const last = lastNonPendingMessageForChat(chat);
+      if (!last) continue;
+      if (!best || (last.ts || 0) > (best.ts || 0)) best = last;
+    }
+    return best;
+  }
+
   function renderChatList(filterText) {
     const el = $("#chatList");
     if (!el) return;
@@ -629,23 +794,29 @@
     el.innerHTML = "";
 
     const chars = Array.isArray(state.characters) ? state.characters.slice() : [];
+    const items = [];
+
+    for (const c of chars) {
+      const bucket = conversationBucketFor(c.id);
+      for (const chat of bucket.chats) {
+        const last = lastNonPendingMessageForChat(chat);
+        const time = last?.ts || chat.updatedAt || chat.createdAt || 0;
+        items.push({ character: c, chat, last, time });
+      }
+    }
 
     // Sort by last message timestamp desc.
-    chars.sort((a, b) => {
-      const ma = lastNonPendingMessage(a.id);
-      const mb = lastNonPendingMessage(b.id);
-      const ta = ma?.ts || 0;
-      const tb = mb?.ts || 0;
-      return tb - ta;
-    });
+    items.sort((a, b) => (b.time || 0) - (a.time || 0));
 
     let matchCount = 0;
 
-    for (const c of chars) {
-      const last = lastNonPendingMessage(c.id);
+    for (const itemData of items) {
+      const c = itemData.character;
+      const chat = itemData.chat;
+      const last = itemData.last;
       const preview = last?.content || c.initialMessage || "";
-      const time = last?.ts || 0;
-      const searchable = `${c.name || ""} ${preview}`.toLowerCase();
+      const time = itemData.time || 0;
+      const searchable = `${c.name || ""} ${chat?.title || ""} ${preview}`.toLowerCase();
       if (q && !searchable.includes(q)) continue;
 
       matchCount++;
@@ -653,6 +824,7 @@
       const item = document.createElement("div");
       item.className = "chatItem";
       item.dataset.id = c.id;
+      item.dataset.chatId = chat?.id || "";
 
       const av = document.createElement("img");
       av.className = "avatar chatItem__avatar";
@@ -667,6 +839,12 @@
       name.className = "chatItem__name";
       name.textContent = c.name || "(без имени)";
       nameRow.appendChild(name);
+      if (chat?.title) {
+        const badge = document.createElement("span");
+        badge.className = "chatItem__badge";
+        badge.textContent = chat.title;
+        nameRow.appendChild(badge);
+      }
 
       const prev = document.createElement("div");
       prev.className = "chatItem__preview";
@@ -685,6 +863,7 @@
       item.addEventListener("click", () => {
         state.selectedCharacterId = c.id;
         saveJson(STORAGE_KEYS.selectedCharacterId, state.selectedCharacterId);
+        if (chat?.id) setActiveChat(c.id, chat.id);
         ensureInitialMessage();
         renderHeader();
         renderMessages();
@@ -703,35 +882,61 @@
   }
 
   function setChatHistory(characterId, history) {
-    state.conversations[characterId] = history;
+    const bucket = conversationBucketFor(characterId);
+    const chat = activeChatFor(characterId);
+    if (!chat) return;
+
+    chat.messages = Array.isArray(history) ? history : [];
+    const last = chat.messages[chat.messages.length - 1];
+    chat.updatedAt = typeof last?.ts === "number" ? last.ts : nowTs();
+
+    const idx = bucket.chats.findIndex((c) => c.id === chat.id);
+    if (idx >= 0) bucket.chats[idx] = chat;
+    state.conversations[characterId] = bucket;
     saveJson(STORAGE_KEYS.conversations, state.conversations);
   }
 
-  function responseIdChainFor(characterId) {
-    const v = state.responseIdChains?.[characterId];
+  function createNewChatForCharacter(characterId) {
+    const bucket = conversationBucketFor(characterId);
+    const nextIndex = bucket.chats.length + 1;
+    const chat = normalizeChatRecord({}, defaultChatTitle(nextIndex));
+    bucket.chats.unshift(chat);
+    bucket.activeChatId = chat.id;
+    state.conversations[characterId] = bucket;
+    saveJson(STORAGE_KEYS.conversations, state.conversations);
+    ensureInitialMessage();
+    renderHeader();
+    renderMessages();
+    refreshChatsView();
+    const c = state.characters.find((x) => x.id === characterId);
+    if (c) renderChatSelectInSettings(c);
+  }
+
+  function responseIdChainFor(chatId) {
+    const v = state.responseIdChains?.[chatId];
     return Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.trim()) : [];
   }
 
-  function saveResponseIdChain(characterId, chain) {
+  function saveResponseIdChain(chatId, chain) {
     const clean = Array.isArray(chain) ? chain.filter((x) => typeof x === "string" && x.trim()) : [];
-    state.responseIdChains[characterId] = clean;
+    state.responseIdChains[chatId] = clean;
     saveJson(STORAGE_KEYS.responseIdChains, state.responseIdChains);
 
-    if (clean.length > 0) state.responseIds[characterId] = clean[clean.length - 1];
-    else delete state.responseIds[characterId];
+    if (clean.length > 0) state.responseIds[chatId] = clean[clean.length - 1];
+    else delete state.responseIds[chatId];
     saveJson(STORAGE_KEYS.responseIds, state.responseIds);
   }
 
-  function lastResponseIdFor(characterId) {
-    const chain = responseIdChainFor(characterId);
+  function lastResponseIdFor(chatId) {
+    const chain = responseIdChainFor(chatId);
     if (chain.length > 0) return chain[chain.length - 1];
-    const legacy = state.responseIds?.[characterId];
+    const legacy = state.responseIds?.[chatId];
     return typeof legacy === "string" && legacy.trim() ? legacy.trim() : "";
   }
 
-  function resetLmContextFor(characterId) {
-    delete state.responseIds[characterId];
-    delete state.responseIdChains[characterId];
+  function resetLmContextFor(chatId) {
+    delete state.responseIds[chatId];
+    delete state.responseIdChains[chatId];
     saveJson(STORAGE_KEYS.responseIds, state.responseIds);
     saveJson(STORAGE_KEYS.responseIdChains, state.responseIdChains);
   }
@@ -751,9 +956,15 @@
 
   function deleteCharacter(id) {
     state.characters = state.characters.filter((c) => c.id !== id);
+    const bucket = state.conversations?.[id];
+    if (bucket && Array.isArray(bucket.chats)) {
+      for (const chat of bucket.chats) {
+        if (!chat?.id) continue;
+        delete state.responseIds[chat.id];
+        delete state.responseIdChains[chat.id];
+      }
+    }
     delete state.conversations[id];
-    delete state.responseIds[id];
-    delete state.responseIdChains[id];
     saveJson(STORAGE_KEYS.characters, state.characters);
     saveJson(STORAGE_KEYS.conversations, state.conversations);
     saveJson(STORAGE_KEYS.responseIds, state.responseIds);
@@ -948,6 +1159,59 @@
     }
   }
 
+  function renderBubbleContent(bubble, text, opts = {}) {
+    const delimIdx = text.indexOf("{{THOUGHTS}}");
+    if (delimIdx < 0) {
+      renderInlineEmphasis(bubble, text, opts);
+      return;
+    }
+
+    const mainText = text.slice(0, delimIdx).replace(/\n+$/, "");
+    const thoughtsText = text.slice(delimIdx + "{{THOUGHTS}}".length).replace(/^\n+/, "");
+
+    bubble.textContent = "";
+
+    // Render main part
+    if (mainText) {
+      const mainEl = document.createElement("div");
+      renderInlineEmphasis(mainEl, mainText, opts);
+      bubble.appendChild(mainEl);
+    }
+
+    // Render thoughts block
+    const thoughtsBlock = document.createElement("div");
+    thoughtsBlock.className = "thoughtsBlock";
+
+    const header = document.createElement("div");
+    header.className = "thoughtsBlock__header";
+
+    const icon = document.createElement("span");
+    icon.className = "thoughtsBlock__icon";
+    icon.textContent = "💕";
+    header.appendChild(icon);
+
+    const title = document.createElement("span");
+    title.className = "thoughtsBlock__title";
+    title.textContent = "Heart Whisper";
+    header.appendChild(title);
+
+    const speaker = document.createElement("span");
+    speaker.className = "thoughtsBlock__speaker";
+    speaker.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>';
+    header.appendChild(speaker);
+
+    thoughtsBlock.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "thoughtsBlock__body";
+    const charName = opts.characterName || "";
+    const prefix = charName ? charName + ": " : "";
+    body.textContent = prefix + (thoughtsText || "…");
+    thoughtsBlock.appendChild(body);
+
+    bubble.appendChild(thoughtsBlock);
+  }
+
   function findMessageById(characterId, msgId) {
     const history = chatHistoryFor(characterId);
     const idx = history.findIndex((m) => m && m.id === msgId);
@@ -985,7 +1249,8 @@
   }
 
   function noteHistoryChanged(characterId) {
-    resetLmContextFor(characterId);
+    const chatId = activeChatIdFor(characterId);
+    if (chatId) resetLmContextFor(chatId);
     $("#composerHint").textContent = "История изменена — контекст ИИ будет пересобран при следующем запросе.";
     updateChatActionButtons();
   }
@@ -1233,7 +1498,7 @@
       } else if (m.image_loading) {
         bubble.textContent = "Генерация изображения…";
       } else {
-        renderInlineEmphasis(bubble, m.content, { role: m.role });
+        renderBubbleContent(bubble, m.content, { role: m.role, characterName: ch.name });
       }
       wireHoldToMessage(bubble, m.id);
 
@@ -1367,8 +1632,25 @@
     $("#charFormNote").textContent = "";
 
     renderCharacterHeroPreview(c);
+    renderChatSelectInSettings(c);
 
     renderCharacterList();
+  }
+
+  function renderChatSelectInSettings(c) {
+    const sel = $("#charChatSelect");
+    if (!sel || !c) return;
+    const bucket = conversationBucketFor(c.id);
+    sel.innerHTML = "";
+
+    for (const chat of bucket.chats) {
+      const opt = document.createElement("option");
+      opt.value = chat.id;
+      opt.textContent = chat.title || "Чат";
+      sel.appendChild(opt);
+    }
+
+    sel.value = bucket.activeChatId || "";
   }
 
   function renderCharacterHeroPreview(c) {
@@ -1735,7 +2017,7 @@
     } else if (m.image_loading) {
       bubble.textContent = "Генерация изображения…";
     } else {
-      renderInlineEmphasis(bubble, m.content, { role: m.role });
+      renderBubbleContent(bubble, m.content, { role: m.role, characterName: ch.name });
     }
     wireHoldToMessage(bubble, m.id);
 
@@ -1783,11 +2065,26 @@
     return /[Ѐ-ӿ]/.test(String(text || ""));
   }
 
+  function detectLanguageDirection(text) {
+    const s = String(text || "");
+    const cyr = (s.match(/[Ѐ-ӿ]/g) || []).length;
+    const lat = (s.match(/[A-Za-z]/g) || []).length;
+
+    if (cyr === 0 && lat === 0) return "unknown";
+    if (cyr === 0) return "en";
+    if (lat === 0) return "ru";
+
+    if (cyr >= lat * 1.2) return "ru";
+    if (lat >= cyr * 1.2) return "en";
+    return cyr >= lat ? "ru" : "en";
+  }
+
   async function translateTextByDirection(sourceText, emptyErrorMessage) {
     const src = String(sourceText || "").trim();
     if (!src) throw new Error(emptyErrorMessage || "Введите текст для перевода.");
 
-    const toRussian = !detectCyrillic(src);
+    const detected = detectLanguageDirection(src);
+    const toRussian = detected === "en" ? true : detected === "ru" ? false : !detectCyrillic(src);
     const target = toRussian ? "русский" : "английский";
     const source = toRussian ? "английский" : "русский";
 
@@ -1911,7 +2208,7 @@
 
     const renderNow = () => {
       if (!bubble) return;
-      renderInlineEmphasis(bubble, base + generated, { role: "assistant" });
+      renderBubbleContent(bubble, base + generated, { role: "assistant", characterName: ch.name });
       if (list) list.scrollTop = list.scrollHeight;
     };
 
@@ -2162,6 +2459,7 @@
   }
 
   async function streamMistralToMessage({ character, assistantMsgId, messages, baseText }) {
+    const ch = character;
     let generated = "";
     const base = String(baseText || "");
 
@@ -2170,7 +2468,7 @@
 
     const renderNow = () => {
       if (!bubble) return;
-      renderInlineEmphasis(bubble, base + generated, { role: "assistant" });
+      renderBubbleContent(bubble, base + generated, { role: "assistant", characterName: ch.name });
       if (list) list.scrollTop = list.scrollHeight;
     };
 
@@ -2374,6 +2672,7 @@ ${item.text}` : item.text;
 
     if (state.generating) return;
 
+    const chatId = activeChatIdFor(ch.id);
     const historyBefore = chatHistoryFor(ch.id);
 
     const userMsg = { id: uuid(), role: "user", content: userText, ts: nowTs() };
@@ -2402,7 +2701,7 @@ ${item.text}` : item.text;
         });
         content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
       } else {
-        const prevResponseId = lastResponseIdFor(ch.id);
+        const prevResponseId = chatId ? lastResponseIdFor(chatId) : "";
         const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, historyBefore, true);
 
         const { fullContent, respId, streamErrorMessage } = await streamLmStudioRestToMessage({
@@ -2415,14 +2714,14 @@ ${item.text}` : item.text;
         });
         content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
 
-        if (respId) {
-          const chain = responseIdChainFor(ch.id);
+        if (respId && chatId) {
+          const chain = responseIdChainFor(chatId);
           let nextChain = chain;
           if (nextChain.length === 0 && prevResponseId) nextChain = [prevResponseId, respId];
           else nextChain = nextChain.concat([respId]);
-          saveResponseIdChain(ch.id, nextChain);
+          saveResponseIdChain(chatId, nextChain);
         } else if (streamErrorMessage && String(streamErrorMessage).toLowerCase().includes("job_not_found")) {
-          resetLmContextFor(ch.id);
+          if (chatId) resetLmContextFor(chatId);
         }
       }
 
@@ -2460,6 +2759,7 @@ ${item.text}` : item.text;
     }
     if (state.generating) return;
 
+    const chatId = activeChatIdFor(ch.id);
     const history = chatHistoryFor(ch.id);
     if (history.length === 0) return;
 
@@ -2505,7 +2805,7 @@ ${item.text}` : item.text;
         });
         content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
       } else {
-        const chain = responseIdChainFor(ch.id);
+        const chain = chatId ? responseIdChainFor(chatId) : [];
         const prevResponseId = chain.length >= 2 ? chain[chain.length - 2] : "";
         const historyForPrompt = history.slice(0, userIdx);
         const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, historyForPrompt, true);
@@ -2520,9 +2820,9 @@ ${item.text}` : item.text;
         });
         content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
 
-        if (respId) {
+        if (respId && chatId) {
           const nextChain = chain.length > 0 ? chain.slice(0, chain.length - 1).concat([respId]) : [respId];
-          saveResponseIdChain(ch.id, nextChain);
+          saveResponseIdChain(chatId, nextChain);
         }
       }
 
@@ -2551,7 +2851,9 @@ ${item.text}` : item.text;
     }
   }
 
-  async function continueLastAnswerWithPrompt({ inputText, hintText, failurePrefix }) {
+  const THOUGHT_DELIM = "\n\n{{THOUGHTS}}\n";
+
+  async function continueLastAnswerWithPrompt({ inputText, hintText, failurePrefix, isThoughts }) {
     const ch = activeCharacter();
     if (!ch) return;
     if (!state.lmOk) {
@@ -2560,6 +2862,7 @@ ${item.text}` : item.text;
     }
     if (state.generating) return;
 
+    const chatId = activeChatIdFor(ch.id);
     const history = chatHistoryFor(ch.id);
     if (history.length === 0) return;
     const lastIdx = history.length - 1;
@@ -2567,7 +2870,8 @@ ${item.text}` : item.text;
     if (!last || last.role !== "assistant" || last.pending) return;
 
     const assistantMsgId = String(last.id);
-    const base = String(last.content || "");
+    const rawBase = String(last.content || "");
+    const base = isThoughts ? rawBase + THOUGHT_DELIM : rawBase;
 
     const nextHistory = history.slice();
     nextHistory[lastIdx] = { ...last, pending: true };
@@ -2593,7 +2897,7 @@ ${item.text}` : item.text;
         });
         content = String(fullContent || "").trim() ? String(fullContent) : (base || "(пустой ответ)");
       } else {
-        const prevResponseId = lastResponseIdFor(ch.id);
+        const prevResponseId = chatId ? lastResponseIdFor(chatId) : "";
         const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, history, true);
 
         const { fullContent, respId } = await streamLmStudioRestToMessage({
@@ -2606,13 +2910,13 @@ ${item.text}` : item.text;
         });
         content = String(fullContent || "").trim() ? String(fullContent) : (base || "(пустой ответ)");
 
-        if (respId) {
-          const chain = responseIdChainFor(ch.id);
+        if (respId && chatId) {
+          const chain = responseIdChainFor(chatId);
           let nextChain = chain;
           if (nextChain.length === 0 && prevResponseId) nextChain = [prevResponseId, respId];
           else if (nextChain.length === 0) nextChain = [respId];
           else nextChain = nextChain.slice(0, nextChain.length - 1).concat([respId]);
-          saveResponseIdChain(ch.id, nextChain);
+          saveResponseIdChain(chatId, nextChain);
         }
       }
 
@@ -2654,7 +2958,8 @@ ${item.text}` : item.text;
       inputText:
         "Продолжи свой предыдущий ответ в формате внутренних мыслей персонажа. Пиши как поток мыслей в текущий момент, в первом лице, без обращения к собеседнику и без повторов уже сказанного. Только мысли: без реплик, диалогов, объяснений, вступлений, мета-текста и оформления (без кавычек, двоеточий, ролей, меток).",
       hintText: "Генерирую внутренние мысли…",
-      failurePrefix: "мысли прерваны"
+      failurePrefix: "мысли прерваны",
+      isThoughts: true
     });
   }
 
@@ -2662,7 +2967,8 @@ ${item.text}` : item.text;
     const ch = activeCharacter();
     if (!ch) return;
     setChatHistory(ch.id, []);
-    resetLmContextFor(ch.id);
+    const chatId = activeChatIdFor(ch.id);
+    if (chatId) resetLmContextFor(chatId);
     ensureInitialMessage();
     renderMessages();
     refreshChatsView();
@@ -3254,9 +3560,35 @@ ${item.text}` : item.text;
     const btnClearChat = $("#btnClearChat");
     if (btnClearChat) {
       btnClearChat.addEventListener("click", () => {
-        const ok = window.confirm("Очистить чат с этим персонажем?");
+        const ok = window.confirm("Очистить текущий чат?");
         if (!ok) return;
         clearChatForActiveCharacter();
+      });
+    }
+
+    const chatSelect = $("#charChatSelect");
+    if (chatSelect) {
+      chatSelect.addEventListener("change", (e) => {
+        const c = editingCharacter();
+        const chatId = String(e.target.value || "");
+        if (!c || !chatId) return;
+        setActiveChat(c.id, chatId);
+        ensureInitialMessage();
+        if (state.selectedCharacterId === c.id) {
+          renderHeader();
+          renderMessages();
+        }
+        refreshChatsView();
+        renderChatSelectInSettings(c);
+      });
+    }
+
+    const btnNewChat = $("#btnNewChatInSettings");
+    if (btnNewChat) {
+      btnNewChat.addEventListener("click", () => {
+        const c = editingCharacter();
+        if (!c) return;
+        createNewChatForCharacter(c.id);
       });
     }
 

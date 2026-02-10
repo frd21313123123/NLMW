@@ -377,6 +377,7 @@ body {
   max-width: 50vw;
 }
 
+
 /* ===== MODEL SELECT ===== */
 
 .model__select,
@@ -520,6 +521,59 @@ body {
 .miniBtn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+/* ===== THOUGHTS BLOCK (Heart Whisper) ===== */
+
+.thoughtsBlock {
+  margin-top: 10px;
+  margin-left: -14px;
+  margin-right: -14px;
+  margin-bottom: -10px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 0 0 18px 18px;
+  overflow: hidden;
+}
+
+.thoughtsBlock__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.thoughtsBlock__icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.thoughtsBlock__title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #c78dff;
+  flex: 1;
+}
+
+.thoughtsBlock__speaker {
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  transition: color 150ms;
+}
+
+.thoughtsBlock__speaker:hover {
+  color: var(--text);
+}
+
+.thoughtsBlock__body {
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 /* ===== COMPOSER ===== */
@@ -1351,15 +1405,112 @@ body {
     grid-template-columns: 1fr;
   }
 
+  /* --- Appbar: prevent row overflow --- */
+  .appbar {
+    padding: 6px 10px;
+  }
+
+  .appbar__row {
+    gap: 6px;
+    min-height: 44px;
+  }
+
+  .model__select,
+  .model__select--compact {
+    max-width: 100px;
+    font-size: 12px;
+    height: 30px;
+    padding: 2px 5px;
+  }
+
+  .appbar__right {
+    gap: 2px;
+  }
+
+  .appbar__right .iconBtn {
+    width: 34px;
+    height: 34px;
+  }
+
+  .appbar__right .iconBtn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .chatTitle {
+    gap: 8px;
+  }
+
+  .chatTitle .avatar {
+    width: 32px;
+    height: 32px;
+  }
+
+  .chatTitle__name {
+    font-size: 14px;
+    max-width: 28vw;
+  }
+
+  .chatTitle__meta {
+    font-size: 11px;
+    max-width: 28vw;
+  }
+
+  /* --- CharHero: prevent content overlapping top bar --- */
   .charHero {
-    min-height: 280px;
+    min-height: 300px;
   }
 
   .charHero__title {
-    font-size: 24px;
+    font-size: 22px;
   }
 
-  /* Full-screen modal on mobile */
+  .charHero__content {
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    gap: 6px;
+  }
+
+  .charHero__avatar {
+    width: 48px;
+    height: 48px;
+  }
+
+  .charHero__subtitle {
+    font-size: 13px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .charHero__tags {
+    gap: 4px;
+  }
+
+  .chip {
+    font-size: 11px;
+    padding: 4px 8px;
+  }
+
+  .charHero__actions {
+    gap: 6px;
+  }
+
+  .charHero__chatBtn {
+    min-width: 90px;
+    height: 34px;
+    font-size: 13px;
+  }
+
+  .charHero__actions .btn--danger {
+    height: 34px;
+    font-size: 13px;
+    padding: 0 12px;
+  }
+
+  /* --- Modal: full-screen + header fix --- */
   .modal__overlay {
     background: var(--bg);
   }
@@ -1386,6 +1537,12 @@ body {
     position: sticky;
     top: 0;
     z-index: 2;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .modal__title {
+    font-size: 15px;
   }
 
   .modal__headerActions {
@@ -1393,9 +1550,9 @@ body {
   }
 
   .modal__headerActions .btn {
-    height: 34px;
-    padding: 0 10px;
-    font-size: 13px;
+    height: 32px;
+    padding: 0 8px;
+    font-size: 12px;
   }
 
   .modal__content {
@@ -1404,6 +1561,7 @@ body {
     -webkit-overflow-scrolling: touch;
   }
 
+  /* --- Char list / editor --- */
   .charList {
     padding: 8px;
     gap: 6px;
@@ -1418,29 +1576,82 @@ body {
     padding: 12px;
   }
 
-  .charHero__content {
-    left: 10px;
-    right: 10px;
-    bottom: 10px;
+  /* --- Sheet panel: prevent overflow --- */
+  .sheet__panel {
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+
+  /* --- Tab bar: safe area for notch phones --- */
+  .tabbar {
+    height: auto;
+    min-height: 52px;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* --- Composer: tighter on mobile --- */
+  .chat__composer {
+    padding: 8px 10px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+
+  .composer__row {
+    grid-template-columns: 32px 1fr auto;
     gap: 8px;
   }
 
-  .charHero__avatar {
-    width: 56px;
-    height: 56px;
+  .composer__row .avatar {
+    width: 32px;
+    height: 32px;
   }
 
-  .charHero__subtitle {
+  /* --- Chat items: tighter for small screens --- */
+  .chatItem {
+    grid-template-columns: 52px 1fr auto;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .chatItem__avatar {
+    width: 52px;
+    height: 52px;
+  }
+
+  .chatItem__name {
+    font-size: 15px;
+  }
+
+  .chatItem__preview {
     font-size: 13px;
   }
 
-  .charHero__actions {
-    gap: 8px;
+  .chatItem__time {
+    font-size: 12px;
   }
 
-  .charHero__chatBtn {
-    min-width: 100px;
+  /* --- Import panel: wrap properly --- */
+  .importPanel {
+    padding: 10px;
   }
+
+  .importPanel__actions {
+    flex-wrap: wrap;
+  }
+
+  .importPanel__actions .btn {
+    font-size: 12px;
+    height: 32px;
+    padding: 0 8px;
+  }
+}
+
+.row--chatManager .field {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.row--chatManager .btn {
+  flex: 0 0 auto;
 }
 
 /* ===== DESKTOP LAYOUT (>= 1024px) ===== */
@@ -1598,6 +1809,51 @@ body {
 
   .bubble {
     max-width: 75%;
+  }
+}
+
+/* ===== EXTRA-SMALL PHONES (< 380px, e.g. iPhone SE) ===== */
+
+@media (max-width: 380px) {
+  .appbar {
+    padding: 4px 8px;
+  }
+
+  .model__select,
+  .model__select--compact {
+    max-width: 80px;
+  }
+
+  .chatTitle__name {
+    max-width: 22vw;
+  }
+
+  .chatTitle__meta {
+    display: none;
+  }
+
+  .charHero__title {
+    font-size: 20px;
+  }
+
+  .charHero__avatar {
+    width: 40px;
+    height: 40px;
+  }
+
+  .modal__headerActions .btn {
+    padding: 0 6px;
+    font-size: 11px;
+  }
+
+  .chat__messages {
+    padding: 8px 10px;
+  }
+
+  .bubble {
+    max-width: 90%;
+    padding: 8px 12px;
+    font-size: 14px;
   }
 }
 
