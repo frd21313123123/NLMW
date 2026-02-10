@@ -1,5 +1,6 @@
 /* eslint-disable no-console */
 
+const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const https = require("https");
@@ -32,7 +33,7 @@ function deriveOpenAiBaseUrl(baseUrl) {
 const LMSTUDIO_REST_BASE_URL = deriveRestBaseUrl(LMSTUDIO_BASE_URL);
 const LMSTUDIO_OPENAI_BASE_URL = deriveOpenAiBaseUrl(LMSTUDIO_BASE_URL);
 
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "10mb" }));
 
 app.get("/api/health", (_req, res) => {
   res.json({
@@ -919,6 +920,82 @@ app.post("/api/import/polybuzz", async (req, res) => {
   }
 });
 
+// ===== Shared characters storage =====
+
+const DATA_DIR = path.join(__dirname, "data");
+const CHARACTERS_FILE = path.join(DATA_DIR, "characters.json");
+
+function ensureDataDir() {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function loadCharacters() {
+  ensureDataDir();
+  try {
+    const raw = fs.readFileSync(CHARACTERS_FILE, "utf8");
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCharactersFile(arr) {
+  ensureDataDir();
+  fs.writeFileSync(CHARACTERS_FILE, JSON.stringify(arr, null, 2), "utf8");
+}
+
+// GET all characters
+app.get("/api/characters", (_req, res) => {
+  res.json(loadCharacters());
+});
+
+// POST upsert a character
+app.post("/api/characters", (req, res) => {
+  const ch = req.body;
+  if (!ch || typeof ch !== "object" || !ch.id) {
+    return res.status(400).json({ error: "Character must have an id" });
+  }
+  const chars = loadCharacters();
+  const idx = chars.findIndex((c) => c.id === ch.id);
+  if (idx === -1) chars.unshift(ch);
+  else chars[idx] = ch;
+  saveCharactersFile(chars);
+  res.json({ ok: true });
+});
+
+// POST bulk upsert (for migration / import)
+app.post("/api/characters/bulk", (req, res) => {
+  const items = req.body;
+  if (!Array.isArray(items)) {
+    return res.status(400).json({ error: "Expected array" });
+  }
+  const chars = loadCharacters();
+  const existingIds = new Set(chars.map((c) => c.id));
+  for (const ch of items) {
+    if (!ch || typeof ch !== "object" || !ch.id) continue;
+    if (existingIds.has(ch.id)) {
+      const idx = chars.findIndex((c) => c.id === ch.id);
+      if (idx !== -1) chars[idx] = ch;
+    } else {
+      chars.push(ch);
+      existingIds.add(ch.id);
+    }
+  }
+  saveCharactersFile(chars);
+  res.json({ ok: true, count: chars.length });
+});
+
+// DELETE a character by id
+app.delete("/api/characters/:id", (req, res) => {
+  const id = req.params.id;
+  let chars = loadCharacters();
+  const before = chars.length;
+  chars = chars.filter((c) => c.id !== id);
+  saveCharactersFile(chars);
+  res.json({ ok: true, deleted: chars.length < before });
+});
+
 const publicDir = path.join(__dirname, "public");
 app.use(express.static(publicDir));
 
@@ -926,7 +1003,15 @@ app.get("*", (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`Web UI: http://localhost:${PORT}`);
+  const nets = require("os").networkInterfaces();
+  for (const ifaces of Object.values(nets)) {
+    for (const iface of ifaces) {
+      if (iface.family === "IPv4" && !iface.internal) {
+        console.log(`  LAN:  http://${iface.address}:${PORT}`);
+      }
+    }
+  }
   console.log(`LM Studio base: ${LMSTUDIO_BASE_URL}`);
 });

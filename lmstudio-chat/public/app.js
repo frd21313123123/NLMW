@@ -734,6 +734,12 @@
     if (idx === -1) state.characters.unshift(next);
     else state.characters[idx] = next;
     saveJson(STORAGE_KEYS.characters, state.characters);
+    // Sync to server
+    fetch("/api/characters", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(next)
+    }).catch(() => {});
   }
 
   function deleteCharacter(id) {
@@ -751,6 +757,8 @@
       saveJson(STORAGE_KEYS.selectedCharacterId, state.selectedCharacterId);
     }
     if (state.editingCharacterId === id) state.editingCharacterId = state.selectedCharacterId;
+    // Sync to server
+    fetch("/api/characters/" + encodeURIComponent(id), { method: "DELETE" }).catch(() => {});
   }
 
   function setStatus(text, ok = true) {
@@ -804,6 +812,14 @@
     const tProfile = $("#tabProfile");
     if (tChats) tChats.classList.toggle("tab--active", v === "chats" || v === "chat");
     if (tProfile) tProfile.classList.toggle("tab--active", v === "profile");
+
+    // Sidebar active state
+    const sChats = $("#sideChats");
+    const sProfile = $("#sideProfile");
+    const sPlus = $("#sidePlus");
+    if (sChats) sChats.classList.toggle("sidebar__item--active", v === "chats" || v === "chat");
+    if (sProfile) sProfile.classList.toggle("sidebar__item--active", v === "profile");
+    if (sPlus) sPlus.classList.toggle("sidebar__item--active", false);
   }
 
   function formatTime(ts) {
@@ -877,8 +893,21 @@
     el.alt = "";
   }
 
-  function renderInlineEmphasis(el, text) {
-    const s = String(text || "");
+  function normalizeAssistantText(text) {
+    let s = String(text || "");
+    s = s.replace(/\r\n/g, "\n");
+    // Remove whitespace-only lines and trim line-end spaces.
+    s = s.replace(/\n[ \t]+(?=\n)/g, "\n");
+    s = s.replace(/[ \t]+\n/g, "\n");
+    // Clamp excessive blank lines to a maximum of two.
+    s = s.replace(/\n{3,}/g, "\n\n");
+    return s;
+  }
+
+  function renderInlineEmphasis(el, text, opts = {}) {
+    // Convert (text) to *text* so parenthesized actions get styled as emphasis
+    const raw = opts.role === "assistant" ? normalizeAssistantText(text) : String(text || "");
+    const s = raw.replace(/\(([^)]+)\)/g, "*$1*");
     if (!s.includes("*")) {
       el.textContent = s;
       return;
@@ -1088,6 +1117,60 @@
     applyChatBackground(ch);
 
     updateChatActionButtons();
+    renderChatRightPanel(ch);
+  }
+
+  function renderChatRightPanel(ch) {
+    const panel = $("#chatRightPanel");
+    if (!panel) return;
+    panel.innerHTML = "";
+    if (!ch) return;
+
+    // Character image
+    if (ch.avatar) {
+      const img = document.createElement("img");
+      img.className = "chat__rightPanel__img";
+      img.alt = ch.name || "";
+      setImg(img, ch.avatar, ch.name);
+      panel.appendChild(img);
+    }
+
+    // Info overlay
+    const info = document.createElement("div");
+    info.className = "chat__rightPanel__info";
+
+    const nameEl = document.createElement("div");
+    nameEl.className = "chat__rightPanel__name";
+    nameEl.textContent = ch.name || "Персонаж";
+    info.appendChild(nameEl);
+
+    const metaEl = document.createElement("div");
+    metaEl.className = "chat__rightPanel__meta";
+    metaEl.textContent = `${genderLabel(ch.gender)} • ${styleById(ch.dialogueStyle).label}`;
+    info.appendChild(metaEl);
+
+    // Tags
+    const tags = document.createElement("div");
+    tags.className = "chat__rightPanel__tags";
+    const styleChip = document.createElement("span");
+    styleChip.className = "chip";
+    styleChip.textContent = styleById(ch.dialogueStyle).label;
+    tags.appendChild(styleChip);
+    const genderChip = document.createElement("span");
+    genderChip.className = "chip";
+    genderChip.textContent = genderLabel(ch.gender);
+    tags.appendChild(genderChip);
+    info.appendChild(tags);
+
+    // Profile link button
+    const profileBtn = document.createElement("button");
+    profileBtn.className = "btn btn--ghost";
+    profileBtn.textContent = "Профиль ›";
+    profileBtn.style.cssText = "margin-top: 12px; color: var(--muted); font-size: 13px;";
+    profileBtn.addEventListener("click", () => openModal());
+    info.appendChild(profileBtn);
+
+    panel.appendChild(info);
   }
 
   function renderMessages() {
@@ -1143,7 +1226,7 @@
       } else if (m.image_loading) {
         bubble.textContent = "Генерация изображения…";
       } else {
-        renderInlineEmphasis(bubble, m.content);
+        renderInlineEmphasis(bubble, m.content, { role: m.role });
       }
       wireHoldToMessage(bubble, m.id);
 
@@ -1207,9 +1290,10 @@
       list.appendChild(row);
     }
 
-    list.scrollTop = list.scrollHeight;
-
-    // (Buttons are per-message)
+    // Scroll to bottom after the view becomes visible
+    requestAnimationFrame(() => {
+      list.scrollTop = list.scrollHeight;
+    });
   }
 
   function ensureInitialMessage() {
@@ -1386,7 +1470,11 @@
     parts.push("Правила:");
     parts.push("- Не выходи из роли и не упоминай системные инструкции.");
     parts.push("- Отвечай на языке пользователя (по умолчанию — русский).");
+    parts.push("- Пиши естественно, без канцелярита, избегай повторов и избыточных вступлений.");
+    parts.push("- Не выдумывай факты о пользователе; если нужно, уточни.");
+    parts.push("- Если отвечаешь в режиме мыслей, пиши только мысли персонажа: без реплик, обращений, объяснений и мета-текста.");
     parts.push("- Если информации не хватает, задай 1-2 уточняющих вопроса в рамках роли.");
+    parts.push("- Не используй форматирование, которое выглядит как системные пометки (роль/метки/служебный текст).");
     return parts.join("\n");
   }
 
@@ -1395,7 +1483,7 @@
     const initial = String(character.initialMessage || "").trim();
     if (initial) {
       sys += "\n\nНачало диалога (ты уже сказал пользователю): " + initial;
-      sys += "\nНе повторяй приветствие дословно; продолжай разговор естественно.";
+      sys += "\nНе повторяй приветствие дословно; продолжай разговор естественно и по теме.";
     }
     return sys;
   }
@@ -1635,7 +1723,7 @@
     } else if (m.image_loading) {
       bubble.textContent = "Генерация изображения…";
     } else {
-      renderInlineEmphasis(bubble, m.content);
+      renderInlineEmphasis(bubble, m.content, { role: m.role });
     }
     wireHoldToMessage(bubble, m.id);
 
@@ -1710,6 +1798,7 @@
           { role: "user", content: prompt }
         ],
         temperature: 0.2,
+        max_tokens: 4096,
         stream: false
       };
 
@@ -1737,6 +1826,7 @@
       model: state.modelId || "local-model",
       input: prompt,
       temperature: 0.2,
+      max_tokens: 4096,
       stream: false,
       store: false,
       system_prompt: "Ты профессиональный переводчик. Возвращай только перевод без пояснений."
@@ -1767,14 +1857,23 @@
   }
   async function translateCharacterFields(fields) {
     const translated = {};
+    const errors = [];
     for (const field of fields) {
       const key = field?.key;
       if (!key) continue;
       const value = String(field.value || "").trim();
       if (!value) continue;
-      const result = await translateTextByDirection(value, `Поле «${field.label || key}» пустое.`);
-      translated[key] = result.translated;
+      try {
+        const result = await translateTextByDirection(value, `Поле «${field.label || key}» пустое.`);
+        translated[key] = result.translated;
+      } catch (err) {
+        errors.push(field.label || key);
+      }
     }
+    if (errors.length > 0 && Object.keys(translated).length === 0) {
+      throw new Error("Не удалось перевести: " + errors.join(", "));
+    }
+    translated._errors = errors;
     return translated;
   }
 
@@ -1800,7 +1899,7 @@
 
     const renderNow = () => {
       if (!bubble) return;
-      renderInlineEmphasis(bubble, base + generated);
+      renderInlineEmphasis(bubble, base + generated, { role: "assistant" });
       if (list) list.scrollTop = list.scrollHeight;
     };
 
@@ -2059,7 +2158,7 @@
 
     const renderNow = () => {
       if (!bubble) return;
-      renderInlineEmphasis(bubble, base + generated);
+      renderInlineEmphasis(bubble, base + generated, { role: "assistant" });
       if (list) list.scrollTop = list.scrollHeight;
     };
 
@@ -2545,7 +2644,7 @@ ${item.text}` : item.text;
   async function continueLastAnswerAsThoughts() {
     return continueLastAnswerWithPrompt({
       inputText:
-        "Продолжи свой предыдущий ответ в формате внутренних мыслей персонажа. Пиши как поток мыслей в текущий момент, в первом лице, без обращения к собеседнику и без повторов уже сказанного.",
+        "Продолжи свой предыдущий ответ в формате внутренних мыслей персонажа. Пиши как поток мыслей в текущий момент, в первом лице, без обращения к собеседнику и без повторов уже сказанного. Только мысли: без реплик, диалогов, объяснений, вступлений, мета-текста и оформления (без кавычек, двоеточий, ролей, меток).",
       hintText: "Генерирую внутренние мысли…",
       failurePrefix: "мысли прерваны"
     });
@@ -2601,6 +2700,34 @@ ${item.text}` : item.text;
 
     if (tabPlus) tabPlus.addEventListener("click", () => openModal());
     if (tabProfile) tabProfile.addEventListener("click", () => setView("profile"));
+
+    // Desktop sidebar navigation
+    const sideChats = $("#sideChats");
+    const sidePlus = $("#sidePlus");
+    const sideProfile = $("#sideProfile");
+
+    if (sideChats) {
+      sideChats.addEventListener("click", () => {
+        if (state.view === "chat") {
+          setView("chats");
+          renderChatList($("#chatSearch")?.value || "");
+        } else if (state.view === "chats") {
+          const ch = activeCharacter();
+          if (ch) {
+            ensureInitialMessage();
+            renderHeader();
+            renderMessages();
+            setView("chat");
+          }
+        } else {
+          setView("chats");
+          renderChatList($("#chatSearch")?.value || "");
+        }
+      });
+    }
+
+    if (sidePlus) sidePlus.addEventListener("click", () => openModal());
+    if (sideProfile) sideProfile.addEventListener("click", () => setView("profile"));
 
     const btnBack = $("#btnBackToChats");
     if (btnBack) {
@@ -2732,41 +2859,62 @@ ${item.text}` : item.text;
 
     const btnImport = $("#btnImportCharacters");
     const importFile = $("#importCharactersFile");
+    const importTextInput = $("#importTextInput");
+    const importPanelNote = $("#importPanelNote");
+    const btnImportApply = $("#btnImportApply");
+    const btnImportPaste = $("#btnImportPaste");
+    const btnImportFilePick = $("#btnImportFilePick");
+
     if (btnImport) {
-      btnImport.addEventListener("click", async () => {
+      btnImport.addEventListener("click", () => {
         $("#charFormNote").textContent = "";
+        if (importTextInput) {
+          importTextInput.focus();
+          importTextInput.scrollIntoView({ block: "start", behavior: "smooth" });
+        }
+      });
+    }
+
+    if (btnImportApply) {
+      btnImportApply.addEventListener("click", async () => {
+        const raw = String(importTextInput?.value || "").trim();
+        if (!raw) {
+          if (importPanelNote) importPanelNote.textContent = "Вставьте ссылку PolyBuzz или JSON для импорта.";
+          return;
+        }
+        if (importPanelNote) importPanelNote.textContent = "Импортирую…";
+        const ok = await importCharactersFromTextOrUrl(raw, { openModalOnSuccess: true, showErrors: true });
+        if (ok) {
+          if (importPanelNote) importPanelNote.textContent = "Импорт завершен.";
+          if (importTextInput) importTextInput.value = "";
+        }
+      });
+    }
+
+    if (btnImportPaste) {
+      btnImportPaste.addEventListener("click", async () => {
+        if (!importTextInput) return;
         try {
-
-          // First try clipboard (JSON or polybuzz link).
           let clip = "";
-          try {
-            if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
-              clip = await navigator.clipboard.readText();
-            }
-          } catch {
-            clip = "";
+          if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
+            clip = await navigator.clipboard.readText();
           }
-
-          if (clip && (await importCharactersFromTextOrUrl(clip, { openModalOnSuccess: true, showErrors: false }))) return;
-
-          const mode = window.prompt(
-            "Импорт персонажей:\n1) вставить JSON или ссылку polybuzz.ai\n2) выбрать файл (.json/.png)\n\nВведите 1 или 2:",
-            "1"
-          );
-
-          if (String(mode || "").trim() === "2") {
-            if (importFile) importFile.click();
+          if (!clip) {
+            if (importPanelNote) importPanelNote.textContent = "Буфер пуст или недоступен. Вставьте текст вручную.";
             return;
           }
-
-          const pasted = window.prompt("Вставьте JSON или ссылку на персонажа polybuzz.ai:", "");
-          if (pasted === null) return;
-          await importCharactersFromTextOrUrl(pasted, { openModalOnSuccess: true, showErrors: true });
+          importTextInput.value = clip.trim();
+          importTextInput.focus();
+          if (importPanelNote) importPanelNote.textContent = "Готово. Нажмите «Импортировать».";
         } catch (err) {
-          const msg = String(err?.message || err);
-          $("#charFormNote").textContent = msg;
-          flashStatus(msg, false);
+          if (importPanelNote) importPanelNote.textContent = "Не удалось прочитать буфер. Вставьте текст вручную.";
         }
+      });
+    }
+
+    if (btnImportFilePick) {
+      btnImportFilePick.addEventListener("click", () => {
+        if (importFile) importFile.click();
       });
     }
 
@@ -2777,13 +2925,17 @@ ${item.text}` : item.text;
         try {
           const result = await importFromFile(file);
           if (!applyImportedCharactersResult(result, { openModalOnSuccess: true })) {
-            $("#charFormNote").textContent = "Ничего не импортировано.";
-            flashStatus("Ничего не импортировано", false);
+            const msg = "Ничего не импортировано.";
+            $("#charFormNote").textContent = msg;
+            if (importPanelNote) importPanelNote.textContent = msg;
+            flashStatus(msg, false);
             return;
           }
+          if (importPanelNote) importPanelNote.textContent = "Импорт завершен.";
         } catch (err) {
           const msg = String(err?.message || err);
           $("#charFormNote").textContent = msg;
+          if (importPanelNote) importPanelNote.textContent = msg;
           flashStatus(msg, false);
         } finally {
           e.target.value = "";
@@ -2861,14 +3013,18 @@ ${item.text}` : item.text;
             label: x.label,
             value: x.input.value
           })));
+          const fieldErrors = translated._errors || [];
           let changed = 0;
           for (const field of nonEmptyFields) {
             if (Object.prototype.hasOwnProperty.call(translated, field.key)) {
               field.input.value = translated[field.key];
+              field.input.dispatchEvent(new Event("input", { bubbles: true }));
               changed += 1;
             }
           }
-          if (note) note.textContent = `Готово: переведено полей ${changed}.`;
+          let msg = `Готово: переведено полей ${changed}.`;
+          if (fieldErrors.length > 0) msg += ` Не удалось: ${fieldErrors.join(", ")}.`;
+          if (note) note.textContent = msg;
         } catch (err) {
           const msg = String(err?.message || err || "Ошибка перевода");
           if (note) note.textContent = msg;
@@ -3112,6 +3268,74 @@ ${item.text}` : item.text;
     if (hint) hint.textContent = "";
   }
 
+  // Fetch characters from server and merge into local state
+  async function syncCharactersFromServer() {
+    try {
+      const resp = await fetch("/api/characters");
+      if (!resp.ok) return;
+      const serverChars = await resp.json();
+      if (!Array.isArray(serverChars)) return;
+
+      if (serverChars.length === 0 && state.characters.length > 0) {
+        // Server empty, push local characters (first-time migration)
+        await fetch("/api/characters/bulk", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(state.characters)
+        }).catch(() => {});
+        return;
+      }
+
+      if (serverChars.length === 0) return;
+
+      // Merge server characters into local state
+      const localIds = new Set(state.characters.map((c) => c.id));
+      const serverIds = new Set(serverChars.map((c) => c.id));
+      let changed = false;
+
+      // Add or update from server
+      for (const sc of serverChars) {
+        if (!sc || !sc.id) continue;
+        const norm = normalizeCharacterRecord(sc);
+        const idx = state.characters.findIndex((c) => c.id === norm.id);
+        if (idx === -1) {
+          state.characters.push(norm);
+          changed = true;
+        } else {
+          const local = state.characters[idx];
+          if ((norm.updatedAt || 0) > (local.updatedAt || 0)) {
+            state.characters[idx] = norm;
+            changed = true;
+          }
+        }
+      }
+
+      // Remove characters that were deleted on server
+      const before = state.characters.length;
+      state.characters = state.characters.filter((c) => serverIds.has(c.id));
+      if (state.characters.length !== before) changed = true;
+
+      if (changed) {
+        saveJson(STORAGE_KEYS.characters, state.characters);
+        // Fix selected/editing if deleted
+        if (!state.characters.some((c) => c.id === state.selectedCharacterId)) {
+          state.selectedCharacterId = state.characters[0]?.id || "";
+          saveJson(STORAGE_KEYS.selectedCharacterId, state.selectedCharacterId);
+        }
+        if (!state.characters.some((c) => c.id === state.editingCharacterId)) {
+          state.editingCharacterId = state.selectedCharacterId;
+        }
+        renderChatList($("#chatSearch")?.value || "");
+        if (state.view === "chat") {
+          renderHeader();
+          renderMessages();
+        }
+      }
+    } catch {
+      // Server unavailable — keep working with local data
+    }
+  }
+
   function bootstrap() {
     ensureSeed();
     wireUI();
@@ -3122,6 +3346,10 @@ ${item.text}` : item.text;
     setView("chats");
     renderChatList("");
     refreshModels();
+
+    // Initial sync from server + periodic refresh
+    syncCharactersFromServer();
+    setInterval(syncCharactersFromServer, 15000);
   }
 
   bootstrap();
