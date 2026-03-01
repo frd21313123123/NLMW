@@ -383,20 +383,61 @@ body {
 .model__select,
 .model__select--compact {
   height: 34px;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
+  padding: 4px 34px 4px 12px;
+  border-radius: 999px;
   color: var(--text);
-  background: var(--surface2);
+  background-color: var(--surface2);
   border: 1px solid var(--border);
   outline: none;
   font-family: inherit;
   font-size: 13px;
   max-width: 160px;
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  /* Make native select look like a compact "pill" control. */
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M6 8l4 4 4-4' fill='none' stroke='%23e8e8e8' stroke-opacity='0.7' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat, no-repeat;
+  background-position: 0 0, right 10px center;
+  background-size: auto, 12px 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition: border-color 150ms, background-color 150ms, box-shadow 150ms, transform 60ms;
 }
 
-.model__select:focus {
-  border-color: rgba(246, 176, 30, 0.4);
+.model__select:hover,
+.model__select--compact:hover {
+  border-color: var(--border2);
+  background-color: var(--surface3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 10px 26px rgba(0, 0, 0, 0.25);
+}
+
+.model__select:active,
+.model__select--compact:active {
+  transform: translateY(1px);
+}
+
+.model__select:focus,
+.model__select--compact:focus {
+  border-color: rgba(246, 176, 30, 0.55);
+  box-shadow:
+    0 0 0 3px rgba(246, 176, 30, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.model__select:disabled,
+.model__select--compact:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 /* ===== AVATAR ===== */
@@ -1420,7 +1461,9 @@ body {
     max-width: 100px;
     font-size: 12px;
     height: 30px;
-    padding: 2px 5px;
+    padding: 2px 26px 2px 10px;
+    background-position: 0 0, right 8px center;
+    background-size: auto, 10px 10px;
   }
 
   .appbar__right {
@@ -1822,6 +1865,9 @@ body {
   .model__select,
   .model__select--compact {
     max-width: 80px;
+    padding: 2px 22px 2px 8px;
+    background-position: 0 0, right 6px center;
+    background-size: auto, 10px 10px;
   }
 
   .chatTitle__name {
