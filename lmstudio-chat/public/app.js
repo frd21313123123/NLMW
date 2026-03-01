@@ -100,6 +100,15 @@
     return "LM Studio";
   }
 
+  function syncModelSelectTitles(selects) {
+    for (const s of selects) {
+      if (!s) continue;
+      const opt = s.options && s.selectedIndex >= 0 ? s.options[s.selectedIndex] : null;
+      const label = String(opt?.textContent || opt?.label || s.value || "").trim();
+      s.title = label ? `Модель: ${label}` : "Модель";
+    }
+  }
+
   function defaultProfile() {
     return {
       name: "Вы",
@@ -420,6 +429,74 @@
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function buildFullExportPayload() {
+    return {
+      format: "nlmw-backup",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      data: {
+        profile: state.profile,
+        characters: state.characters,
+        selectedCharacterId: state.selectedCharacterId,
+        conversations: state.conversations,
+        responseIds: state.responseIds,
+        responseIdChains: state.responseIdChains,
+        modelId: state.modelId,
+        provider: state.provider,
+        mistralKey: state.mistralKey,
+        savedPrompts: state.savedPrompts
+      }
+    };
+  }
+
+  async function applyImportedAppData(payload) {
+    const src = payload && typeof payload === "object" && payload.data && typeof payload.data === "object"
+      ? payload.data
+      : payload;
+    if (!src || typeof src !== "object") throw new Error("Неверный формат файла.");
+    if (!Array.isArray(src.characters)) throw new Error("В файле нет списка персонажей (characters).");
+    if (!src.conversations || typeof src.conversations !== "object" || Array.isArray(src.conversations)) {
+      throw new Error("В файле нет данных чатов (conversations).");
+    }
+
+    saveJson(STORAGE_KEYS.profile, normalizeProfileRecord(src.profile));
+    saveJson(STORAGE_KEYS.characters, src.characters);
+    saveJson(STORAGE_KEYS.selectedCharacterId, String(src.selectedCharacterId || ""));
+    saveJson(STORAGE_KEYS.conversations, src.conversations);
+    saveJson(STORAGE_KEYS.responseIds, src.responseIds && typeof src.responseIds === "object" && !Array.isArray(src.responseIds) ? src.responseIds : {});
+    saveJson(
+      STORAGE_KEYS.responseIdChains,
+      src.responseIdChains && typeof src.responseIdChains === "object" && !Array.isArray(src.responseIdChains) ? src.responseIdChains : {}
+    );
+    saveJson(STORAGE_KEYS.modelId, String(src.modelId || ""));
+    saveJson(STORAGE_KEYS.provider, src.provider === "mistral" ? "mistral" : "lmstudio");
+    saveJson(STORAGE_KEYS.mistralKey, String(src.mistralKey || ""));
+    saveJson(STORAGE_KEYS.savedPrompts, Array.isArray(src.savedPrompts) ? src.savedPrompts : []);
+
+    ensureSeed();
+    if (!state.characters.some((c) => c.id === state.editingCharacterId)) {
+      state.editingCharacterId = state.selectedCharacterId || state.characters[0]?.id || "";
+    }
+
+    ensureInitialMessage();
+    fillProfileUI();
+    renderHeader();
+    renderMessages();
+    refreshChatsView();
+
+    const modal = $("#charactersModal");
+    if (modal && !modal.hidden) {
+      renderCharacterList();
+      fillCharacterForm();
+    }
+
+    await fetch("/api/characters/bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state.characters)
+    }).catch(() => {});
   }
 
   function parsePngTextChunks(arrayBuffer) {
@@ -1838,9 +1915,10 @@
   async function refreshModels() {
     const selects = [$("#modelSelect"), $("#modelSelectProfile")].filter(Boolean);
     for (const s of selects) {
-      s.innerHTML = "";
+      s.innerHTML = "<option value=''>Загрузка…</option>";
       s.disabled = true;
     }
+    syncModelSelectTitles(selects);
 
     if (state.provider === "mistral") {
       await refreshMistralModels(selects);
@@ -1862,6 +1940,7 @@
         state.lmOk = false;
         setStatus(msg, false);
         for (const s of selects) s.innerHTML = "<option value=''>—</option>";
+        syncModelSelectTitles(selects);
         return;
       }
 
@@ -1892,6 +1971,7 @@
           s.innerHTML = "<option value='local-model'>local-model</option>";
           s.disabled = false;
         }
+        syncModelSelectTitles(selects);
         return;
       }
 
@@ -1912,6 +1992,7 @@
         s.value = state.modelId;
         s.disabled = false;
       }
+      syncModelSelectTitles(selects);
       state.lmOk = true;
       setStatus("LM Studio: подключено");
       saveJson(STORAGE_KEYS.modelId, state.modelId);
@@ -1919,6 +2000,7 @@
       state.lmOk = false;
       setStatus("LM Studio недоступна. Запустите сервер в LM Studio.", false);
       for (const s of selects) s.innerHTML = "<option value=''>—</option>";
+      syncModelSelectTitles(selects);
     }
   }
 
@@ -1938,6 +2020,7 @@
         state.lmOk = false;
         setStatus(String(msg), false);
         for (const s of selects) s.innerHTML = "<option value=''>—</option>";
+        syncModelSelectTitles(selects);
         return;
       }
 
@@ -1954,6 +2037,7 @@
         state.lmOk = false;
         setStatus("Mistral: моделей не найдено", false);
         for (const s of selects) s.innerHTML = "<option value=''>—</option>";
+        syncModelSelectTitles(selects);
         return;
       }
 
@@ -1973,12 +2057,14 @@
         s.value = state.modelId;
         s.disabled = false;
       }
+      syncModelSelectTitles(selects);
       setStatus(`Mistral: ${items.length} моделей`);
       saveJson(STORAGE_KEYS.modelId, state.modelId);
     } catch (err) {
       state.lmOk = false;
       setStatus("Mistral недоступен: " + String(err?.message || err), false);
       for (const s of selects) s.innerHTML = "<option value=''>—</option>";
+      syncModelSelectTitles(selects);
     }
   }
 
@@ -3485,12 +3571,73 @@ ${item.text}` : item.text;
 
     $("#btnSaveProfile").addEventListener("click", () => saveProfileFromUI());
 
+    const profileDataNote = $("#profileDataNote");
+    const importAllDataFile = $("#importAllDataFile");
+    const btnExportAllData = $("#btnExportAllData");
+    if (btnExportAllData) {
+      btnExportAllData.addEventListener("click", async () => {
+        const payload = buildFullExportPayload();
+        const json = JSON.stringify(payload, null, 2);
+
+        try {
+          if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+            await navigator.clipboard.writeText(json);
+            if (profileDataNote) profileDataNote.textContent = "Экспортировано в буфер обмена.";
+            flashStatus("Экспорт данных завершен", true);
+            return;
+          }
+        } catch {
+          // ignore -> fall back to download
+        }
+
+        const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+        const filename = `nlmw-backup-${ts}.json`;
+        downloadText(filename, json);
+        if (profileDataNote) profileDataNote.textContent = `Экспорт: ${filename}`;
+        flashStatus("Экспорт данных завершен", true);
+      });
+    }
+
+    const btnImportAllData = $("#btnImportAllData");
+    if (btnImportAllData) {
+      btnImportAllData.addEventListener("click", () => {
+        if (importAllDataFile) importAllDataFile.click();
+      });
+    }
+
+    if (importAllDataFile) {
+      importAllDataFile.addEventListener("change", async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+
+        try {
+          const text = await file.text();
+          const payload = safeJsonParse(text);
+          if (!payload) throw new Error("Не удалось прочитать JSON (проверьте формат файла).");
+
+          const ok = window.confirm("Импорт заменит текущие локальные данные (профиль, персонажей и чаты). Продолжить?");
+          if (!ok) return;
+
+          await applyImportedAppData(payload);
+          if (profileDataNote) profileDataNote.textContent = "Импорт завершен.";
+          flashStatus("Импорт данных завершен", true);
+        } catch (err) {
+          const msg = String(err?.message || err || "Ошибка импорта");
+          if (profileDataNote) profileDataNote.textContent = msg;
+          flashStatus(msg, false);
+        } finally {
+          e.target.value = "";
+        }
+      });
+    }
+
     const modelSelects = [$("#modelSelect"), $("#modelSelectProfile")].filter(Boolean);
     for (const sel of modelSelects) {
       sel.addEventListener("change", (e) => {
         state.modelId = String(e.target.value || "");
         saveJson(STORAGE_KEYS.modelId, state.modelId);
         for (const other of modelSelects) other.value = state.modelId;
+        syncModelSelectTitles(modelSelects);
       });
     }
 

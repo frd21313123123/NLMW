@@ -164,6 +164,16 @@
                   </div>
                 </div>
               </div>
+
+              <div class="profile__card" style="margin-top: 1rem;">
+                <div style="font-weight: 600; margin-bottom: 0.5rem; font-size: 0.95rem; color: rgba(255,255,255,0.7);">Резервная копия</div>
+                <div class="row row--actions">
+                  <button class="btn btn--ghost" id="btnExportAllData" type="button">Экспорт данных</button>
+                  <button class="btn btn--accent" id="btnImportAllData" type="button">Импорт данных</button>
+                </div>
+                <input id="importAllDataFile" type="file" accept="application/json,.json" hidden />
+                <div class="smallNote" id="profileDataNote"></div>
+              </div>
             </div>
           </div>
         </section>
