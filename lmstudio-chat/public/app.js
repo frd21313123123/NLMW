@@ -47,7 +47,9 @@
     lmOk: false,
     generating: false,
     msgActionsTargetId: "",
-    view: "chats"
+    view: "chats",
+    discoverTab: "explore",
+    discoverCategory: "all"
   };
 
   function safeJsonParse(text) {
@@ -131,6 +133,9 @@
       id: uuid(),
       name: "Алиса",
       gender: "female",
+      intro: "Наблюдательная собеседница с мягкой иронией и вниманием к деталям.",
+      visibility: "public",
+      tags: ["город", "неон"],
       avatar: "",
       background: "",
       backgroundHint: "ночной город, неон, дождь",
@@ -191,6 +196,11 @@
 
     merged.name = String(merged.name || "").trim() || "(без имени)";
     merged.gender = normalizeGender(merged.gender);
+    merged.intro = String(merged.intro || "").trim();
+    merged.visibility = String(merged.visibility || "").trim().toLowerCase() === "private" ? "private" : "public";
+    merged.tags = Array.isArray(merged.tags)
+      ? merged.tags.map((x) => cleanOneLineText(x)).filter(Boolean).slice(0, 5)
+      : splitCharacterTags(merged.tags).slice(0, 5);
     merged.avatar = typeof merged.avatar === "string" ? merged.avatar : "";
     merged.background = typeof merged.background === "string" ? merged.background : "";
     merged.backgroundHint = String(merged.backgroundHint || "");
@@ -366,6 +376,9 @@
       id: typeof obj.id === "string" ? obj.id : "",
       name: name || "Импортированный персонаж",
       gender: normalizeGender(obj.gender ?? obj.sex ?? ""),
+      intro,
+      visibility: String(obj.visibility ?? obj.permission ?? obj.access ?? "public"),
+      tags: Array.isArray(obj.tags) ? obj.tags : String(obj.tags ?? obj.tag_list ?? ""),
       avatar,
       background: backgroundImage,
       backgroundHint: String(obj.backgroundHint ?? obj.background_hint ?? "").trim(),
@@ -864,96 +877,320 @@
     return best;
   }
 
+  function normalizeTagToken(value) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/[~*"'`]+/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function cleanOneLineText(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+  }
+
+  function splitCharacterTags(value) {
+    return String(value || "")
+      .split(/[,\n|/]+/g)
+      .map((part) => cleanOneLineText(part))
+      .filter(Boolean);
+  }
+
+  function characterTags(character) {
+    const tags = [];
+    const seen = new Set();
+    const rawTags = [
+      ...(Array.isArray(character?.tags) ? character.tags : []),
+      ...splitCharacterTags(character?.backgroundHint),
+      ...splitCharacterTags(character?.setting),
+      styleById(character?.dialogueStyle)?.label || ""
+    ];
+
+    for (const tag of rawTags) {
+      const shortTag = tag.length > 28 ? tag.slice(0, 28).trim() : tag;
+      const key = normalizeTagToken(shortTag);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      tags.push(shortTag);
+      if (tags.length >= 6) break;
+    }
+
+    return tags;
+  }
+
+  function isRomanceCharacter(character) {
+    const haystack = normalizeTagToken(
+      `${character?.backgroundHint || ""} ${character?.setting || ""} ${character?.backstory || ""}`
+    );
+    return ["роман", "романтик", "влюб", "люб", "flirt", "flirty", "date", "girlfriend", "boyfriend"].some((token) =>
+      haystack.includes(token)
+    );
+  }
+
+  function buildDiscoverCategories(characters) {
+    const categories = [{ id: "all", label: "Для вас" }];
+    if (characters.some(isRomanceCharacter)) {
+      categories.push({ id: "romance", label: "Встречаться", icon: true });
+    }
+
+    const counts = new Map();
+    for (const character of characters) {
+      for (const tag of characterTags(character)) {
+        const key = normalizeTagToken(tag);
+        if (!key) continue;
+        counts.set(key, { id: key, label: tag, count: (counts.get(key)?.count || 0) + 1 });
+      }
+    }
+
+    const top = Array.from(counts.values())
+      .filter((item) => item.label.length <= 24)
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "ru"))
+      .slice(0, 5);
+
+    for (const item of top) {
+      if (!categories.some((entry) => entry.id === item.id)) categories.push({ id: item.id, label: item.label });
+    }
+
+    return categories;
+  }
+
+  function latestChatSnapshotForCharacter(characterId) {
+    const bucket = conversationBucketFor(characterId);
+    let bestChat = null;
+    let bestLast = null;
+    let bestTime = 0;
+    let totalMessages = 0;
+    let userMessages = 0;
+
+    for (const chat of bucket.chats) {
+      const messages = Array.isArray(chat?.messages) ? chat.messages : [];
+      for (const msg of messages) {
+        if (!msg || msg.pending) continue;
+        if (msg.role === "user" || msg.role === "assistant") totalMessages++;
+        if (msg.role === "user") userMessages++;
+      }
+
+      const last = lastNonPendingMessageForChat(chat);
+      const time = last?.ts || chat?.updatedAt || chat?.createdAt || 0;
+      if (time >= bestTime) {
+        bestChat = chat;
+        bestLast = last;
+        bestTime = time;
+      }
+    }
+
+    return {
+      chat: bestChat,
+      last: bestLast,
+      time: bestTime,
+      totalMessages,
+      userMessages
+    };
+  }
+
+  function characterSummary(character, snapshot) {
+    const variants = [
+      character?.intro,
+      character?.setting,
+      snapshot?.last?.content,
+      character?.initialMessage,
+      character?.backstory
+    ];
+
+    for (const value of variants) {
+      const text = cleanOneLineText(value);
+      if (!text) continue;
+      return clampText(text, 120);
+    }
+
+    return "Откройте карточку и начните диалог.";
+  }
+
+  function characterMetricLabel(snapshot) {
+    if (!snapshot) return "Новый";
+    if (snapshot.userMessages > 0) return `${snapshot.userMessages} сообщ.`;
+    if (snapshot.totalMessages > 1) return `${snapshot.totalMessages} репл.`;
+    return "Новый";
+  }
+
+  function isStartedCharacter(snapshot) {
+    return Boolean(snapshot && snapshot.userMessages > 0);
+  }
+
+  function openCharacterChat(characterId, chatId) {
+    state.selectedCharacterId = characterId;
+    saveJson(STORAGE_KEYS.selectedCharacterId, state.selectedCharacterId);
+    if (chatId) setActiveChat(characterId, chatId);
+    ensureInitialMessage();
+    renderHeader();
+    renderMessages();
+    setView("chat");
+  }
+
+  function syncDiscoverTabButtons() {
+    const following = $("#btnFollowingTab");
+    const explore = $("#btnExploreTab");
+    const followingText = $("#btnFollowingTextTab");
+    const exploreText = $("#btnExploreTextTab");
+    const forYouText = $("#btnForYouTab");
+    if (following) following.classList.toggle("topPill--active", state.discoverTab === "following");
+    if (explore) explore.classList.toggle("iconBtn--active", state.discoverTab !== "following");
+    if (followingText) followingText.classList.toggle("discoverTabs__item--active", state.discoverTab === "following");
+    if (exploreText) exploreText.classList.toggle("discoverTabs__item--active", state.discoverTab !== "following" && state.discoverCategory !== "all");
+    if (forYouText) forYouText.classList.toggle("discoverTabs__item--active", state.discoverTab !== "following" && state.discoverCategory === "all");
+  }
+
   function renderChatList(filterText) {
     const el = $("#chatList");
     if (!el) return;
     const q = String(filterText || "").trim().toLowerCase();
     el.innerHTML = "";
+    syncDiscoverTabButtons();
 
     const chars = Array.isArray(state.characters) ? state.characters.slice() : [];
-    const items = [];
-
-    for (const c of chars) {
-      const bucket = conversationBucketFor(c.id);
-      for (const chat of bucket.chats) {
-        const last = lastNonPendingMessageForChat(chat);
-        const time = last?.ts || chat.updatedAt || chat.createdAt || 0;
-        items.push({ character: c, chat, last, time });
-      }
+    const categories = buildDiscoverCategories(chars);
+    if (!categories.some((item) => item.id === state.discoverCategory)) {
+      state.discoverCategory = "all";
     }
 
-    // Sort by last message timestamp desc.
-    items.sort((a, b) => (b.time || 0) - (a.time || 0));
+    const shell = document.createElement("div");
+    shell.className = "discoverShell";
 
-    let matchCount = 0;
+    const categoriesRow = document.createElement("div");
+    categoriesRow.className = "discoverCategories";
+    for (const category of categories) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "discoverCategories__item";
+      if (state.discoverCategory === category.id) btn.classList.add("discoverCategories__item--active");
+      if (category.icon) btn.classList.add("has-icon");
+      btn.textContent = category.label;
+      btn.addEventListener("click", () => {
+        state.discoverCategory = category.id;
+        renderChatList($("#chatSearch")?.value || "");
+      });
+      categoriesRow.appendChild(btn);
+    }
+    shell.appendChild(categoriesRow);
 
-    for (const itemData of items) {
-      const c = itemData.character;
-      const chat = itemData.chat;
-      const last = itemData.last;
-      const preview = last?.content || c.initialMessage || "";
-      const time = itemData.time || 0;
-      const searchable = `${c.name || ""} ${chat?.title || ""} ${preview}`.toLowerCase();
-      if (q && !searchable.includes(q)) continue;
+    const grid = document.createElement("div");
+    grid.className = "discoverGrid";
 
-      matchCount++;
+    const items = chars
+      .map((character) => {
+        const snapshot = latestChatSnapshotForCharacter(character.id);
+        return {
+          character,
+          snapshot,
+          time: snapshot.time || character.updatedAt || character.createdAt || 0,
+          tags: characterTags(character),
+          summary: characterSummary(character, snapshot)
+        };
+      })
+      .sort((a, b) => (b.time || 0) - (a.time || 0));
 
-      const item = document.createElement("div");
-      item.className = "chatItem";
-      item.dataset.id = c.id;
-      item.dataset.chatId = chat?.id || "";
-
-      const av = document.createElement("img");
-      av.className = "avatar chatItem__avatar";
-      setImg(av, c.avatar, c.name);
-
-      const mid = document.createElement("div");
-      mid.className = "chatItem__mid";
-
-      const nameRow = document.createElement("div");
-      nameRow.className = "chatItem__nameRow";
-      const name = document.createElement("div");
-      name.className = "chatItem__name";
-      name.textContent = c.name || "(без имени)";
-      nameRow.appendChild(name);
-      if (chat?.title) {
-        const badge = document.createElement("span");
-        badge.className = "chatItem__badge";
-        badge.textContent = chat.title;
-        nameRow.appendChild(badge);
+    const visible = items.filter((item) => {
+      if (state.discoverTab === "following" && !isStartedCharacter(item.snapshot)) return false;
+      if (state.discoverCategory === "romance" && !isRomanceCharacter(item.character)) return false;
+      if (state.discoverCategory !== "all" && state.discoverCategory !== "romance") {
+        const tagKeys = item.tags.map((tag) => normalizeTagToken(tag));
+        if (!tagKeys.includes(state.discoverCategory)) return false;
       }
 
-      const prev = document.createElement("div");
-      prev.className = "chatItem__preview";
-      prev.textContent = String(preview || "").replace(/\s+/g, " ").trim();
-      mid.appendChild(nameRow);
-      mid.appendChild(prev);
+      const searchable = `${item.character.name || ""} ${item.summary} ${item.tags.join(" ")}`.toLowerCase();
+      return !q || searchable.includes(q);
+    });
 
-      const right = document.createElement("div");
-      right.className = "chatItem__time";
-      right.textContent = formatListTime(time);
+    for (const item of visible) {
+      const { character, snapshot, summary, tags } = item;
 
-      item.appendChild(av);
-      item.appendChild(mid);
-      item.appendChild(right);
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "discoverCard";
 
-      item.addEventListener("click", () => {
-        state.selectedCharacterId = c.id;
-        saveJson(STORAGE_KEYS.selectedCharacterId, state.selectedCharacterId);
-        if (chat?.id) setActiveChat(c.id, chat.id);
-        ensureInitialMessage();
-        renderHeader();
-        renderMessages();
-        setView("chat");
+      const media = document.createElement("div");
+      media.className = "discoverCard__media";
+
+      const image = document.createElement("img");
+      image.className = "discoverCard__image";
+      setImg(image, getBestCharacterDisplayImage(character), character.name);
+
+      const overlay = document.createElement("div");
+      overlay.className = "discoverCard__overlay";
+
+      const metric = document.createElement("div");
+      metric.className = "discoverCard__metric";
+      metric.innerHTML =
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8A8.5 8.5 0 0 1 12.5 20a8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.8-7.6A8.38 8.38 0 0 1 12.5 3a8.5 8.5 0 0 1 8.5 8.5Z"/></svg>';
+      const metricText = document.createElement("span");
+      metricText.textContent = characterMetricLabel(snapshot);
+      metric.appendChild(metricText);
+
+      const time = document.createElement("div");
+      time.className = "discoverCard__time";
+      time.textContent = formatListTime(item.time);
+
+      overlay.appendChild(metric);
+      overlay.appendChild(time);
+      media.appendChild(image);
+      media.appendChild(overlay);
+
+      const body = document.createElement("div");
+      body.className = "discoverCard__body";
+
+      const titleRow = document.createElement("div");
+      titleRow.className = "discoverCard__titleRow";
+
+      const title = document.createElement("div");
+      title.className = "discoverCard__title";
+      title.textContent = character.name || "(без имени)";
+
+      const bookmark = document.createElement("div");
+      bookmark.className = "discoverCard__bookmark";
+      bookmark.innerHTML =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-6-3-6 3z"/></svg>';
+
+      titleRow.appendChild(title);
+      titleRow.appendChild(bookmark);
+
+      const desc = document.createElement("div");
+      desc.className = "discoverCard__desc";
+      desc.textContent = summary;
+
+      const tagsWrap = document.createElement("div");
+      tagsWrap.className = "discoverCard__tags";
+      const visibleTags = tags.slice(0, 4);
+      if (visibleTags.length === 0) visibleTags.push(styleById(character.dialogueStyle).label);
+      visibleTags.forEach((tag, idx) => {
+        const pill = document.createElement("span");
+        pill.className = `discoverCard__tag${idx === 0 ? " discoverCard__tag--accent" : ""}`;
+        pill.textContent = tag;
+        tagsWrap.appendChild(pill);
       });
 
-      el.appendChild(item);
+      body.appendChild(titleRow);
+      body.appendChild(desc);
+      body.appendChild(tagsWrap);
+
+      card.appendChild(media);
+      card.appendChild(body);
+      card.addEventListener("click", () => openCharacterChat(character.id, snapshot.chat?.id || ""));
+      grid.appendChild(card);
     }
 
-    if (matchCount === 0) {
+    shell.appendChild(grid);
+    el.appendChild(shell);
+
+    if (visible.length === 0) {
       const empty = document.createElement("div");
       empty.className = "chatList__empty";
-      empty.textContent = q ? "Ничего не найдено" : "Нет чатов. Нажмите +, чтобы создать персонажа.";
+      if (q) {
+        empty.textContent = "Ничего не найдено по этому запросу.";
+      } else if (state.discoverTab === "following") {
+        empty.textContent = "Здесь появятся персонажи, с которыми вы уже начали диалог.";
+      } else {
+        empty.textContent = "Нет персонажей. Откройте импорт и загрузите карточки Polybuzz.";
+      }
       el.appendChild(empty);
     }
   }
@@ -1115,6 +1352,9 @@
     if (sChats) sChats.classList.toggle("sidebar__item--active", v === "chats" || v === "chat");
     if (sProfile) sProfile.classList.toggle("sidebar__item--active", v === "profile");
     if (sPlus) sPlus.classList.toggle("sidebar__item--active", false);
+
+    const app = $("#app");
+    if (app) app.dataset.view = v;
   }
 
   function formatTime(ts) {
@@ -1155,25 +1395,66 @@
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
   }
 
+  function proxiedImageUrl(src) {
+    const raw = String(src || "").trim();
+    if (!raw) return "";
+    try {
+      const u = new URL(raw, window.location.href);
+      const host = String(u.hostname || "").toLowerCase();
+      if (
+        (u.protocol === "http:" || u.protocol === "https:") &&
+        (host === "polybuzz.ai" ||
+          host.endsWith(".polybuzz.ai") ||
+          host === "polyspeak.ai" ||
+          host.endsWith(".polyspeak.ai"))
+      ) {
+        return `/api/media?url=${encodeURIComponent(u.toString())}`;
+      }
+      return u.toString();
+    } catch {
+      return raw;
+    }
+  }
+
+  // Returns true if the URL is a known ghost/placeholder image or empty.
+  // Polybuzz ghost icons are served from the /polyai/ CDN path.
+  // base64 data: URLs are always real images and are never ghosts.
+  function isGhostOrEmptyUrl(url) {
+    const s = String(url || "").trim();
+    if (!s) return true;
+    if (s.startsWith("data:")) return false;
+    try {
+      const u = new URL(s);
+      if (u.pathname.startsWith("/polyai/")) return true;
+    } catch {}
+    return false;
+  }
+
+  // Returns the best image URL to use as the character display image (e.g. chat background,
+  // discover card). Prefers a non-ghost background image, then falls back to the avatar.
+  function getBestCharacterDisplayImage(character) {
+    if (!character) return "";
+    const bg = String(character.background || "").trim();
+    const av = String(character.avatar || "").trim();
+    if (bg && !isGhostOrEmptyUrl(bg)) return bg;
+    if (av && !isGhostOrEmptyUrl(av)) return av;
+    // Last resort — return whatever is set, even if it might be ghost
+    return bg || av || "";
+  }
+
   function applyChatBackground(character) {
     const panel = $("#chatPanel");
     if (!panel) return;
-    if (character && character.background) {
-      const safe = character.background.replace(/["'()\\]/g, "");
+    const imgUrl = getBestCharacterDisplayImage(character);
+    if (imgUrl) {
+      const safe = proxiedImageUrl(imgUrl).replace(/["'()\\]/g, "");
       panel.style.setProperty("--chat-bg-url", `url("${safe}")`);
     } else {
       panel.style.setProperty("--chat-bg-url", "none");
     }
   }
 
-  function setImg(el, src, fallbackInitials) {
-    if (!el) return;
-    if (src && String(src).trim()) {
-      el.src = String(src);
-      el.alt = "";
-      return;
-    }
-
+  function fallbackSvg(fallbackInitials) {
     const initials = String(fallbackInitials || "?")
       .trim()
       .slice(0, 2)
@@ -1184,7 +1465,19 @@
       <rect width='80' height='80' rx='40' fill='#1a1a1a' />
       <text x='50%' y='54%' text-anchor='middle' font-size='26' fill='#888' font-family='Inter, sans-serif' dominant-baseline='middle'>${initials}</text>
     </svg>`;
-    el.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  }
+
+  function setImg(el, src, fallbackInitials) {
+    if (!el) return;
+    const fb = fallbackSvg(fallbackInitials);
+    if (src && String(src).trim()) {
+      el.src = proxiedImageUrl(src);
+      el.alt = "";
+      el.onerror = () => { el.onerror = null; el.src = fb; };
+      return;
+    }
+    el.src = fb;
     el.alt = "";
   }
 
@@ -1236,15 +1529,29 @@
     }
   }
 
-  function renderBubbleContent(bubble, text, opts = {}) {
-    const delimIdx = text.indexOf("{{THOUGHTS}}");
+  function splitThoughtsContent(text) {
+    const raw = String(text || "");
+    const delimIdx = raw.indexOf("{{THOUGHTS}}");
     if (delimIdx < 0) {
+      return { mainText: raw, thoughtsText: "" };
+    }
+
+    return {
+      mainText: raw.slice(0, delimIdx).replace(/\n+$/, ""),
+      thoughtsText: raw.slice(delimIdx + "{{THOUGHTS}}".length).replace(/^\n+/, "")
+    };
+  }
+
+  function stripThoughtsContent(text) {
+    return splitThoughtsContent(text).mainText;
+  }
+
+  function renderBubbleContent(bubble, text, opts = {}) {
+    const { mainText, thoughtsText } = splitThoughtsContent(text);
+    if (!thoughtsText) {
       renderInlineEmphasis(bubble, text, opts);
       return;
     }
-
-    const mainText = text.slice(0, delimIdx).replace(/\n+$/, "");
-    const thoughtsText = text.slice(delimIdx + "{{THOUGHTS}}".length).replace(/^\n+/, "");
 
     bubble.textContent = "";
 
@@ -1463,6 +1770,7 @@
     setImg($("#charAvatar"), ch?.avatar, ch?.name);
     setImg($("#userAvatar"), state.profile?.avatar, state.profile?.name);
     setImg($("#userAvatarPreview"), state.profile?.avatar, state.profile?.name);
+    setImg($("#topProfileAvatar"), state.profile?.avatar, state.profile?.name);
     applyChatBackground(ch);
 
     updateChatActionButtons();
@@ -1530,6 +1838,11 @@
     const history = chatHistoryFor(ch.id);
     list.innerHTML = "";
 
+    const mobileDisclaimer = document.createElement("div");
+    mobileDisclaimer.className = "chatDisclaimer";
+    mobileDisclaimer.textContent = "Все ответы сгенерированы искусственным интеллектом и являются вымышленными.";
+    list.appendChild(mobileDisclaimer);
+
     let lastAssistantId = "";
     for (let i = history.length - 1; i >= 0; i--) {
       const m = history[i];
@@ -1550,9 +1863,11 @@
       }
     }
 
-    for (const m of history) {
+    for (let index = 0; index < history.length; index += 1) {
+      const m = history[index];
       const row = document.createElement("div");
       row.className = `msg ${m.role === "user" ? "msg--me" : ""}`;
+      if (index === 0 && m.role === "assistant") row.classList.add("msg--intro");
       row.dataset.msgId = m.id;
 
       const avatar = document.createElement("img");
@@ -1684,10 +1999,71 @@
       card.addEventListener("click", () => {
         state.editingCharacterId = c.id;
         fillCharacterForm();
+        if (window.innerWidth <= 600) {
+          document.activeElement?.blur();
+          const ed = document.querySelector(".charEditor");
+          if (ed) ed.scrollTop = 0;
+          modalWindow()?.classList.add("modal__window--editing");
+        }
       });
 
       el.appendChild(card);
     }
+  }
+
+  function updateTextCounter(input, counterEl, maxLen) {
+    if (!input || !counterEl) return;
+    const len = String(input.value || "").length;
+    counterEl.textContent = `${len}/${maxLen}`;
+  }
+
+  function syncCharacterCounters() {
+    updateTextCounter($("#charNameInput"), $("#charNameCounter"), 25);
+    updateTextCounter($("#charIntroInput"), $("#charIntroCounter"), 400);
+    updateTextCounter($("#charInitialMessageInput"), $("#charGreetingCounter"), 1000);
+    updateTextCounter($("#charBackstoryInput"), $("#charBackstoryCounter"), 10000);
+  }
+
+  function setSegmentedValue(container, value) {
+    if (!container) return;
+    const items = Array.from(container.querySelectorAll(".segmented__item[data-value]"));
+    for (const item of items) {
+      item.classList.toggle("segmented__item--active", item.dataset.value === value);
+    }
+  }
+
+  function renderCharacterTagsEditor(tags) {
+    const list = $("#charTagsList");
+    const counter = $("#charTagsCounter");
+    if (!list) return;
+    const items = Array.isArray(tags) ? tags.slice(0, 5) : [];
+    list.innerHTML = "";
+    for (const tag of items) {
+      const badge = document.createElement("span");
+      badge.className = "tagBadge";
+      const label = document.createElement("span");
+      label.textContent = tag;
+
+      const remove = document.createElement("button");
+      remove.className = "tagBadge__remove";
+      remove.type = "button";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", `Удалить тег ${tag}`);
+      remove.addEventListener("click", () => {
+        const c = editingCharacter();
+        if (!c) return;
+        const nextTags = (Array.isArray(c.tags) ? c.tags : []).filter((item) => item !== tag);
+        upsertCharacter({ ...c, tags: nextTags, updatedAt: nowTs() });
+        fillCharacterForm();
+        refreshChatsView();
+      });
+
+      badge.appendChild(label);
+      badge.appendChild(remove);
+      list.appendChild(badge);
+    }
+
+    if (counter) counter.textContent = `${items.length}/5`;
   }
 
   function fillCharacterForm() {
@@ -1696,18 +2072,27 @@
 
     $("#charNameInput").value = c.name || "";
     $("#charGenderInput").value = c.gender || "unspecified";
-    $("#charAvatarUrl").value = "";
-    $("#charBgUrl").value = "";
+    $("#charVisibilityInput").value = c.visibility || "public";
+    $("#charIntroInput").value = c.intro || "";
     $("#charOutfitInput").value = c.outfit || "";
     $("#charSettingInput").value = c.setting || "";
     $("#charBgHintInput").value = c.backgroundHint || "";
     $("#charBackstoryInput").value = c.backstory || "";
     $("#charStyleInput").value = c.dialogueStyle || "natural";
     $("#charInitialMessageInput").value = c.initialMessage || "";
+    $("#charTagInput").value = "";
+    $("#charRightsConfirm").checked = true;
+    const saveBtn = $("#btnSaveCharacter");
+    if (saveBtn) saveBtn.textContent = c.createdAt === c.updatedAt ? "Создать персонажа" : "Сохранить персонажа";
 
     setImg($("#charAvatarPreview"), c.avatar, c.name);
     $("#charFormNote").textContent = "";
+    if ($("#charOutfitNote")) $("#charOutfitNote").textContent = "";
 
+    setSegmentedValue($("#charGenderSegment"), c.gender || "unspecified");
+    setSegmentedValue($("#charVisibilitySegment"), c.visibility || "public");
+    renderCharacterTagsEditor(c.tags);
+    syncCharacterCounters();
     renderCharacterHeroPreview(c);
     renderChatSelectInSettings(c);
 
@@ -1741,7 +2126,7 @@
 
     if (titleEl) titleEl.textContent = c.name || "(без имени)";
     if (metaEl) {
-      const desc = String(c.backstory || c.setting || c.outfit || "").trim();
+      const desc = String(c.intro || c.backstory || c.setting || c.outfit || "").trim();
       metaEl.textContent = desc ? desc.slice(0, 140) : "Заполните карточку персонажа";
     }
     if (styleTag) styleTag.textContent = `Стиль: ${styleById(c.dialogueStyle).label}`;
@@ -1769,9 +2154,14 @@
     });
   }
 
+  function modalWindow() {
+    return $("#charactersModal")?.querySelector(".modal__window");
+  }
+
   function openModal() {
     const modal = $("#charactersModal");
     modal.hidden = false;
+    modalWindow()?.classList.remove("modal__window--editing");
     renderCharacterList();
     fillCharacterForm();
   }
@@ -1788,11 +2178,8 @@
   function saveProfileFromUI() {
     const name = String($("#userName").value || "").trim() || "Вы";
     const gender = $("#userGender").value || "unspecified";
-    const avatarUrl = String($("#userAvatarUrl").value || "").trim();
-
     state.profile.name = name;
     state.profile.gender = gender;
-    if (avatarUrl) state.profile.avatar = avatarUrl;
 
     saveJson(STORAGE_KEYS.profile, state.profile);
     renderHeader();
@@ -1806,7 +2193,6 @@
   function fillProfileUI() {
     $("#userName").value = state.profile?.name || "";
     $("#userGender").value = state.profile?.gender || "unspecified";
-    $("#userAvatarUrl").value = "";
     setImg($("#userAvatarPreview"), state.profile?.avatar, state.profile?.name);
 
     const providerSel = $("#providerSelect");
@@ -1825,10 +2211,12 @@
 
     parts.push(`Ты — персонаж по имени ${character.name}. Всегда отвечай от лица этого персонажа.`);
     parts.push(`Пол персонажа: ${genderLabel(character.gender)}.`);
+    if ((character.intro || "").trim()) parts.push(`Краткое описание персонажа: ${character.intro.trim()}`);
     if ((character.outfit || "").trim()) parts.push(`Внешность/одежда: ${character.outfit.trim()}`);
     if ((character.setting || "").trim()) parts.push(`Обстановка: ${character.setting.trim()}`);
     if ((character.backgroundHint || "").trim()) parts.push(`Фон (описание): ${character.backgroundHint.trim()}`);
     if ((character.backstory || "").trim()) parts.push(`Предыстория: ${character.backstory.trim()}`);
+    if (Array.isArray(character.tags) && character.tags.length) parts.push(`Теги персонажа: ${character.tags.join(", ")}`);
     parts.push(`Стиль диалога: ${style.prompt}`);
 
     const userName = (profile.name || "Пользователь").trim();
@@ -1863,8 +2251,13 @@
 
     const lines = [];
     for (const m of slice) {
-      if (m.role === "user") lines.push(`${userLabel}: ${String(m.content || "")}`);
-      else if (m.role === "assistant") lines.push(`${charLabel}: ${String(m.content || "")}`);
+      if (m.role === "user") {
+        const text = String(m.content || "");
+        if (text) lines.push(`${userLabel}: ${text}`);
+      } else if (m.role === "assistant") {
+        const text = stripThoughtsContent(m.content);
+        if (text) lines.push(`${charLabel}: ${text}`);
+      }
     }
 
     return lines.join("\n").trim();
@@ -1896,11 +2289,14 @@
     const msgs = [{ role: "system", content: system }];
 
     for (const m of history) {
+      const content = m.role === "assistant" ? stripThoughtsContent(m.content) : String(m.content || "");
+      if (!content) continue;
+
       const prev = msgs[msgs.length - 1];
       if (prev && prev.role === m.role) {
-        prev.content += "\n" + String(m.content || "");
+        prev.content += "\n" + content;
       } else {
-        msgs.push({ role: m.role, content: String(m.content || "") });
+        msgs.push({ role: m.role, content });
       }
     }
 
@@ -2143,6 +2539,168 @@
     const out = Array.isArray(obj?.output) ? obj.output : [];
     const msgs = out.filter((x) => x && x.type === "message" && typeof x.content === "string");
     return msgs.map((x) => x.content).join("\n\n");
+  }
+
+  function extractChatTextFromResponse(data) {
+    const content = data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text ?? "";
+    if (typeof content === "string") return content.trim();
+    if (!Array.isArray(content)) return "";
+
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (!part || typeof part !== "object") return "";
+        if (typeof part.text === "string") return part.text;
+        if (typeof part.content === "string") return part.content;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+  }
+
+  function currentCharacterAvatarForVision() {
+    return String(editingCharacter()?.avatar || "").trim();
+  }
+
+  function preferredMistralVisionModel() {
+    const selected = String(state.modelId || "").trim();
+    if (!selected) return "mistral-small-latest";
+
+    const probe = selected.toLowerCase();
+    const likelyVision =
+      probe.includes("pixtral") ||
+      probe.includes("mistral-small") ||
+      probe.includes("mistral-medium") ||
+      probe.includes("mistral-large") ||
+      probe.includes("ministral");
+
+    return likelyVision ? selected : "mistral-small-latest";
+  }
+
+  function shouldUseMistralForOutfitVision() {
+    return Boolean(String(state.mistralKey || "").trim()) || state.provider === "mistral";
+  }
+
+  async function generateOutfitFromAvatar() {
+    const btn = $("#btnAutoOutfit");
+    const note = $("#charOutfitNote");
+    const input = $("#charOutfitInput");
+    const avatar = currentCharacterAvatarForVision();
+
+    if (!input) return;
+
+    if (!avatar) {
+      if (note) note.textContent = "Сначала добавьте фото персонажа.";
+      return;
+    }
+
+    if (!/^data:image\/|^https?:\/\//i.test(avatar)) {
+      if (note) note.textContent = "Фото должно быть изображением в виде файла, data URL или http(s) URL.";
+      return;
+    }
+
+    const openAiStyleMessages = [
+      {
+        role: "system",
+        content:
+          "Ты кратко описываешь видимую одежду и внешние детали персонажа по изображению. Не выдумывай скрытые или неразличимые элементы. Если что-то плохо видно, прямо скажи об этом. Верни только готовое описание на русском языке: 1-3 коротких предложения, без списков и без пояснений."
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Посмотри на фото персонажа и опиши, во что он одет и какие заметные детали внешности действительно видны."
+          },
+          {
+            type: "image_url",
+            image_url: { url: avatar }
+          }
+        ]
+      }
+    ];
+
+    const mistralMessages = [
+      {
+        role: "system",
+        content:
+          "Ты кратко описываешь видимую одежду и внешние детали персонажа по изображению. Не выдумывай скрытые или неразличимые элементы. Если что-то плохо видно, прямо скажи об этом. Верни только готовое описание на русском языке: 1-3 коротких предложения, без списков и без пояснений."
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Посмотри на фото персонажа и опиши, во что он одет и какие заметные детали внешности действительно видны."
+          },
+          {
+            type: "image_url",
+            image_url: avatar
+          }
+        ]
+      }
+    ];
+
+    if (note) note.textContent = "Анализирую фото персонажа…";
+    if (btn) btn.disabled = true;
+
+    try {
+      let res;
+      if (shouldUseMistralForOutfitVision()) {
+        const headers = { "Content-Type": "application/json" };
+        if (state.mistralKey) headers["X-Mistral-Key"] = state.mistralKey;
+
+        res = await fetch("/api/mistral/chat", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            model: preferredMistralVisionModel(),
+            messages: mistralMessages,
+            temperature: 0.2,
+            max_tokens: 220,
+            stream: false
+          })
+        });
+      } else {
+        res = await fetch("/api/lmstudio/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: state.modelId || "local-model",
+            messages: openAiStyleMessages,
+            temperature: 0.2,
+            max_tokens: 220,
+            stream: false
+          })
+        });
+      }
+
+      const text = await res.text();
+      const data = safeJsonParse(text);
+
+      if (!res.ok) {
+        const errMsg =
+          data?.error?.message || data?.error || data?.message || `Ошибка анализа изображения (${res.status})`;
+        throw new Error(String(errMsg));
+      }
+
+      const outfit = extractChatTextFromResponse(data);
+      if (!outfit) throw new Error("Модель не вернула описание. Проверьте, что выбрана vision-модель.");
+
+      input.value = outfit;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      if (note) note.textContent = "Готово: описание подставлено в поле.";
+    } catch (err) {
+      let msg = String(err?.message || err || "Не удалось описать одежду по фото.");
+      if (!shouldUseMistralForOutfitVision() && /LM Studio/i.test(msg)) {
+        msg = "Не удалось получить ответ от LM Studio. Для заполнения по фото укажите Mistral API key в настройках или включите vision-модель в LM Studio.";
+      }
+      if (note) note.textContent = msg;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
 
@@ -2956,7 +3514,7 @@ ${item.text}` : item.text;
     if (!last || last.role !== "assistant" || last.pending) return;
 
     const assistantMsgId = String(last.id);
-    const rawBase = String(last.content || "");
+    const rawBase = stripThoughtsContent(last.content);
     const base = isThoughts ? rawBase + THOUGHT_DELIM : rawBase;
 
     const nextHistory = history.slice();
@@ -2996,7 +3554,7 @@ ${item.text}` : item.text;
         });
         content = String(fullContent || "").trim() ? String(fullContent) : (base || "(пустой ответ)");
 
-        if (respId && chatId) {
+        if (respId && chatId && !isThoughts) {
           const chain = responseIdChainFor(chatId);
           let nextChain = chain;
           if (nextChain.length === 0 && prevResponseId) nextChain = [prevResponseId, respId];
@@ -3070,36 +3628,85 @@ ${item.text}` : item.text;
       styleSel.appendChild(opt);
     }
 
+    const bindSegmented = (containerSel, hiddenSel, onChange) => {
+      const container = $(containerSel);
+      const hidden = $(hiddenSel);
+      if (!container || !hidden) return;
+      container.addEventListener("click", (e) => {
+        const btn = e.target && e.target.closest ? e.target.closest(".segmented__item[data-value]") : null;
+        if (!btn) return;
+        const value = String(btn.dataset.value || "");
+        hidden.value = value;
+        setSegmentedValue(container, value);
+        if (typeof onChange === "function") onChange(value);
+      });
+    };
+
+    bindSegmented("#charGenderSegment", "#charGenderInput", () => {
+      renderCharacterHeroPreview({
+        ...editingCharacter(),
+        name: String($("#charNameInput")?.value || "").trim(),
+        gender: String($("#charGenderInput")?.value || "unspecified"),
+        intro: String($("#charIntroInput")?.value || ""),
+        dialogueStyle: String($("#charStyleInput")?.value || "natural")
+      });
+    });
+    bindSegmented("#charVisibilitySegment", "#charVisibilityInput");
+
     const btnOpenCharacters = $("#btnOpenCharacters");
     if (btnOpenCharacters) btnOpenCharacters.addEventListener("click", () => openModal());
 
     const tabChats = $("#tabChats");
     const tabPlus = $("#tabPlus");
     const tabProfile = $("#tabProfile");
+    const btnFollowingTab = $("#btnFollowingTab");
+    const btnExploreTab = $("#btnExploreTab");
+    const btnForYouTab = $("#btnForYouTab");
+    const btnFollowingTextTab = $("#btnFollowingTextTab");
+    const btnExploreTextTab = $("#btnExploreTextTab");
+    const btnOpenProfileFromChats = $("#btnOpenProfileFromChats");
 
     if (tabChats) {
       tabChats.addEventListener("click", () => {
-        if (state.view === "chat") {
-          setView("chats");
-          renderChatList($("#chatSearch")?.value || "");
-        } else if (state.view === "chats") {
-          // Already on chats — if there's a selected character, open its chat
-          const ch = activeCharacter();
-          if (ch) {
-            ensureInitialMessage();
-            renderHeader();
-            renderMessages();
-            setView("chat");
-          }
-        } else {
-          setView("chats");
-          renderChatList($("#chatSearch")?.value || "");
-        }
+        setView("chats");
+        renderChatList($("#chatSearch")?.value || "");
       });
     }
 
     if (tabPlus) tabPlus.addEventListener("click", () => openModal());
     if (tabProfile) tabProfile.addEventListener("click", () => setView("profile"));
+    if (btnOpenProfileFromChats) btnOpenProfileFromChats.addEventListener("click", () => setView("profile"));
+    if (btnFollowingTab) {
+      btnFollowingTab.addEventListener("click", () => {
+        state.discoverTab = "following";
+        renderChatList($("#chatSearch")?.value || "");
+      });
+    }
+    if (btnExploreTab) {
+      btnExploreTab.addEventListener("click", () => {
+        state.discoverTab = "explore";
+        renderChatList($("#chatSearch")?.value || "");
+      });
+    }
+    if (btnForYouTab) {
+      btnForYouTab.addEventListener("click", () => {
+        state.discoverTab = "explore";
+        state.discoverCategory = "all";
+        renderChatList($("#chatSearch")?.value || "");
+      });
+    }
+    if (btnFollowingTextTab) {
+      btnFollowingTextTab.addEventListener("click", () => {
+        state.discoverTab = "following";
+        renderChatList($("#chatSearch")?.value || "");
+      });
+    }
+    if (btnExploreTextTab) {
+      btnExploreTextTab.addEventListener("click", () => {
+        state.discoverTab = "explore";
+        renderChatList($("#chatSearch")?.value || "");
+      });
+    }
 
     // Desktop sidebar navigation
     const sideChats = $("#sideChats");
@@ -3108,21 +3715,8 @@ ${item.text}` : item.text;
 
     if (sideChats) {
       sideChats.addEventListener("click", () => {
-        if (state.view === "chat") {
-          setView("chats");
-          renderChatList($("#chatSearch")?.value || "");
-        } else if (state.view === "chats") {
-          const ch = activeCharacter();
-          if (ch) {
-            ensureInitialMessage();
-            renderHeader();
-            renderMessages();
-            setView("chat");
-          }
-        } else {
-          setView("chats");
-          renderChatList($("#chatSearch")?.value || "");
-        }
+        setView("chats");
+        renderChatList($("#chatSearch")?.value || "");
       });
     }
 
@@ -3243,16 +3837,31 @@ ${item.text}` : item.text;
       });
     }
 
+    const btnCharEditorBack = $("#btnCharEditorBack");
+    if (btnCharEditorBack) {
+      btnCharEditorBack.addEventListener("click", () => {
+        modalWindow()?.classList.remove("modal__window--editing");
+      });
+    }
+
     $("#btnNewCharacter").addEventListener("click", () => {
       const c = defaultCharacter();
       c.id = uuid();
       c.name = "Новый персонаж";
+      c.intro = "";
+      c.tags = [];
+      c.visibility = "public";
       c.initialMessage = "Привет. Я здесь. С чего начнем?";
       c.createdAt = nowTs();
       c.updatedAt = nowTs();
       upsertCharacter(c);
       state.editingCharacterId = c.id;
       fillCharacterForm();
+      if (window.innerWidth <= 600) {
+        const ed = document.querySelector(".charEditor");
+        if (ed) ed.scrollTop = 0;
+        modalWindow()?.classList.add("modal__window--editing");
+      }
       $("#charFormNote").textContent = 'Создан новый персонаж. Заполните поля и нажмите "Сохранить".';
       refreshChatsView();
     });
@@ -3382,6 +3991,56 @@ ${item.text}` : item.text;
       setView("chat");
     });
 
+    const btnUploadAvatar = $("#btnUploadAvatar");
+    if (btnUploadAvatar) {
+      btnUploadAvatar.addEventListener("click", () => $("#charAvatarFile")?.click());
+    }
+
+    const btnUploadBackground = $("#btnUploadBackground");
+    if (btnUploadBackground) {
+      btnUploadBackground.addEventListener("click", () => $("#charBgFile")?.click());
+    }
+
+    const btnAddTag = $("#btnAddTag");
+    const tagInput = $("#charTagInput");
+    const addTagFromInput = () => {
+      const c = editingCharacter();
+      if (!c || !tagInput) return;
+      const raw = cleanOneLineText(tagInput.value || "");
+      if (!raw) return;
+      const nextTags = Array.isArray(c.tags) ? c.tags.slice() : [];
+      if (nextTags.length >= 5) {
+        $("#charFormNote").textContent = "Можно добавить не больше 5 тегов.";
+        return;
+      }
+      if (nextTags.some((item) => normalizeTagToken(item) === normalizeTagToken(raw))) {
+        tagInput.value = "";
+        return;
+      }
+      nextTags.push(raw);
+      upsertCharacter({ ...c, tags: nextTags, updatedAt: nowTs() });
+      tagInput.value = "";
+      fillCharacterForm();
+      refreshChatsView();
+    };
+
+    if (btnAddTag) btnAddTag.addEventListener("click", addTagFromInput);
+    if (tagInput) {
+      tagInput.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        addTagFromInput();
+      });
+    }
+
+
+    const btnAutoOutfit = $("#btnAutoOutfit");
+
+    if (btnAutoOutfit) {
+      btnAutoOutfit.addEventListener("click", async () => {
+        await generateOutfitFromAvatar();
+      });
+    }
 
 
     const btnTranslateAll = $("#btnTranslateAll");
@@ -3391,6 +4050,7 @@ ${item.text}` : item.text;
         const note = $("#charTranslateNote");
         const fields = [
           { key: "name", label: "Имя", input: $("#charNameInput") },
+          { key: "intro", label: "Интро", input: $("#charIntroInput") },
           { key: "outfit", label: "Описание", input: $("#charOutfitInput") },
           { key: "setting", label: "Обстановка", input: $("#charSettingInput") },
           { key: "backgroundHint", label: "Фон для ИИ", input: $("#charBgHintInput") },
@@ -3462,6 +4122,9 @@ ${item.text}` : item.text;
       const next = { ...c };
       next.name = String($("#charNameInput").value || "").trim() || "(без имени)";
       next.gender = $("#charGenderInput").value || "unspecified";
+      next.intro = String($("#charIntroInput").value || "").trim();
+      next.visibility = $("#charVisibilityInput").value || "public";
+      next.tags = Array.isArray(c.tags) ? c.tags.slice(0, 5) : [];
       next.outfit = String($("#charOutfitInput").value || "");
       next.setting = String($("#charSettingInput").value || "");
       next.backgroundHint = String($("#charBgHintInput").value || "");
@@ -3470,10 +4133,16 @@ ${item.text}` : item.text;
       next.initialMessage = String($("#charInitialMessageInput").value || "");
       next.updatedAt = nowTs();
 
-      const avatarUrl = String($("#charAvatarUrl").value || "").trim();
-      if (avatarUrl) next.avatar = avatarUrl;
-      const bgUrl = String($("#charBgUrl").value || "").trim();
-      if (bgUrl) next.background = bgUrl;
+      const rightsOk = $("#charRightsConfirm")?.checked;
+      if (!rightsOk) {
+        $("#charFormNote").textContent = "Подтвердите права на контент персонажа.";
+        return;
+      }
+
+      if (next.name.length < 3) {
+        $("#charFormNote").textContent = "Имя персонажа должно быть не короче 3 символов.";
+        return;
+      }
 
       upsertCharacter(next);
       $("#charFormNote").textContent = "Сохранено";
@@ -3491,7 +4160,7 @@ ${item.text}` : item.text;
 
     const previewInputs = [
       "#charNameInput",
-      "#charGenderInput",
+      "#charIntroInput",
       "#charOutfitInput",
       "#charSettingInput",
       "#charBackstoryInput",
@@ -3507,17 +4176,26 @@ ${item.text}` : item.text;
         ...c,
         name: String($("#charNameInput")?.value || "").trim() || c.name,
         gender: String($("#charGenderInput")?.value || c.gender || "unspecified"),
+        intro: String($("#charIntroInput")?.value || ""),
         outfit: String($("#charOutfitInput")?.value || ""),
         setting: String($("#charSettingInput")?.value || ""),
         backstory: String($("#charBackstoryInput")?.value || ""),
         dialogueStyle: String($("#charStyleInput")?.value || c.dialogueStyle || "natural")
       });
+      syncCharacterCounters();
     };
 
     for (const input of previewInputs) {
       input.addEventListener("input", rerenderCharacterHeroFromInputs);
       input.addEventListener("change", rerenderCharacterHeroFromInputs);
     }
+
+    ["#charInitialMessageInput", "#charNameInput", "#charIntroInput", "#charBackstoryInput"].forEach((sel) => {
+      const input = $(sel);
+      if (!input) return;
+      input.addEventListener("input", syncCharacterCounters);
+      input.addEventListener("change", syncCharacterCounters);
+    });
 
     $("#charAvatarFile").addEventListener("change", async (e) => {
       const file = e.target.files && e.target.files[0];
@@ -3681,6 +4359,11 @@ ${item.text}` : item.text;
       btnOpenPrompts.addEventListener("click", () => openPromptsSheet());
     }
 
+    const btnPromptQuick = $("#btnPromptQuick");
+    if (btnPromptQuick) {
+      btnPromptQuick.addEventListener("click", () => openPromptsSheet());
+    }
+
     const promptsSheet = $("#promptsSheet");
     if (promptsSheet) {
       promptsSheet.addEventListener("click", (e) => {
@@ -3834,10 +4517,11 @@ ${item.text}` : item.text;
     }
   }
 
-  function bootstrap() {
+  async function bootstrap() {
     ensureSeed();
     wireUI();
     fillProfileUI();
+    await syncCharactersFromServer();
     ensureInitialMessage();
     renderHeader();
     renderMessages();
@@ -3845,10 +4529,10 @@ ${item.text}` : item.text;
     renderChatList("");
     refreshModels();
 
-    // Initial sync from server + periodic refresh
-    syncCharactersFromServer();
     setInterval(syncCharactersFromServer, 15000);
   }
 
-  bootstrap();
+  bootstrap().catch((err) => {
+    console.error("[bootstrap]", err);
+  });
 })();

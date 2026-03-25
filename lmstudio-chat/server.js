@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const https = require("https");
+const { Readable } = require("stream");
 const express = require("express");
 
 const app = express();
@@ -799,22 +800,38 @@ app.post("/api/import/polybuzz", async (req, res) => {
 
         const sceneName = String(detail.sceneName || profile.sceneName || detail.oriSceneName || profile.oriSceneName || "").trim();
         const sceneBrief = String(profile.sceneBrief || detail.sceneBrief || "").trim();
-        const avatarUrl = String(detail.sceneAvatarUrl || profile.sceneAvatarUrl || "").trim();
+        const rawAvatarUrl = String(detail.sceneAvatarUrl || profile.sceneAvatarUrl || "").trim();
         const bgUrl = String(detail.conversationBackgroundImg || profile.homeCoverUrl || detail.homeCoverUrl || "").trim();
         const coverUrl = String(profile.homeCoverUrl || detail.homeCoverUrl || "").trim();
+
+        // If the avatar from polybuzz is a ghost/placeholder (served from /polyai/ CDN path),
+        // fall back to the cover image which is usually the real character photo.
+        const bestAvatarUrl = isPolybuzzGhostUrl(rawAvatarUrl)
+          ? (coverUrl || bgUrl || rawAvatarUrl)
+          : rawAvatarUrl;
+
+        // Use a non-ghost URL for the background/cover image.
+        const bestBgUrl = isPolybuzzGhostUrl(bgUrl) ? "" : bgUrl;
 
         const tags = Array.isArray(profile.sceneTags) ? profile.sceneTags.map((t) => t && t.tagName).filter(Boolean) : [];
         const tagsText = tags.length ? tags.join(", ") : "";
 
         const greeting = extractFirstAssistantLine(detail.speechText, sceneName);
 
+        // Download images as base64 data URLs so the character is self-contained
+        // (won't break if the CDN goes offline). Falls back to the original URL on error.
+        const [avatarData, bgData] = await Promise.all([
+          bestAvatarUrl ? downloadImageAsDataUrl(bestAvatarUrl) : Promise.resolve(null),
+          bestBgUrl ? downloadImageAsDataUrl(bestBgUrl) : Promise.resolve(null)
+        ]);
+
         res.json({
           ok: true,
           character: {
             name: sceneName || "Imported",
             gender: polybuzzGenderToLocal(profile.sceneGender),
-            avatar_url: avatarUrl,
-            background_url: bgUrl,
+            avatar_url: avatarData || bestAvatarUrl || "",
+            background_url: bgData || bestBgUrl || "",
             cover_url: coverUrl,
             backgroundHint: tagsText,
             intro: sceneBrief,
@@ -863,6 +880,100 @@ app.post("/api/import/polybuzz", async (req, res) => {
   } catch (err) {
     console.error("[import polybuzz]", err);
     res.status(502).json({ ok: false, error: "Не удалось импортировать с Polybuzz", details: String(err) });
+  }
+});
+
+// Detect polybuzz ghost/placeholder avatar URLs (served from /polyai/ CDN path).
+// Real character photos come from paths like /speakmaster/.
+function isPolybuzzGhostUrl(url) {
+  if (!url) return true;
+  try {
+    const u = new URL(String(url).trim());
+    if (u.pathname.startsWith("/polyai/")) return true;
+  } catch {}
+  return false;
+}
+
+// Download an image URL and return a base64 data URL for self-contained storage.
+// Returns null on any error or if the image exceeds maxBytes.
+async function downloadImageAsDataUrl(imgUrl, maxBytes = 2 * 1024 * 1024) {
+  if (!imgUrl) return null;
+  try {
+    const headers = polybuzzBaseHeaders({ accept: "image/*,*/*;q=0.8" });
+    const resp = await fetch(String(imgUrl), { method: "GET", headers, redirect: "follow" });
+    if (!resp.ok) return null;
+
+    const contentLength = Number(resp.headers.get("content-length") || 0);
+    if (contentLength > maxBytes) return null;
+
+    const buf = await resp.arrayBuffer();
+    if (buf.byteLength > maxBytes) return null;
+
+    const mimeType = (resp.headers.get("content-type") || "image/jpeg").split(";")[0].trim() || "image/jpeg";
+    const base64 = Buffer.from(buf).toString("base64");
+    return `data:${mimeType};base64,${base64}`;
+  } catch {
+    return null;
+  }
+}
+
+function isAllowedMediaUrl(rawUrl) {
+  try {
+    const u = new URL(String(rawUrl || "").trim());
+    if (!(u.protocol === "https:" || u.protocol === "http:")) return null;
+    const host = u.hostname.toLowerCase();
+    if (
+      host === "polybuzz.ai" ||
+      host.endsWith(".polybuzz.ai") ||
+      host === "polyspeak.ai" ||
+      host.endsWith(".polyspeak.ai")
+    ) {
+      return u;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+app.get("/api/media", async (req, res) => {
+  try {
+    const u = isAllowedMediaUrl(req.query?.url);
+    if (!u) {
+      res.status(400).json({ error: "Unsupported media URL" });
+      return;
+    }
+
+    const headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+      Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+      "Accept-Language": "ru,en;q=0.8",
+      Referer: "https://www.polybuzz.ai/",
+      Origin: "https://www.polybuzz.ai"
+    };
+    if (POLYBUZZ_COOKIE) headers.Cookie = POLYBUZZ_COOKIE;
+
+    const upstream = await fetch(u.toString(), { method: "GET", headers, redirect: "follow" });
+    if (!upstream.ok || !upstream.body) {
+      res.status(502).json({ error: `Upstream media error: ${upstream.status}` });
+      return;
+    }
+
+    const contentType = String(upstream.headers.get("content-type") || "").toLowerCase();
+    if (contentType && !contentType.startsWith("image/")) {
+      res.status(415).json({ error: "Unsupported media type" });
+      return;
+    }
+
+    if (contentType) res.setHeader("Content-Type", contentType);
+    const contentLength = upstream.headers.get("content-length");
+    if (contentLength) res.setHeader("Content-Length", contentLength);
+    res.setHeader("Cache-Control", "public, max-age=21600");
+
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (err) {
+    console.error("[media proxy]", err);
+    res.status(502).json({ error: "Failed to proxy media" });
   }
 });
 
