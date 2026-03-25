@@ -837,7 +837,9 @@ app.post("/api/import/polybuzz", async (req, res) => {
             intro: sceneBrief,
             scenario: sceneBrief,
             greeting,
-            background: String(detail.systemRole || "").trim(),
+            // NOTE: detail.systemRole is deliberately excluded — it's polybuzz's own
+            // system prompt written from the user's POV ("you are talking to character X")
+            // and would invert the AI's role when embedded in our character backstory.
             mes_example: String(detail.speechText || "").trim(),
             source_url: u.toString()
           }
