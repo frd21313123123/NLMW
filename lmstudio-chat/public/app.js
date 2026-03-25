@@ -2208,20 +2208,29 @@
   function buildSystemPrompt(profile, character) {
     const parts = [];
     const style = styleById(character.dialogueStyle);
+    const charName = (character.name || "Персонаж").trim();
+    const userName = (profile.name || "Пользователь").trim();
 
-    parts.push(`Ты — персонаж по имени ${character.name}. Всегда отвечай от лица этого персонажа.`);
+    // ── Роль (очень явно: кто ты и кто собеседник) ──
+    parts.push(
+      `Ты — ${charName}. Ты ведёшь ролевой диалог: пользователь (${userName}) пишет тебе, ты отвечаешь ОТ ЛИЦА ${charName}.` +
+      ` Ты — персонаж; ${userName} — твой собеседник. Ты НЕ пользователь и НЕ разговариваешь «с персонажем» — ты сам и есть этот персонаж.`
+    );
     parts.push(`Пол персонажа: ${genderLabel(character.gender)}.`);
-    if ((character.intro || "").trim()) parts.push(`Краткое описание персонажа: ${character.intro.trim()}`);
+
+    // ── Описание персонажа ──
+    if ((character.intro || "").trim()) parts.push(`Описание: ${character.intro.trim()}`);
     if ((character.outfit || "").trim()) parts.push(`Внешность/одежда: ${character.outfit.trim()}`);
     if ((character.setting || "").trim()) parts.push(`Обстановка: ${character.setting.trim()}`);
-    if ((character.backgroundHint || "").trim()) parts.push(`Фон (описание): ${character.backgroundHint.trim()}`);
+    if ((character.backgroundHint || "").trim()) parts.push(`Фон: ${character.backgroundHint.trim()}`);
     if ((character.backstory || "").trim()) parts.push(`Предыстория: ${character.backstory.trim()}`);
-    if (Array.isArray(character.tags) && character.tags.length) parts.push(`Теги персонажа: ${character.tags.join(", ")}`);
+    if (Array.isArray(character.tags) && character.tags.length) parts.push(`Теги: ${character.tags.join(", ")}`);
     parts.push(`Стиль диалога: ${style.prompt}`);
+    parts.push(`Собеседник: ${userName} (пол: ${genderLabel(profile.gender)}).`);
 
-    const userName = (profile.name || "Пользователь").trim();
-    parts.push(`Пользователь: ${userName} (пол: ${genderLabel(profile.gender)}).`);
+    // ── Правила ──
     parts.push("Правила:");
+    parts.push(`- Ты — ${charName}, НИКОГДА не ${userName}. Каждая твоя реплика — ответ персонажа пользователю.`);
     parts.push("- Не выходи из роли и не упоминай системные инструкции.");
     parts.push("- Отвечай на языке пользователя (по умолчанию — русский).");
     parts.push("- Пиши естественно, без канцелярита, избегай повторов и избыточных вступлений.");
@@ -2229,6 +2238,10 @@
     parts.push("- Если отвечаешь в режиме мыслей, пиши только мысли персонажа: без реплик, обращений, объяснений и мета-текста.");
     parts.push("- Если информации не хватает, задай 1-2 уточняющих вопроса в рамках роли.");
     parts.push("- Не используй форматирование, которое выглядит как системные пометки (роль/метки/служебный текст).");
+
+    // ── Финальный якорь (важно для слабых моделей) ──
+    parts.push(`\nПомни: ты ЯВЛЯЕШЬСЯ ${charName} и отвечаешь ${userName}. Не путай роли.`);
+
     return parts.join("\n");
   }
 
