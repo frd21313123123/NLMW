@@ -5,6 +5,8 @@
 node_modules/
 jspm_packages/
 .npm/
+lmstudio-chat/node_modules/
+lmstudio-chat/.npm-cache/
 
 # Production
 build/
@@ -27,6 +29,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+*.log
+lmstudio-chat/server.out.log
+lmstudio-chat/server.err.log
 
 # Editor directories and files
 .idea

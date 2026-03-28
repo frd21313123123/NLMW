@@ -1062,7 +1062,7 @@ app.get("*", (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
-app.listen(PORT, "0.0.0.0", () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Web UI: http://localhost:${PORT}`);
   const nets = require("os").networkInterfaces();
   for (const ifaces of Object.values(nets)) {
@@ -1073,4 +1073,14 @@ app.listen(PORT, "0.0.0.0", () => {
     }
   }
   console.log(`LM Studio base: ${LMSTUDIO_BASE_URL}`);
+});
+
+server.on("error", (err) => {
+  if (err && err.code === "EADDRINUSE") {
+    console.error(`Port ${PORT} is already in use. If the app is already running, open http://localhost:${PORT}`);
+    process.exit(1);
+  }
+
+  console.error("Failed to start server:", err);
+  process.exit(1);
 });
