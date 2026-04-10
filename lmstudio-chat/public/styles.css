@@ -3313,6 +3313,104 @@ body {
   }
 }
 
+/* ===== NPC (temporary in-chat characters) ===== */
+
+.npcStrip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.npcChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  padding: 3px 6px 3px 10px;
+  font-size: 0.78rem;
+  color: var(--text);
+}
+
+.npcChip__name {
+  opacity: 0.85;
+}
+
+.npcChip__edit,
+.npcChip__del {
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0.45;
+  color: inherit;
+  padding: 0 3px;
+  font-size: 0.88rem;
+  line-height: 1;
+  border-radius: 50%;
+  transition: opacity 0.15s;
+}
+
+.npcChip__edit:hover,
+.npcChip__del:hover {
+  opacity: 1;
+}
+
+.msg__npcName {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.45);
+  margin-bottom: 2px;
+  padding-left: 2px;
+  font-weight: 500;
+}
+
+.msg--npc-deleted .bubble {
+  opacity: 0.3;
+  text-decoration: line-through;
+}
+
+/* Pending NPC command approval cards */
+.npcCmdList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.npcCmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: rgba(246, 176, 30, 0.07);
+  border: 1px solid rgba(246, 176, 30, 0.25);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+}
+
+.npcCmd__label {
+  flex: 1;
+  min-width: 120px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.btn--xs {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 0.76rem;
+  border-radius: 6px;
+}
+
+/* NPC modal (smaller window) */
+.modal__window--sm {
+  max-width: 420px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation: none !important;

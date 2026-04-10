@@ -777,7 +777,23 @@
       updatedAt = typeof last?.ts === "number" ? last.ts : createdAt;
     }
 
-    return { id, title, createdAt, updatedAt, messages };
+    const tempCharacters = Array.isArray(raw?.tempCharacters)
+      ? raw.tempCharacters.map(normalizeTempCharacter).filter(Boolean)
+      : [];
+
+    return { id, title, createdAt, updatedAt, messages, tempCharacters };
+  }
+
+  function normalizeTempCharacter(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    return {
+      id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : uuid(),
+      name: String(raw.name || "").trim() || "НПС",
+      gender: normalizeGender(raw.gender),
+      intro: String(raw.intro || "").trim(),
+      avatar: typeof raw.avatar === "string" ? raw.avatar : "",
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : nowTs()
+    };
   }
 
   function normalizeConversationBucket(characterId, raw) {
@@ -1225,6 +1241,49 @@
     const c = state.characters.find((x) => x.id === characterId);
     if (c) renderChatSelectInSettings(c);
   }
+
+  // ─── NPC (temporary in-chat characters) ────────────────────────────────────
+
+  function getTempCharactersForChat(characterId) {
+    const chat = activeChatFor(characterId);
+    return Array.isArray(chat?.tempCharacters) ? chat.tempCharacters : [];
+  }
+
+  function saveTempCharacters(characterId, npcs) {
+    const bucket = conversationBucketFor(characterId);
+    const chat = activeChatFor(characterId);
+    if (!chat) return;
+    chat.tempCharacters = npcs;
+    const idx = bucket.chats.findIndex((c) => c.id === chat.id);
+    if (idx >= 0) bucket.chats[idx] = chat;
+    state.conversations[characterId] = bucket;
+    saveJson(STORAGE_KEYS.conversations, state.conversations);
+  }
+
+  function addTempCharacter(characterId, npcData) {
+    const npcs = getTempCharactersForChat(characterId).slice();
+    npcs.push(normalizeTempCharacter({ ...npcData, id: uuid(), createdAt: nowTs() }));
+    saveTempCharacters(characterId, npcs);
+  }
+
+  function updateTempCharacter(characterId, npcId, patch) {
+    const npcs = getTempCharactersForChat(characterId).map((n) =>
+      n.id === npcId ? normalizeTempCharacter({ ...n, ...patch }) : n
+    );
+    saveTempCharacters(characterId, npcs);
+  }
+
+  function deleteTempCharacter(characterId, npcId) {
+    const npcs = getTempCharactersForChat(characterId).filter((n) => n.id !== npcId);
+    saveTempCharacters(characterId, npcs);
+    // Mark the NPC's messages as deleted
+    const history = chatHistoryFor(characterId).map((m) =>
+      m.npcId === npcId ? { ...m, npcDeleted: true } : m
+    );
+    setChatHistory(characterId, history);
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
 
   function responseIdChainFor(chatId) {
     const v = state.responseIdChains?.[chatId];
@@ -1835,6 +1894,8 @@
     const list = $("#messages");
     if (!list) return;
 
+    renderNpcStrip(ch.id);
+
     const history = chatHistoryFor(ch.id);
     list.innerHTML = "";
 
@@ -1871,11 +1932,34 @@
       row.dataset.msgId = m.id;
 
       const avatar = document.createElement("img");
+      // Resolve display identity (NPC vs main character)
+      let displayAvatar = ch.avatar;
+      let displayName = ch.name;
+      let npcObj = null;
+      if (m.role === "assistant" && m.npcId) {
+        npcObj = getTempCharactersForChat(ch.id).find((n) => n.id === m.npcId) || null;
+        if (npcObj) {
+          displayAvatar = npcObj.avatar;
+          displayName = npcObj.name;
+        }
+      }
+
       avatar.className = `avatar ${m.role === "user" ? "avatar--me" : ""}`;
       if (m.role === "user") setImg(avatar, state.profile?.avatar, state.profile?.name);
-      else setImg(avatar, ch.avatar, ch.name);
+      else setImg(avatar, displayAvatar, displayName);
+
+      if (m.npcDeleted) row.classList.add("msg--npc-deleted");
 
       const bubbleWrap = document.createElement("div");
+
+      // NPC name label above bubble
+      if (npcObj) {
+        const npcLabel = document.createElement("div");
+        npcLabel.className = "msg__npcName";
+        npcLabel.textContent = npcObj.name;
+        bubbleWrap.appendChild(npcLabel);
+      }
+
       const bubble = document.createElement("div");
       bubble.className = "bubble";
 
@@ -1890,13 +1974,14 @@
       } else if (m.image_loading) {
         bubble.textContent = "Генерация изображения…";
       } else {
-        renderBubbleContent(bubble, m.content, { role: m.role, characterName: ch.name });
+        renderBubbleContent(bubble, m.content, { role: m.role, characterName: displayName });
       }
       wireHoldToMessage(bubble, m.id);
 
       let actionsEl = null;
 
-      if (m.role === "assistant" && !m.image_url && !m.image_loading) {
+      // Only show regen/cont/thoughts for main character messages (not NPC, not deleted)
+      if (m.role === "assistant" && !m.image_url && !m.image_loading && !m.npcId && !m.npcDeleted) {
         const actions = document.createElement("div");
         actions.className = "msg__actions";
 
@@ -1943,6 +2028,12 @@
       bubbleWrap.appendChild(meta);
       if (actionsEl) bubbleWrap.appendChild(actionsEl);
 
+      // Pending NPC commands (approval cards)
+      if (m.role === "assistant" && Array.isArray(m.pending_npc_cmds) && m.pending_npc_cmds.length > 0) {
+        const cmdEl = renderPendingCmds(m, ch);
+        if (cmdEl) bubbleWrap.appendChild(cmdEl);
+      }
+
       if (m.role === "user") {
         row.appendChild(bubbleWrap);
         row.appendChild(avatar);
@@ -1959,6 +2050,145 @@
       list.scrollTop = list.scrollHeight;
     });
   }
+
+  // ─── NPC UI helpers ─────────────────────────────────────────────────────────
+
+  function getSegmentedValue(container) {
+    if (!container) return "";
+    const active = container.querySelector(".segmented__item--active[data-value]");
+    return active ? active.dataset.value : "";
+  }
+
+  function renderNpcStrip(characterId) {
+    const strip = $("#npcStrip");
+    if (!strip) return;
+    const npcs = getTempCharactersForChat(characterId);
+    strip.innerHTML = "";
+    strip.hidden = npcs.length === 0;
+
+    for (const npc of npcs) {
+      const chip = document.createElement("div");
+      chip.className = "npcChip";
+
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "npcChip__name";
+      nameSpan.textContent = npc.name;
+
+      const editBtn = document.createElement("button");
+      editBtn.className = "npcChip__edit";
+      editBtn.type = "button";
+      editBtn.title = `Редактировать ${npc.name}`;
+      editBtn.textContent = "✎";
+      editBtn.addEventListener("click", () => openNpcEditModal(npc));
+
+      const delBtn = document.createElement("button");
+      delBtn.className = "npcChip__del";
+      delBtn.type = "button";
+      delBtn.title = `Убрать ${npc.name} из чата`;
+      delBtn.textContent = "×";
+      delBtn.addEventListener("click", () => {
+        if (!window.confirm(`Убрать «${npc.name}» из чата?`)) return;
+        deleteTempCharacter(characterId, npc.id);
+        renderNpcStrip(characterId);
+        renderMessages();
+      });
+
+      chip.appendChild(nameSpan);
+      chip.appendChild(editBtn);
+      chip.appendChild(delBtn);
+      strip.appendChild(chip);
+    }
+  }
+
+  function openNpcModal() {
+    const modal = $("#npcModal");
+    if (!modal) return;
+    $("#npcEditId").value = "";
+    $("#npcModalTitle").textContent = "Добавить персонажа в чат";
+    $("#btnNpcSave").textContent = "Добавить";
+    $("#npcNameInput").value = "";
+    $("#npcIntroInput").value = "";
+    setSegmentedValue($("#npcGenderSegmented"), "unspecified");
+    modal.hidden = false;
+  }
+
+  function openNpcEditModal(npc) {
+    const modal = $("#npcModal");
+    if (!modal) return;
+    $("#npcEditId").value = npc.id;
+    $("#npcModalTitle").textContent = `Редактировать: ${npc.name}`;
+    $("#btnNpcSave").textContent = "Сохранить";
+    $("#npcNameInput").value = npc.name;
+    $("#npcIntroInput").value = npc.intro;
+    setSegmentedValue($("#npcGenderSegmented"), npc.gender || "unspecified");
+    modal.hidden = false;
+  }
+
+  function closeNpcModal() {
+    const modal = $("#npcModal");
+    if (modal) modal.hidden = true;
+  }
+
+  function renderPendingCmds(m, ch) {
+    const wrap = document.createElement("div");
+    wrap.className = "npcCmdList";
+
+    for (const cmd of m.pending_npc_cmds) {
+      if (cmd.approved !== undefined) continue; // already decided
+
+      const card = document.createElement("div");
+      card.className = "npcCmd";
+
+      const label = document.createElement("span");
+      label.className = "npcCmd__label";
+      label.textContent = cmd.type === "NPC_CREATE"
+        ? `${ch.name} хочет добавить персонажа «${cmd.name}»`
+        : `${ch.name} хочет убрать «${cmd.name}» из сцены`;
+
+      const yesBtn = document.createElement("button");
+      yesBtn.className = "btn btn--accent btn--xs";
+      yesBtn.type = "button";
+      yesBtn.textContent = "Разрешить";
+      yesBtn.addEventListener("click", async () => {
+        cmd.approved = true;
+        setChatHistory(ch.id, chatHistoryFor(ch.id).map((x) => x.id === m.id ? m : x));
+        renderMessages();
+
+        if (cmd.type === "NPC_CREATE") {
+          addTempCharacter(ch.id, { name: cmd.name, gender: cmd.gender, intro: cmd.intro });
+          renderNpcStrip(ch.id);
+          const newNpc = getTempCharactersForChat(ch.id).find((n) => n.name === cmd.name);
+          if (newNpc) await respondAsNpcs(ch, [newNpc]);
+        } else if (cmd.type === "NPC_REMOVE") {
+          const npc = getTempCharactersForChat(ch.id).find((n) => n.name === cmd.name);
+          if (npc) {
+            deleteTempCharacter(ch.id, npc.id);
+            renderNpcStrip(ch.id);
+            renderMessages();
+          }
+        }
+      });
+
+      const noBtn = document.createElement("button");
+      noBtn.className = "btn btn--ghost btn--xs";
+      noBtn.type = "button";
+      noBtn.textContent = "Отклонить";
+      noBtn.addEventListener("click", () => {
+        cmd.approved = false;
+        setChatHistory(ch.id, chatHistoryFor(ch.id).map((x) => x.id === m.id ? m : x));
+        renderMessages();
+      });
+
+      card.appendChild(label);
+      card.appendChild(yesBtn);
+      card.appendChild(noBtn);
+      wrap.appendChild(card);
+    }
+
+    return wrap.children.length > 0 ? wrap : null;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
 
   function ensureInitialMessage() {
     const ch = activeCharacter();
@@ -2205,7 +2435,7 @@
     if (mistralSection) mistralSection.hidden = state.provider !== "mistral";
   }
 
-  function buildSystemPrompt(profile, character) {
+  function buildSystemPrompt(profile, character, tempCharacters) {
     const parts = [];
     const style = styleById(character.dialogueStyle);
     const charName = (character.name || "Персонаж").trim();
@@ -2239,14 +2469,37 @@
     parts.push("- Если информации не хватает, задай 1-2 уточняющих вопроса в рамках роли.");
     parts.push("- Не используй форматирование, которое выглядит как системные пометки (роль/метки/служебный текст).");
 
+    // ── Побочные персонажи (NPC) ──
+    const npcs = Array.isArray(tempCharacters) ? tempCharacters : [];
+    if (npcs.length > 0) {
+      parts.push("\n[Побочные персонажи сцены]");
+      parts.push("В этой сцене присутствуют побочные персонажи, которыми ты управляешь от первого лица:");
+      for (const npc of npcs) {
+        const desc = npc.intro ? `: ${npc.intro}` : "";
+        parts.push(`- ${npc.name} (${genderLabel(npc.gender)})${desc}`);
+      }
+      parts.push("Их описание выше задаёт манеру речи, характер и мотивацию.");
+      parts.push("Текущие NPC в сцене: " + npcs.map((n) => n.name).join(", ") + ".");
+    } else {
+      parts.push("\n[Побочные персонажи]");
+      parts.push("Текущих NPC в сцене нет.");
+    }
+
+    parts.push("[Управление побочными персонажами]");
+    parts.push("Ты можешь в любой момент предложить ввести нового персонажа в сцену или убрать существующего.");
+    parts.push("Для этого добавь в КОНЕЦ своего ответа (на отдельной строке) одну из команд:");
+    parts.push('Создать: [[NPC_CREATE: name="Имя", gender="male|female|other", intro="описание характера"]]');
+    parts.push('Убрать:  [[NPC_REMOVE: name="Имя"]]');
+    parts.push("Используй эти команды только когда это органично для сюжета. Пользователь должен одобрить изменение.");
+
     // ── Финальный якорь (важно для слабых моделей) ──
     parts.push(`\nПомни: ты ЯВЛЯЕШЬСЯ ${charName} и отвечаешь ${userName}. Не путай роли.`);
 
     return parts.join("\n");
   }
 
-  function buildRestSystemPrompt(profile, character) {
-    let sys = buildSystemPrompt(profile, character);
+  function buildRestSystemPrompt(profile, character, tempCharacters) {
+    let sys = buildSystemPrompt(profile, character, tempCharacters);
     const initial = String(character.initialMessage || "").trim();
     if (initial) {
       sys += "\n\nНачало диалога (ты уже сказал пользователю): " + initial;
@@ -2276,25 +2529,25 @@
     return lines.join("\n").trim();
   }
 
-  function buildRestStartPrompt(profile, character, historyForTranscript, forceTranscript) {
+  function buildRestStartPrompt(profile, character, historyForTranscript, forceTranscript, tempCharacters) {
     const transcript = buildTranscript(profile, character, historyForTranscript);
     const useTranscript = forceTranscript && transcript;
 
     if (useTranscript) {
-      let sys = buildSystemPrompt(profile, character);
+      let sys = buildSystemPrompt(profile, character, tempCharacters);
       sys += "\n\nИстория диалога (для контекста):\n" + transcript;
       sys += "\n\nПродолжай разговор естественно. Не переписывай историю целиком, отвечай только новой репликой.";
       return sys;
     }
 
-    return buildRestSystemPrompt(profile, character);
+    return buildRestSystemPrompt(profile, character, tempCharacters);
   }
 
   function buildOpenAiMessages(characterId) {
     const ch = state.characters.find((c) => c.id === characterId);
     if (!ch) return [];
 
-    const system = buildSystemPrompt(state.profile, ch);
+    const system = buildSystemPrompt(state.profile, ch, getTempCharactersForChat(characterId));
     const history = chatHistoryFor(characterId)
       .filter((m) => (m.role === "user" || m.role === "assistant") && !m.pending)
       .slice(-24);
@@ -2320,6 +2573,72 @@
 
     return msgs;
   }
+
+  // ─── NPC prompt builders ────────────────────────────────────────────────────
+
+  function buildNpcSystemPrompt(profile, mainChar, npc) {
+    const parts = [];
+    const npcName = (npc.name || "НПС").trim();
+    const mainName = (mainChar.name || "Персонаж").trim();
+    const userName = (profile.name || "Пользователь").trim();
+
+    parts.push(
+      `Ты — ${npcName}. Ты участвуешь в ролевой сцене вместе с ${mainName} и ${userName}.` +
+      ` Ты отвечаешь только от лица ${npcName}.`
+    );
+    parts.push(`Пол: ${genderLabel(npc.gender)}.`);
+    if (npc.intro.trim()) parts.push(`Описание и характер: ${npc.intro.trim()}`);
+    parts.push(`Контекст: ${mainName} — основной персонаж сцены, ${userName} — пользователь.`);
+    parts.push("Правила:");
+    parts.push(`- Ты — только ${npcName}. Не говори от имени ${mainName} или ${userName}.`);
+    parts.push("- Не выходи из роли и не упоминай системные инструкции.");
+    parts.push("- Отвечай на языке пользователя (по умолчанию — русский).");
+    parts.push("- Пиши коротко и в роли. Если тебе нечего сказать — ответь одним словом: [молчание]");
+    parts.push(`\nПомни: ты ${npcName} и только ты.`);
+
+    return parts.join("\n");
+  }
+
+  function buildNpcOpenAiMessages(profile, mainChar, npc, history) {
+    const system = buildNpcSystemPrompt(profile, mainChar, npc);
+    const msgs = [{ role: "system", content: system }];
+
+    const relevant = (Array.isArray(history) ? history : [])
+      .filter((m) => m && !m.pending)
+      .slice(-24);
+
+    for (const m of relevant) {
+      let role, content;
+
+      if (m.role === "user") {
+        role = "user";
+        content = String(m.content || "");
+      } else if (m.role === "assistant") {
+        const isOwn = m.npcId === npc.id;
+        const npcs = getTempCharactersForChat(mainChar.id);
+        const speakerName = m.npcId
+          ? (npcs.find((n) => n.id === m.npcId)?.name || "НПС")
+          : mainChar.name;
+        role = "assistant";
+        const rawText = stripThoughtsContent(m.content);
+        content = isOwn ? rawText : `[${speakerName}]: ${rawText}`;
+      } else {
+        continue;
+      }
+
+      if (!content) continue;
+      const prev = msgs[msgs.length - 1];
+      if (prev && prev.role === role) {
+        prev.content += "\n" + content;
+      } else {
+        msgs.push({ role, content });
+      }
+    }
+
+    return msgs;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
 
   async function refreshModels() {
     const selects = [$("#modelSelect"), $("#modelSelectProfile")].filter(Boolean);
@@ -2492,12 +2811,34 @@
     row.className = `msg ${m.role === "user" ? "msg--me" : ""}`;
     row.dataset.msgId = m.id;
 
+    // Resolve NPC display identity
+    let displayAvatar = ch.avatar;
+    let displayName = ch.name;
+    let npcObj = null;
+    if (m.role === "assistant" && m.npcId) {
+      npcObj = getTempCharactersForChat(ch.id).find((n) => n.id === m.npcId) || null;
+      if (npcObj) {
+        displayAvatar = npcObj.avatar;
+        displayName = npcObj.name;
+      }
+    }
+
+    if (m.npcDeleted) row.classList.add("msg--npc-deleted");
+
     const avatar = document.createElement("img");
     avatar.className = `avatar ${m.role === "user" ? "avatar--me" : ""}`;
     if (m.role === "user") setImg(avatar, state.profile?.avatar, state.profile?.name);
-    else setImg(avatar, ch.avatar, ch.name);
+    else setImg(avatar, displayAvatar, displayName);
 
     const bubbleWrap = document.createElement("div");
+
+    if (npcObj) {
+      const npcLabel = document.createElement("div");
+      npcLabel.className = "msg__npcName";
+      npcLabel.textContent = npcObj.name;
+      bubbleWrap.appendChild(npcLabel);
+    }
+
     const bubble = document.createElement("div");
     bubble.className = "bubble";
 
@@ -2512,7 +2853,7 @@
     } else if (m.image_loading) {
       bubble.textContent = "Генерация изображения…";
     } else {
-      renderBubbleContent(bubble, m.content, { role: m.role, characterName: ch.name });
+      renderBubbleContent(bubble, m.content, { role: m.role, characterName: displayName });
     }
     wireHoldToMessage(bubble, m.id);
 
@@ -3210,6 +3551,145 @@
     return { fullContent };
   }
 
+  // ─── NPC streaming ──────────────────────────────────────────────────────────
+
+  async function streamLmStudioOpenAiToMessage({ character, assistantMsgId, messages, baseText }) {
+    const ch = character;
+    let generated = "";
+    const base = String(baseText || "");
+
+    const bubble = getStreamingBubble(assistantMsgId);
+    const list = $("#messages");
+
+    const renderNow = () => {
+      if (!bubble) return;
+      renderBubbleContent(bubble, base + generated, { role: "assistant", characterName: ch.name });
+      if (list) list.scrollTop = list.scrollHeight;
+    };
+
+    const payload = {
+      model: state.modelId || "local-model",
+      messages,
+      temperature: 0.75,
+      stream: true
+    };
+
+    const res = await fetch("/api/lmstudio/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      const data = safeJsonParse(text);
+      const errMsg = data?.error || data?.message || `Ошибка LM Studio (${res.status})`;
+      throw new Error(String(errMsg));
+    }
+
+    const contentType = res.headers.get("content-type") || "";
+    const isSSE = contentType.includes("text/event-stream");
+
+    if (isSSE && res.body) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let started = base.length > 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data:")) continue;
+          const jsonStr = trimmed.slice(5).trim();
+          if (jsonStr === "[DONE]") continue;
+
+          const chunk = safeJsonParse(jsonStr);
+          if (!chunk) continue;
+          if (chunk.error) throw new Error(String(chunk.error.message || chunk.error));
+
+          const choice0 = chunk.choices?.[0];
+          const delta =
+            (typeof choice0?.delta?.content === "string" ? choice0.delta.content : "") ||
+            (typeof choice0?.text === "string" ? choice0.text : "");
+
+          if (typeof delta === "string" && delta.length > 0) {
+            if (!started) {
+              started = true;
+              if (bubble && bubble.textContent === "…") bubble.textContent = "";
+            }
+            generated += delta;
+            renderNow();
+          }
+        }
+      }
+    } else {
+      const text = await res.text();
+      const data = safeJsonParse(text);
+      const content = data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || "";
+      generated = String(content || "");
+      renderNow();
+    }
+
+    return { fullContent: (base + generated) || "" };
+  }
+
+  async function streamChatToMessage({ character, assistantMsgId, messages, baseText }) {
+    if (state.provider === "mistral") {
+      return streamMistralToMessage({ character, assistantMsgId, messages, baseText: baseText || "" });
+    }
+    return streamLmStudioOpenAiToMessage({ character, assistantMsgId, messages, baseText: baseText || "" });
+  }
+
+  async function respondAsNpcs(ch, npcs) {
+    for (const npc of npcs) {
+      const placeholderId = uuid();
+      const ph = { id: placeholderId, role: "assistant", content: "…", ts: nowTs(), pending: true, npcId: npc.id };
+      setChatHistory(ch.id, chatHistoryFor(ch.id).concat([ph]));
+      appendMessageRow(ph, ch);
+
+      try {
+        const historyCtx = chatHistoryFor(ch.id).filter((m) => !m.pending);
+        const msgs = buildNpcOpenAiMessages(state.profile, ch, npc, historyCtx);
+        const { fullContent } = await streamChatToMessage({
+          character: npc,
+          assistantMsgId: placeholderId,
+          messages: msgs
+        });
+        const npcContent = String(fullContent || "").trim();
+        const isSilent = !npcContent || npcContent === "[молчание]";
+
+        if (isSilent) {
+          // Remove placeholder — NPC stayed silent
+          setChatHistory(ch.id, chatHistoryFor(ch.id).filter((m) => m.id !== placeholderId));
+        } else {
+          setChatHistory(
+            ch.id,
+            chatHistoryFor(ch.id).map((m) =>
+              m.id === placeholderId
+                ? { id: m.id, role: "assistant", content: npcContent, ts: nowTs(), npcId: npc.id }
+                : m
+            )
+          );
+        }
+      } catch {
+        // Remove placeholder silently on error
+        setChatHistory(ch.id, chatHistoryFor(ch.id).filter((m) => m.id !== placeholderId));
+      }
+
+      renderMessages();
+      refreshChatsView();
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+
   function openPromptsSheet() {
     const sheet = $("#promptsSheet");
     if (!sheet) return;
@@ -3346,7 +3826,8 @@ ${item.text}` : item.text;
     $("#composerHint").textContent = "Генерирую ответ…";
 
     try {
-      let content;
+      let rawContent;
+      const npcs = getTempCharactersForChat(ch.id);
 
       if (state.provider === "mistral") {
         const messages = buildOpenAiMessages(ch.id);
@@ -3356,10 +3837,10 @@ ${item.text}` : item.text;
           messages,
           baseText: ""
         });
-        content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
+        rawContent = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
       } else {
         const prevResponseId = chatId ? lastResponseIdFor(chatId) : "";
-        const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, historyBefore, true);
+        const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, historyBefore, true, npcs);
 
         const { fullContent, respId, streamErrorMessage } = await streamLmStudioRestToMessage({
           character: ch,
@@ -3369,7 +3850,7 @@ ${item.text}` : item.text;
           systemPrompt,
           baseText: ""
         });
-        content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
+        rawContent = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
 
         if (respId && chatId) {
           const chain = responseIdChainFor(chatId);
@@ -3382,15 +3863,32 @@ ${item.text}` : item.text;
         }
       }
 
+      // Parse NPC commands embedded in the AI response
+      const { displayText, commands } = parseAiCommands(rawContent);
+      const mainContent = displayText || rawContent;
+
       setChatHistory(
         ch.id,
         chatHistoryFor(ch.id).map((m) =>
-          m.id === placeholderId ? { id: m.id, role: "assistant", content, ts: nowTs() } : m
+          m.id === placeholderId
+            ? {
+                id: m.id,
+                role: "assistant",
+                content: mainContent,
+                ts: nowTs(),
+                ...(commands.length ? { pending_npc_cmds: commands } : {})
+              }
+            : m
         )
       );
       renderMessages();
       refreshChatsView();
       $("#composerHint").textContent = "";
+
+      // Existing NPCs respond in sequence
+      if (npcs.length > 0) {
+        await respondAsNpcs(ch, npcs);
+      }
     } catch (err) {
       const msg = String(err?.message || err || "Ошибка");
       setChatHistory(
@@ -3465,7 +3963,7 @@ ${item.text}` : item.text;
         const chain = chatId ? responseIdChainFor(chatId) : [];
         const prevResponseId = chain.length >= 2 ? chain[chain.length - 2] : "";
         const historyForPrompt = history.slice(0, userIdx);
-        const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, historyForPrompt, true);
+        const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, historyForPrompt, true, getTempCharactersForChat(ch.id));
 
         const { fullContent, respId } = await streamLmStudioRestToMessage({
           character: ch,
@@ -3507,6 +4005,50 @@ ${item.text}` : item.text;
       setGenerating(false);
     }
   }
+
+  // ─── NPC command parsing ────────────────────────────────────────────────────
+
+  const NPC_CREATE_RE = /\[\[NPC_CREATE:\s*([^\]]+)\]\]/g;
+  const NPC_REMOVE_RE = /\[\[NPC_REMOVE:\s*([^\]]+)\]\]/g;
+
+  function parseCommandAttrs(s) {
+    const out = {};
+    for (const m of s.matchAll(/(\w+)\s*=\s*"([^"]*)"/g)) {
+      out[m[1]] = m[2];
+    }
+    return out;
+  }
+
+  function parseAiCommands(rawContent) {
+    const commands = [];
+
+    for (const m of rawContent.matchAll(NPC_CREATE_RE)) {
+      const attrs = parseCommandAttrs(m[1]);
+      if (attrs.name) {
+        commands.push({
+          type: "NPC_CREATE",
+          name: attrs.name.trim(),
+          gender: attrs.gender || "unspecified",
+          intro: attrs.intro || ""
+        });
+      }
+    }
+
+    for (const m of rawContent.matchAll(NPC_REMOVE_RE)) {
+      const attrs = parseCommandAttrs(m[1]);
+      if (attrs.name) commands.push({ type: "NPC_REMOVE", name: attrs.name.trim() });
+    }
+
+    const displayText = rawContent
+      .replace(NPC_CREATE_RE, "")
+      .replace(NPC_REMOVE_RE, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    return { displayText, commands };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
 
   const THOUGHT_DELIM = "\n\n{{THOUGHTS}}\n";
 
@@ -3555,7 +4097,7 @@ ${item.text}` : item.text;
         content = String(fullContent || "").trim() ? String(fullContent) : (base || "(пустой ответ)");
       } else {
         const prevResponseId = chatId ? lastResponseIdFor(chatId) : "";
-        const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, history, true);
+        const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, history, true, getTempCharactersForChat(ch.id));
 
         const { fullContent, respId } = await streamLmStudioRestToMessage({
           character: ch,
@@ -4434,6 +4976,59 @@ ${item.text}` : item.text;
         createNewChatForCharacter(c.id);
       });
     }
+
+    // ─── NPC event listeners ───────────────────────────────────────────────────
+
+    const btnAddNpc = $("#btnAddNpc");
+    if (btnAddNpc) btnAddNpc.addEventListener("click", openNpcModal);
+
+    const npcModal = $("#npcModal");
+    if (npcModal) {
+      npcModal.addEventListener("click", (e) => {
+        if (e.target === npcModal) closeNpcModal();
+      });
+    }
+
+    const npcModalClose = $("#npcModalClose");
+    if (npcModalClose) npcModalClose.addEventListener("click", closeNpcModal);
+
+    const btnNpcCancel = $("#btnNpcCancel");
+    if (btnNpcCancel) btnNpcCancel.addEventListener("click", closeNpcModal);
+
+    // Segmented gender control in NPC modal
+    const npcGenderSeg = $("#npcGenderSegmented");
+    if (npcGenderSeg) {
+      npcGenderSeg.addEventListener("click", (e) => {
+        const btn = e.target.closest(".segmented__item[data-value]");
+        if (!btn) return;
+        setSegmentedValue(npcGenderSeg, btn.dataset.value);
+      });
+    }
+
+    const npcForm = $("#npcForm");
+    if (npcForm) {
+      npcForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const ch = activeCharacter();
+        if (!ch) return;
+        const name = String($("#npcNameInput")?.value || "").trim();
+        if (!name) return;
+        const gender = getSegmentedValue($("#npcGenderSegmented")) || "unspecified";
+        const intro = String($("#npcIntroInput")?.value || "").trim();
+        const editId = String($("#npcEditId")?.value || "").trim();
+
+        if (editId) {
+          updateTempCharacter(ch.id, editId, { name, gender, intro });
+        } else {
+          addTempCharacter(ch.id, { name, gender, intro });
+        }
+
+        renderNpcStrip(ch.id);
+        closeNpcModal();
+      });
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
 
     const input = $("#userInput");
     input.addEventListener("input", () => autoGrowTextarea(input));
