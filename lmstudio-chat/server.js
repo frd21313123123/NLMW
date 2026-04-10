@@ -885,6 +885,317 @@ app.post("/api/import/polybuzz", async (req, res) => {
   }
 });
 
+// ===== PolyBuzz catalog: scrape the main page and extract NUXT payload characters =====
+
+function hasCJK(str) {
+  return /[\u2E80-\u9FFF\uF900-\uFAFF\uAC00-\uD7AF]/.test(str || "");
+}
+
+function extractScenesFromPayload(payload) {
+  const characters = [];
+  for (let i = 0; i < payload.length; i++) {
+    const item = payload[i];
+    if (!Array.isArray(item)) continue;
+    const firstRef = item[0];
+    if (typeof firstRef !== "number" || firstRef >= payload.length) continue;
+    const firstTpl = payload[firstRef];
+    if (!firstTpl || typeof firstTpl !== "object" || Array.isArray(firstTpl)) continue;
+    if (!("secretSceneId" in firstTpl) || !("sceneName" in firstTpl)) continue;
+
+    for (const idx of item) {
+      if (typeof idx !== "number" || idx >= payload.length) continue;
+      const tpl = payload[idx];
+      if (!tpl || typeof tpl !== "object" || Array.isArray(tpl) || !("secretSceneId" in tpl)) continue;
+
+      const resolve = (key) => {
+        const ref = tpl[key];
+        if (ref === undefined || ref === null) return null;
+        if (typeof ref === "number" && Number.isInteger(ref) && ref >= 0 && ref < payload.length) {
+          return payload[ref];
+        }
+        return ref;
+      };
+
+      const sid = resolve("secretSceneId");
+      const name = resolve("sceneName");
+      if (!sid || typeof sid !== "string") continue;
+
+      const oriName = resolve("oriSceneName");
+      const brief = resolve("brief");
+      const totalChat = resolve("totalChatCnt");
+      const avatar = resolve("chatbotAvatarUrl");
+      const bg = resolve("chatBackgroundImgUrl");
+      const cover = resolve("homeCoverUrl");
+
+      const tagsRef = resolve("sceneTags");
+      const tags = [];
+      if (Array.isArray(tagsRef)) {
+        for (const tIdx of tagsRef) {
+          const t = typeof tIdx === "number" && tIdx < payload.length ? payload[tIdx] : tIdx;
+          if (t && typeof t === "object" && !Array.isArray(t)) {
+            const tnRef = t.tagName;
+            const tn = typeof tnRef === "number" && tnRef < payload.length ? payload[tnRef] : tnRef;
+            if (tn) tags.push(String(tn));
+          }
+        }
+      }
+
+      characters.push({
+        secretSceneId: sid,
+        name: String(name || ""),
+        oriName: String(oriName || ""),
+        brief: String(brief || ""),
+        totalChats: typeof totalChat === "number" ? totalChat : 0,
+        avatar: String(avatar || ""),
+        background: String(bg || ""),
+        cover: String(cover || ""),
+        tags,
+        url: `https://www.polybuzz.ai/ru/character/profile/${encodeURIComponent(String(oriName || name || "").toLowerCase().replace(/\s+/g, "-"))}-${sid}`
+      });
+    }
+    break;
+  }
+  return characters;
+}
+
+let polybuzzCatalogCache = { items: [], fetchedAt: 0 };
+const POLYBUZZ_CATALOG_TTL = 10 * 60 * 1000; // 10 minutes
+
+async function scrapePolybuzzCatalog() {
+  const now = Date.now();
+  if (polybuzzCatalogCache.items.length > 0 && now - polybuzzCatalogCache.fetchedAt < POLYBUZZ_CATALOG_TTL) {
+    return polybuzzCatalogCache.items;
+  }
+
+  const headers = {
+    ...polybuzzBaseHeaders({ accept: "text/html,application/xhtml+xml" }),
+    "Cache-Control": "no-cache"
+  };
+
+  const upstream = await fetch("https://www.polybuzz.ai/ru", { method: "GET", headers, redirect: "follow" });
+  if (!upstream.ok) throw new Error(`Polybuzz returned ${upstream.status}`);
+  const html = await upstream.text();
+
+  // Extract Nuxt 3 payload: the <script> tag containing ShallowReactive + scene data
+  const scriptMatch = html.match(/<script[^>]*>((?:\[.*?ShallowReactive.*?))<\/script>/s);
+  if (!scriptMatch) throw new Error("Не удалось найти данные на странице Polybuzz");
+
+  let payload;
+  try {
+    payload = JSON.parse(scriptMatch[1]);
+  } catch {
+    throw new Error("Не удалось распарсить данные Polybuzz");
+  }
+
+  if (!Array.isArray(payload)) throw new Error("Неверный формат данных Polybuzz");
+
+  const characters = extractScenesFromPayload(payload).filter((c) => !hasCJK(c.name));
+
+  // Fetch genders in background (parallel, max 6 concurrent) and store in cache
+  polybuzzCatalogCache = { items: characters, fetchedAt: now };
+
+  // Fire-and-forget gender enrichment (don't block the first response)
+  enrichCatalogGenders(characters).catch((e) => console.warn("[polybuzz gender enrich]", e));
+
+  return characters;
+}
+
+async function enrichCatalogGenders(items) {
+  if (!items.length) return;
+  try {
+    const cuid = await polybuzzGetCuid();
+    const CONCURRENCY = 6;
+
+    for (let i = 0; i < items.length; i += CONCURRENCY) {
+      const batch = items.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        batch.map(async (item) => {
+          if (item.gender !== undefined) return; // already have it
+          try {
+            const profile = await polybuzzSceneProfileGuest(item.secretSceneId, cuid);
+            item.gender = polybuzzGenderToLocal(profile.sceneGender);
+          } catch {
+            item.gender = "unspecified";
+          }
+        })
+      );
+    }
+  } catch (e) {
+    console.warn("[enrichCatalogGenders]", e);
+  }
+}
+
+function mapPolybuzzSceneToItem(s) {
+  return {
+    secretSceneId: String(s.secretSceneId || ""),
+    name: String(s.sceneName || ""),
+    oriName: String(s.oriSceneName || ""),
+    brief: String(s.brief || ""),
+    totalChats: Number(s.totalChatCnt) || 0,
+    avatar: String(s.chatbotAvatarUrl || ""),
+    background: String(s.chatBackgroundImgUrl || ""),
+    cover: String(s.homeCoverUrl || ""),
+    tags: Array.isArray(s.sceneTags) ? s.sceneTags.map((t) => t?.tagName).filter(Boolean) : [],
+    url: `https://www.polybuzz.ai/ru/character/profile/${encodeURIComponent(String(s.oriSceneName || s.sceneName || "").toLowerCase().replace(/\s+/g, "-"))}-${s.secretSceneId}`
+  };
+}
+
+// Scrape additional locale pages to get more characters beyond the /ru page.
+// Each locale may surface different characters in its Nuxt payload.
+const POLYBUZZ_LOCALE_PAGES = ["/ru", "/en", "/pt", "/de", "/fr", "/es"];
+const polybuzzPageCache = new Map(); // page -> { items, fetchedAt }
+
+async function fetchPolybuzzCatalogPage(page) {
+  // Return cached items if available (so gender enrichment persists)
+  const cached = polybuzzPageCache.get(page);
+  if (cached && Date.now() - cached.fetchedAt < POLYBUZZ_CATALOG_TTL) {
+    return cached.items;
+  }
+
+  const localeIdx = page - 1;
+  if (localeIdx >= POLYBUZZ_LOCALE_PAGES.length) return [];
+
+  const locale = POLYBUZZ_LOCALE_PAGES[localeIdx];
+  const headers = {
+    ...polybuzzBaseHeaders({ accept: "text/html,application/xhtml+xml" }),
+    "Cache-Control": "no-cache"
+  };
+
+  try {
+    const upstream = await fetch(`https://www.polybuzz.ai${locale}`, { method: "GET", headers, redirect: "follow" });
+    if (!upstream.ok) return [];
+    const html = await upstream.text();
+
+    const scriptMatch = html.match(/<script[^>]*>((?:\[.*?ShallowReactive.*?))<\/script>/s);
+    if (!scriptMatch) return [];
+
+    let payload;
+    try { payload = JSON.parse(scriptMatch[1]); } catch { return []; }
+    if (!Array.isArray(payload)) return [];
+
+    const items = extractScenesFromPayload(payload).filter((c) => !hasCJK(c.name));
+    polybuzzPageCache.set(page, { items, fetchedAt: Date.now() });
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+// Browse more characters via the search API after locale pages are exhausted.
+// Rotates through broad single-letter queries to get diverse results.
+const POLYBUZZ_BROWSE_SEEDS = "eaisontrlcdupmhgbfywkvxzjq".split("");
+const POLYBUZZ_BROWSE_PAGES_PER_SEED = 10; // 10 search pages per seed letter
+const polybuzzBrowseCache = new Map(); // "letter:page" -> { items, fetchedAt }
+
+async function fetchPolybuzzCatalogViaSearch(browsePage) {
+  const seedIdx = Math.floor((browsePage - 1) / POLYBUZZ_BROWSE_PAGES_PER_SEED);
+  const searchPage = ((browsePage - 1) % POLYBUZZ_BROWSE_PAGES_PER_SEED) + 1;
+
+  if (seedIdx >= POLYBUZZ_BROWSE_SEEDS.length) return { items: [], hasMore: false };
+
+  const query = POLYBUZZ_BROWSE_SEEDS[seedIdx];
+  const cacheKey = `${query}:${searchPage}`;
+  const cached = polybuzzBrowseCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < POLYBUZZ_CATALOG_TTL) {
+    return { items: cached.items, hasMore: cached.hasMore };
+  }
+
+  const pageSize = 30;
+  const cuid = await polybuzzGetCuid();
+  const headers = { ...polybuzzBaseHeaders(), cuid, "Content-Type": "application/json" };
+
+  const result = await fetchJsonOrThrow(
+    "https://api.polybuzz.ai/api/scene/search",
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ query, pageNo: searchPage, pageSize })
+    },
+    "polybuzz catalog-browse"
+  );
+
+  const respBody = result.data;
+  if (!respBody || respBody.errNo !== 0) throw new Error(respBody?.errMsg || "catalog browse error");
+
+  const list = Array.isArray(respBody.data?.list) ? respBody.data.list : [];
+  const items = list.map(mapPolybuzzSceneToItem).filter((c) => !hasCJK(c.name));
+  // hasMore if this seed still has results, or there are more seeds to try
+  const seedHasMore = list.length >= pageSize;
+  const moreSeedsAvail = seedIdx < POLYBUZZ_BROWSE_SEEDS.length - 1;
+  const hasMore = seedHasMore || moreSeedsAvail;
+
+  polybuzzBrowseCache.set(cacheKey, { items, hasMore, fetchedAt: Date.now() });
+  return { items, hasMore };
+}
+
+app.get("/api/polybuzz/catalog", async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    if (page === 1) {
+      // First page: use scraped HTML catalog (richer data)
+      const items = await scrapePolybuzzCatalog();
+      res.json({ ok: true, items, hasMore: true });
+    } else if (page <= POLYBUZZ_LOCALE_PAGES.length) {
+      // Locale pages 2-6: scrape other locale versions
+      const items = await fetchPolybuzzCatalogPage(page);
+      // Fire-and-forget gender enrichment for new items
+      enrichCatalogGenders(items).catch(() => {});
+      // Always hasMore — search API continues after locales
+      res.json({ ok: true, items, hasMore: true });
+    } else {
+      // Pages beyond locales: browse via search API
+      const browsePage = page - POLYBUZZ_LOCALE_PAGES.length;
+      const { items, hasMore } = await fetchPolybuzzCatalogViaSearch(browsePage);
+      enrichCatalogGenders(items).catch(() => {});
+      res.json({ ok: true, items, hasMore });
+    }
+  } catch (err) {
+    console.error("[polybuzz catalog]", err);
+    res.status(502).json({ ok: false, error: String(err?.message || err), items: [], hasMore: false });
+  }
+});
+
+app.post("/api/polybuzz/search", async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const query = String(body.query || "").trim();
+    const page = Math.max(1, Number(body.page) || 1);
+    const pageSize = Math.min(50, Math.max(1, Number(body.pageSize) || 20));
+
+    if (!query) {
+      res.status(400).json({ ok: false, error: "query обязателен", items: [] });
+      return;
+    }
+
+    const cuid = await polybuzzGetCuid();
+    const headers = { ...polybuzzBaseHeaders(), cuid, "Content-Type": "application/json" };
+
+    const result = await fetchJsonOrThrow(
+      "https://api.polybuzz.ai/api/scene/search",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ query, pageNo: page, pageSize })
+      },
+      "polybuzz search"
+    );
+
+    const respBody = result.data;
+    if (!respBody || respBody.errNo !== 0) {
+      throw new Error(respBody?.errMsg || "search error");
+    }
+
+    const list = Array.isArray(respBody.data?.list) ? respBody.data.list : [];
+    const items = list.map(mapPolybuzzSceneToItem).filter((c) => !hasCJK(c.name));
+    const hasMore = list.length >= pageSize;
+
+    res.json({ ok: true, items, hasMore });
+  } catch (err) {
+    console.error("[polybuzz search]", err);
+    res.status(502).json({ ok: false, error: String(err?.message || err), items: [] });
+  }
+});
+
 // Detect polybuzz ghost/placeholder avatar URLs (served from /polyai/ CDN path).
 // Real character photos come from paths like /speakmaster/.
 function isPolybuzzGhostUrl(url) {
@@ -983,9 +1294,129 @@ app.get("/api/media", async (req, res) => {
 
 const DATA_DIR = path.join(__dirname, "data");
 const CHARACTERS_FILE = path.join(DATA_DIR, "characters.json");
+const CHARACTERS_BACKUP_PREFIX = "characters.pre-migration";
+
+const CORE_CHARACTER_KEYS = new Set([
+  "id",
+  "name",
+  "gender",
+  "intro",
+  "backstory",
+  "initialMessage",
+  "avatar",
+  "background",
+  "createdAt",
+  "updatedAt",
+  "schemaVersion",
+  "legacy"
+]);
+
+const LEGACY_CHARACTER_KEYS = [
+  "visibility",
+  "tags",
+  "backgroundHint",
+  "outfit",
+  "setting",
+  "dialogueStyle"
+];
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function isPlainObject(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeString(value) {
+  return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+function normalizeStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => normalizeString(item).trim()).filter(Boolean);
+}
+
+function appendLegacySection(base, label, value) {
+  const text = normalizeString(value).trim();
+  if (!text) return base;
+
+  const prefix = `${label}:`;
+  if (base.includes(prefix) && base.includes(text)) return base;
+  return base ? `${base}\n\n${prefix} ${text}` : `${prefix} ${text}`;
+}
+
+function buildMergedBackstory(raw) {
+  let text = normalizeString(raw.backstory).trim();
+  text = appendLegacySection(text, "Обстановка", raw.setting);
+  text = appendLegacySection(text, "Подсказка фона", raw.backgroundHint);
+  text = appendLegacySection(text, "Внешность", raw.outfit);
+
+  const dialogueStyle = normalizeString(raw.dialogueStyle).trim();
+  if (dialogueStyle) text = appendLegacySection(text, "Стиль диалога", dialogueStyle);
+
+  const tags = normalizeStringArray(raw.tags);
+  if (tags.length) text = appendLegacySection(text, "Теги", tags.join(", "));
+
+  return text;
+}
+
+function collectLegacyFields(raw) {
+  const existingLegacy = isPlainObject(raw.legacy) ? raw.legacy : {};
+  const legacy = { ...existingLegacy };
+
+  for (const key of LEGACY_CHARACTER_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue;
+    if (key === "tags") legacy[key] = normalizeStringArray(raw[key]);
+    else legacy[key] = raw[key];
+  }
+
+  for (const [key, value] of Object.entries(raw)) {
+    if (CORE_CHARACTER_KEYS.has(key) || LEGACY_CHARACTER_KEYS.includes(key)) continue;
+    legacy[key] = value;
+  }
+
+  return legacy;
+}
+
+function migrateCharacterRecord(raw) {
+  if (!isPlainObject(raw) || !raw.id) return null;
+
+  const migrated = {
+    id: normalizeString(raw.id),
+    name: normalizeString(raw.name).trim(),
+    gender: normalizeString(raw.gender).trim() || "unspecified",
+    intro: normalizeString(raw.intro).trim(),
+    backstory: buildMergedBackstory(raw),
+    initialMessage: normalizeString(raw.initialMessage).trim(),
+    avatar: normalizeString(raw.avatar).trim(),
+    background: normalizeString(raw.background).trim(),
+    createdAt: Number(raw.createdAt) || Date.now(),
+    updatedAt: Number(raw.updatedAt) || Number(raw.createdAt) || Date.now(),
+    schemaVersion: 2,
+    legacy: collectLegacyFields(raw)
+  };
+
+  migrated.visibility = normalizeString(raw.visibility).trim() || "public";
+  migrated.tags = normalizeStringArray(raw.tags);
+  migrated.backgroundHint = normalizeString(raw.backgroundHint).trim();
+  migrated.outfit = normalizeString(raw.outfit).trim();
+  migrated.setting = normalizeString(raw.setting).trim();
+  migrated.dialogueStyle = normalizeString(raw.dialogueStyle).trim() || "natural";
+
+  if (!migrated.intro) {
+    migrated.intro = normalizeString(raw.setting || raw.backgroundHint || raw.backstory).trim().slice(0, 400);
+  }
+
+  return migrated;
+}
+
+function backupCharactersFileOnce(rawText) {
+  ensureDataDir();
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupFile = path.join(DATA_DIR, `${CHARACTERS_BACKUP_PREFIX}.${stamp}.json`);
+  fs.writeFileSync(backupFile, rawText, "utf8");
+  return backupFile;
 }
 
 function loadCharacters() {
@@ -993,7 +1424,17 @@ function loadCharacters() {
   try {
     const raw = fs.readFileSync(CHARACTERS_FILE, "utf8");
     const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr : [];
+    if (!Array.isArray(arr)) return [];
+
+    const migrated = arr.map(migrateCharacterRecord).filter(Boolean);
+    const changed = JSON.stringify(arr) !== JSON.stringify(migrated);
+    if (changed) {
+      const backupFile = backupCharactersFileOnce(raw);
+      saveCharactersFile(migrated);
+      console.log(`[characters] migrated storage to schema v2, backup: ${backupFile}`);
+    }
+
+    return migrated;
   } catch {
     return [];
   }
@@ -1011,8 +1452,8 @@ app.get("/api/characters", (_req, res) => {
 
 // POST upsert a character
 app.post("/api/characters", (req, res) => {
-  const ch = req.body;
-  if (!ch || typeof ch !== "object" || !ch.id) {
+  const ch = migrateCharacterRecord(req.body);
+  if (!ch) {
     return res.status(400).json({ error: "Character must have an id" });
   }
   const chars = loadCharacters();
@@ -1032,13 +1473,14 @@ app.post("/api/characters/bulk", (req, res) => {
   const chars = loadCharacters();
   const existingIds = new Set(chars.map((c) => c.id));
   for (const ch of items) {
-    if (!ch || typeof ch !== "object" || !ch.id) continue;
-    if (existingIds.has(ch.id)) {
-      const idx = chars.findIndex((c) => c.id === ch.id);
-      if (idx !== -1) chars[idx] = ch;
+    const migrated = migrateCharacterRecord(ch);
+    if (!migrated) continue;
+    if (existingIds.has(migrated.id)) {
+      const idx = chars.findIndex((c) => c.id === migrated.id);
+      if (idx !== -1) chars[idx] = migrated;
     } else {
-      chars.push(ch);
-      existingIds.add(ch.id);
+      chars.push(migrated);
+      existingIds.add(migrated.id);
     }
   }
   saveCharactersFile(chars);
@@ -1062,7 +1504,7 @@ app.get("*", (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
-app.listen(PORT, "0.0.0.0", () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Web UI: http://localhost:${PORT}`);
   const nets = require("os").networkInterfaces();
   for (const ifaces of Object.values(nets)) {
@@ -1073,4 +1515,14 @@ app.listen(PORT, "0.0.0.0", () => {
     }
   }
   console.log(`LM Studio base: ${LMSTUDIO_BASE_URL}`);
+});
+
+server.on("error", (err) => {
+  if (err && err.code === "EADDRINUSE") {
+    console.error(`Port ${PORT} is already in use. If the app is already running, open http://localhost:${PORT}`);
+    process.exit(1);
+  }
+
+  console.error("Failed to start server:", err);
+  process.exit(1);
 });
