@@ -11,7 +11,10 @@
     responseIdChains: "nlmw.lmstudioResponseIdChains",
     provider: "nlmw.provider",
     mistralKey: "nlmw.mistralKey",
-    savedPrompts: "nlmw.savedPrompts"
+    savedPrompts: "nlmw.savedPrompts",
+    promptFolders: "nlmw.promptFolders",
+    groupChats: "nlmw.groupChats",
+    activeGroupChatId: "nlmw.activeGroupChatId"
   };
 
   const DIALOGUE_STYLES = [
@@ -44,12 +47,18 @@
     provider: "lmstudio",
     mistralKey: "",
     savedPrompts: [],
+    promptFolders: [],
+    promptActiveFolder: "__all__",
+    editingPromptId: null,
     lmOk: false,
     generating: false,
     msgActionsTargetId: "",
     view: "chats",
     discoverTab: "explore",
-    discoverCategory: "all"
+    discoverCategory: "all",
+    groupChats: [],
+    activeGroupChatId: "",
+    chatsSubTab: "personal"
   };
 
   function safeJsonParse(text) {
@@ -224,6 +233,7 @@
     state.provider = String(loadJson(STORAGE_KEYS.provider, "lmstudio"));
     state.mistralKey = String(loadJson(STORAGE_KEYS.mistralKey, ""));
     state.savedPrompts = loadJson(STORAGE_KEYS.savedPrompts, []);
+    state.promptFolders = loadJson(STORAGE_KEYS.promptFolders, []);
 
     if (state.provider !== "lmstudio" && state.provider !== "mistral") {
       state.provider = "lmstudio";
@@ -256,6 +266,7 @@
     if (!state.responseIds || typeof state.responseIds !== "object" || Array.isArray(state.responseIds)) state.responseIds = {};
     if (!state.responseIdChains || typeof state.responseIdChains !== "object" || Array.isArray(state.responseIdChains)) state.responseIdChains = {};
     if (!Array.isArray(state.savedPrompts)) state.savedPrompts = [];
+    if (!Array.isArray(state.promptFolders)) state.promptFolders = [];
 
     // Normalize conversations to support multiple chats per character.
     const normalizedConversations = {};
@@ -318,11 +329,21 @@
         id: typeof x.id === "string" && x.id.trim() ? x.id.trim() : uuid(),
         title: clampText(String(x.title || "").trim() || "Промт", 80),
         text: clampText(String(x.text || "").trim(), 4000),
+        folderId: typeof x.folderId === "string" ? x.folderId : "",
         createdAt: typeof x.createdAt === "number" && Number.isFinite(x.createdAt) ? x.createdAt : nowTs(),
         updatedAt: typeof x.updatedAt === "number" && Number.isFinite(x.updatedAt) ? x.updatedAt : nowTs()
       }))
       .filter((x) => x.text);
     saveJson(STORAGE_KEYS.savedPrompts, state.savedPrompts);
+
+    state.promptFolders = state.promptFolders
+      .filter((x) => x && typeof x === "object")
+      .map((x) => ({
+        id: typeof x.id === "string" && x.id.trim() ? x.id.trim() : uuid(),
+        name: clampText(String(x.name || "").trim() || "Папка", 40),
+        createdAt: typeof x.createdAt === "number" && Number.isFinite(x.createdAt) ? x.createdAt : nowTs()
+      }));
+    saveJson(STORAGE_KEYS.promptFolders, state.promptFolders);
   }
 
   function normalizeImportedCharacter(raw) {
@@ -386,7 +407,8 @@
       setting: scenario,
       backstory,
       dialogueStyle: normalizeDialogueStyleId(obj.dialogueStyle ?? obj.dialogue_style_id ?? "", dialogueStyleText),
-      initialMessage: greeting
+      initialMessage: greeting,
+      source_url: String(obj.source_url ?? obj.sourceUrl ?? "").trim()
     });
 
     return out;
@@ -408,6 +430,10 @@
     if (!items.length) return { imported: 0, firstId: "" };
 
     const existingIds = new Set(state.characters.map((c) => c.id));
+    // Collect existing source_urls to prevent duplicate imports
+    const existingSourceUrls = new Set(
+      state.characters.map((c) => c.source_url).filter(Boolean)
+    );
     let imported = 0;
     let firstId = "";
 
@@ -415,12 +441,16 @@
       const c = normalizeImportedCharacter(raw);
       if (!c) continue;
 
+      // Skip if a character with the same source_url already exists
+      if (c.source_url && existingSourceUrls.has(c.source_url)) continue;
+
       // Avoid id collisions.
       let id = c.id;
       if (!id || existingIds.has(id)) id = uuid();
       c.id = id;
       if (!firstId) firstId = id;
       existingIds.add(id);
+      if (c.source_url) existingSourceUrls.add(c.source_url);
 
       c.createdAt = nowTs();
       c.updatedAt = nowTs();
@@ -459,7 +489,8 @@
         modelId: state.modelId,
         provider: state.provider,
         mistralKey: state.mistralKey,
-        savedPrompts: state.savedPrompts
+        savedPrompts: state.savedPrompts,
+        promptFolders: state.promptFolders
       }
     };
   }
@@ -487,6 +518,7 @@
     saveJson(STORAGE_KEYS.provider, src.provider === "mistral" ? "mistral" : "lmstudio");
     saveJson(STORAGE_KEYS.mistralKey, String(src.mistralKey || ""));
     saveJson(STORAGE_KEYS.savedPrompts, Array.isArray(src.savedPrompts) ? src.savedPrompts : []);
+    saveJson(STORAGE_KEYS.promptFolders, Array.isArray(src.promptFolders) ? src.promptFolders : []);
 
     ensureSeed();
     if (!state.characters.some((c) => c.id === state.editingCharacterId)) {
@@ -1072,26 +1104,6 @@
     const shell = document.createElement("div");
     shell.className = "discoverShell";
 
-    const categoriesRow = document.createElement("div");
-    categoriesRow.className = "discoverCategories";
-    for (const category of categories) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "discoverCategories__item";
-      if (state.discoverCategory === category.id) btn.classList.add("discoverCategories__item--active");
-      if (category.icon) btn.classList.add("has-icon");
-      btn.textContent = category.label;
-      btn.addEventListener("click", () => {
-        state.discoverCategory = category.id;
-        renderChatList($("#chatSearch")?.value || "");
-      });
-      categoriesRow.appendChild(btn);
-    }
-    shell.appendChild(categoriesRow);
-
-    const grid = document.createElement("div");
-    grid.className = "discoverGrid";
-
     const items = chars
       .map((character) => {
         const snapshot = latestChatSnapshotForCharacter(character.id);
@@ -1106,107 +1118,75 @@
       .sort((a, b) => (b.time || 0) - (a.time || 0));
 
     const visible = items.filter((item) => {
-      if (state.discoverTab === "following" && !isStartedCharacter(item.snapshot)) return false;
-      if (state.discoverCategory === "romance" && !isRomanceCharacter(item.character)) return false;
-      if (state.discoverCategory !== "all" && state.discoverCategory !== "romance") {
-        const tagKeys = item.tags.map((tag) => normalizeTagToken(tag));
-        if (!tagKeys.includes(state.discoverCategory)) return false;
-      }
-
       const searchable = `${item.character.name || ""} ${item.summary} ${item.tags.join(" ")}`.toLowerCase();
       return !q || searchable.includes(q);
     });
 
-    for (const item of visible) {
-      const { character, snapshot, summary, tags } = item;
+    {
+      // Messenger-style list for chats
+      const list = document.createElement("div");
+      list.className = "messengerList";
 
-      const card = document.createElement("button");
-      card.type = "button";
-      card.className = "discoverCard";
+      let lastDateGroup = null;
+      for (const item of visible) {
+        const { character, snapshot } = item;
+        const group = getDateGroup(item.time);
+        if (group && group !== lastDateGroup) {
+          const sep = document.createElement("div");
+          sep.className = "messengerList__dateSep";
+          sep.textContent = group;
+          list.appendChild(sep);
+          lastDateGroup = group;
+        }
 
-      const media = document.createElement("div");
-      media.className = "discoverCard__media";
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "messengerItem";
 
-      const image = document.createElement("img");
-      image.className = "discoverCard__image";
-      setImg(image, getBestCharacterDisplayImage(character), character.name);
+        const avatar = document.createElement("img");
+        avatar.className = "messengerItem__avatar";
+        setImg(avatar, getBestCharacterDisplayImage(character), character.name);
 
-      const overlay = document.createElement("div");
-      overlay.className = "discoverCard__overlay";
+        const info = document.createElement("div");
+        info.className = "messengerItem__info";
 
-      const metric = document.createElement("div");
-      metric.className = "discoverCard__metric";
-      metric.innerHTML =
-        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8A8.5 8.5 0 0 1 12.5 20a8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.8-7.6A8.38 8.38 0 0 1 12.5 3a8.5 8.5 0 0 1 8.5 8.5Z"/></svg>';
-      const metricText = document.createElement("span");
-      metricText.textContent = characterMetricLabel(snapshot);
-      metric.appendChild(metricText);
+        const name = document.createElement("div");
+        name.className = "messengerItem__name";
+        name.textContent = character.name || "(без имени)";
 
-      const time = document.createElement("div");
-      time.className = "discoverCard__time";
-      time.textContent = formatListTime(item.time);
+        const preview = document.createElement("div");
+        preview.className = "messengerItem__preview";
+        preview.textContent = messengerPreview(character, snapshot);
 
-      overlay.appendChild(metric);
-      overlay.appendChild(time);
-      media.appendChild(image);
-      media.appendChild(overlay);
+        info.appendChild(name);
+        info.appendChild(preview);
 
-      const body = document.createElement("div");
-      body.className = "discoverCard__body";
+        const menuBtn = document.createElement("button");
+        menuBtn.type = "button";
+        menuBtn.className = "messengerItem__menuBtn";
+        menuBtn.innerHTML = "&#x2026;";
+        menuBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          showMessengerMenu(character, e);
+        });
 
-      const titleRow = document.createElement("div");
-      titleRow.className = "discoverCard__titleRow";
+        row.appendChild(avatar);
+        row.appendChild(info);
+        row.appendChild(menuBtn);
+        row.addEventListener("click", () => openCharacterChat(character.id, snapshot.chat?.id || ""));
+        list.appendChild(row);
+      }
 
-      const title = document.createElement("div");
-      title.className = "discoverCard__title";
-      title.textContent = character.name || "(без имени)";
-
-      const bookmark = document.createElement("div");
-      bookmark.className = "discoverCard__bookmark";
-      bookmark.innerHTML =
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-6-3-6 3z"/></svg>';
-
-      titleRow.appendChild(title);
-      titleRow.appendChild(bookmark);
-
-      const desc = document.createElement("div");
-      desc.className = "discoverCard__desc";
-      desc.textContent = summary;
-
-      const tagsWrap = document.createElement("div");
-      tagsWrap.className = "discoverCard__tags";
-      const visibleTags = tags.slice(0, 4);
-      if (visibleTags.length === 0) visibleTags.push(styleById(character.dialogueStyle).label);
-      visibleTags.forEach((tag, idx) => {
-        const pill = document.createElement("span");
-        pill.className = `discoverCard__tag${idx === 0 ? " discoverCard__tag--accent" : ""}`;
-        pill.textContent = tag;
-        tagsWrap.appendChild(pill);
-      });
-
-      body.appendChild(titleRow);
-      body.appendChild(desc);
-      body.appendChild(tagsWrap);
-
-      card.appendChild(media);
-      card.appendChild(body);
-      card.addEventListener("click", () => openCharacterChat(character.id, snapshot.chat?.id || ""));
-      grid.appendChild(card);
+      shell.appendChild(list);
     }
-
-    shell.appendChild(grid);
     el.appendChild(shell);
 
     if (visible.length === 0) {
       const empty = document.createElement("div");
       empty.className = "chatList__empty";
-      if (q) {
-        empty.textContent = "Ничего не найдено по этому запросу.";
-      } else if (state.discoverTab === "following") {
-        empty.textContent = "Здесь появятся персонажи, с которыми вы уже начали диалог.";
-      } else {
-        empty.textContent = "Нет персонажей. Откройте импорт и загрузите карточки Polybuzz.";
-      }
+      empty.textContent = q
+        ? "Ничего не найдено по этому запросу."
+        : "Нет персонажей. Откройте импорт и загрузите карточки Polybuzz.";
       el.appendChild(empty);
     }
   }
@@ -1352,6 +1332,680 @@
     fetch("/api/characters/" + encodeURIComponent(id), { method: "DELETE" }).catch(() => {});
   }
 
+  // ── Group Chats ──
+
+  function defaultGroupChat() {
+    return {
+      id: uuid(),
+      title: "Групповой чат",
+      characterIds: [],
+      messages: [],
+      createdAt: nowTs(),
+      updatedAt: nowTs()
+    };
+  }
+
+  function normalizeGroupChat(raw) {
+    if (!raw || typeof raw !== "object") return defaultGroupChat();
+    return {
+      id: typeof raw.id === "string" && raw.id.trim() ? raw.id : uuid(),
+      title: String(raw.title || "Групповой чат").trim(),
+      characterIds: Array.isArray(raw.characterIds) ? raw.characterIds.filter((x) => typeof x === "string" && x.trim()) : [],
+      messages: Array.isArray(raw.messages) ? raw.messages : [],
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : nowTs(),
+      updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : nowTs()
+    };
+  }
+
+  function loadGroupChats() {
+    const raw = loadJson(STORAGE_KEYS.groupChats, []);
+    state.groupChats = Array.isArray(raw) ? raw.map(normalizeGroupChat) : [];
+    state.activeGroupChatId = String(loadJson(STORAGE_KEYS.activeGroupChatId, ""));
+  }
+
+  function saveGroupChats() {
+    saveJson(STORAGE_KEYS.groupChats, state.groupChats);
+  }
+
+  function saveActiveGroupChatId() {
+    saveJson(STORAGE_KEYS.activeGroupChatId, state.activeGroupChatId);
+  }
+
+  function activeGroupChat() {
+    return state.groupChats.find((g) => g.id === state.activeGroupChatId) || null;
+  }
+
+  function createGroupChat(title, characterIds) {
+    const gc = normalizeGroupChat({
+      title: title || "Групповой чат",
+      characterIds
+    });
+    state.groupChats.unshift(gc);
+    state.activeGroupChatId = gc.id;
+    saveGroupChats();
+    saveActiveGroupChatId();
+
+    // Add initial greeting messages from all characters
+    const msgs = [];
+    for (const cid of gc.characterIds) {
+      const ch = state.characters.find((c) => c.id === cid);
+      if (!ch) continue;
+      const initial = (ch.initialMessage || "").trim();
+      const content = initial || `Привет. Я ${ch.name}.`;
+      msgs.push({ id: uuid(), role: "assistant", characterId: cid, content, ts: nowTs() + msgs.length });
+    }
+    gc.messages = msgs;
+    gc.updatedAt = nowTs();
+    saveGroupChats();
+    return gc;
+  }
+
+  function deleteGroupChat(gcId) {
+    state.groupChats = state.groupChats.filter((g) => g.id !== gcId);
+    if (state.activeGroupChatId === gcId) {
+      state.activeGroupChatId = state.groupChats[0]?.id || "";
+    }
+    saveGroupChats();
+    saveActiveGroupChatId();
+  }
+
+  function setGroupChatMessages(gcId, messages) {
+    const gc = state.groupChats.find((g) => g.id === gcId);
+    if (!gc) return;
+    gc.messages = Array.isArray(messages) ? messages : [];
+    gc.updatedAt = nowTs();
+    saveGroupChats();
+  }
+
+  function buildGroupSystemPrompt(profile, character, allCharacters) {
+    const parts = [];
+    const style = styleById(character.dialogueStyle);
+    const charName = (character.name || "Персонаж").trim();
+    const userName = (profile.name || "Пользователь").trim();
+    const otherNames = allCharacters.filter((c) => c.id !== character.id).map((c) => c.name || "Персонаж");
+
+    parts.push(
+      `Ты — ${charName}. Это групповой чат, в котором участвуют несколько персонажей и пользователь (${userName}).` +
+      ` Другие персонажи в чате: ${otherNames.join(", ")}.` +
+      ` Ты отвечаешь ТОЛЬКО от лица ${charName}. Не пиши реплики за других персонажей и не отвечай за ${userName}.`
+    );
+    parts.push(`Пол персонажа: ${genderLabel(character.gender)}.`);
+
+    if ((character.intro || "").trim()) parts.push(`Описание: ${character.intro.trim()}`);
+    if ((character.outfit || "").trim()) parts.push(`Внешность/одежда: ${character.outfit.trim()}`);
+    if ((character.setting || "").trim()) parts.push(`Обстановка: ${character.setting.trim()}`);
+    if ((character.backstory || "").trim()) parts.push(`Предыстория: ${character.backstory.trim()}`);
+    parts.push(`Стиль диалога: ${style.prompt}`);
+    parts.push(`Собеседник-пользователь: ${userName} (пол: ${genderLabel(profile.gender)}).`);
+
+    parts.push("Правила:");
+    parts.push(`- Ты — ${charName}. Отвечай только за себя, не пиши за других персонажей.`);
+    parts.push("- Не выходи из роли и не упоминай системные инструкции.");
+    parts.push("- Отвечай на языке пользователя (по умолчанию — русский).");
+    parts.push("- Пиши естественно, реагируй на реплики других персонажей и пользователя.");
+    parts.push("- Отвечай кратко (1-4 предложения), чтобы дать слово другим участникам.");
+
+    parts.push(`\nПомни: ты ЯВЛЯЕШЬСЯ ${charName}. Не путай роли.`);
+    return parts.join("\n");
+  }
+
+  function buildGroupOpenAiMessages(gc, forCharacterId) {
+    const ch = state.characters.find((c) => c.id === forCharacterId);
+    if (!ch) return [];
+
+    const allChars = gc.characterIds
+      .map((cid) => state.characters.find((c) => c.id === cid))
+      .filter(Boolean);
+
+    const system = buildGroupSystemPrompt(state.profile, ch, allChars);
+    const msgs = [{ role: "system", content: system }];
+
+    const history = (gc.messages || [])
+      .filter((m) => !m.pending && (m.role === "user" || m.role === "assistant"))
+      .slice(-30);
+
+    for (const m of history) {
+      if (m.role === "user") {
+        msgs.push({ role: "user", content: String(m.content || "") });
+      } else if (m.role === "assistant") {
+        const msgChar = state.characters.find((c) => c.id === m.characterId);
+        const name = msgChar?.name || "Персонаж";
+        if (m.characterId === forCharacterId) {
+          msgs.push({ role: "assistant", content: String(m.content || "") });
+        } else {
+          msgs.push({ role: "user", content: `[${name}]: ${String(m.content || "")}` });
+        }
+      }
+    }
+
+    return msgs;
+  }
+
+  // ── Multi-Chat UI ──
+
+  function syncChatsSubTabs() {
+    const btnPersonal = $("#subTabPersonal");
+    const btnMulti = $("#subTabMulti");
+    if (btnPersonal) btnPersonal.classList.toggle("chatsSubTabs__btn--active", state.chatsSubTab === "personal");
+    if (btnMulti) btnMulti.classList.toggle("chatsSubTabs__btn--active", state.chatsSubTab === "multi");
+  }
+
+  function renderGroupChatList(filterText) {
+    const el = $("#chatList");
+    if (!el) return;
+    el.innerHTML = "";
+    const q = String(filterText || "").trim().toLowerCase();
+
+    const shell = document.createElement("div");
+    shell.className = "discoverShell";
+
+    // "Create new multi-chat" button
+    const createBtn = document.createElement("button");
+    createBtn.type = "button";
+    createBtn.className = "multiCreateBtn";
+    createBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:20px;height:20px;flex-shrink:0"><path d="M12 5v14"/><path d="M5 12h14"/></svg> <span>Создать мульти-чат</span>';
+    createBtn.addEventListener("click", () => openMultiChatModal());
+    shell.appendChild(createBtn);
+
+    const list = document.createElement("div");
+    list.className = "messengerList";
+
+    const gcs = state.groupChats.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+    let visibleCount = 0;
+    for (const gc of gcs) {
+      const chars = gc.characterIds
+        .map((cid) => state.characters.find((c) => c.id === cid))
+        .filter(Boolean);
+      const names = chars.map((c) => c.name || "?").join(", ");
+      const searchable = `${gc.title} ${names}`.toLowerCase();
+      if (q && !searchable.includes(q)) continue;
+      visibleCount++;
+
+      const lastMsg = gc.messages[gc.messages.length - 1];
+      const preview = lastMsg ? clampText(cleanOneLineText(lastMsg.content || ""), 80) : "Нет сообщений";
+
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "messengerItem";
+
+      // Stacked avatars
+      const avatarWrap = document.createElement("div");
+      avatarWrap.className = "groupAvatarStack";
+      const showChars = chars.slice(0, 3);
+      showChars.forEach((ch, i) => {
+        const img = document.createElement("img");
+        img.className = "groupAvatarStack__img";
+        img.style.zIndex = String(showChars.length - i);
+        setImg(img, getBestCharacterDisplayImage(ch), ch.name);
+        avatarWrap.appendChild(img);
+      });
+      if (chars.length > 3) {
+        const more = document.createElement("span");
+        more.className = "groupAvatarStack__more";
+        more.textContent = `+${chars.length - 3}`;
+        avatarWrap.appendChild(more);
+      }
+
+      const info = document.createElement("div");
+      info.className = "messengerItem__info";
+
+      const nameEl = document.createElement("div");
+      nameEl.className = "messengerItem__name";
+      nameEl.textContent = gc.title || "Мульти-чат";
+
+      const previewEl = document.createElement("div");
+      previewEl.className = "messengerItem__preview";
+      previewEl.textContent = preview;
+
+      info.appendChild(nameEl);
+      info.appendChild(previewEl);
+
+      const menuBtn = document.createElement("button");
+      menuBtn.type = "button";
+      menuBtn.className = "messengerItem__menuBtn";
+      menuBtn.innerHTML = "&#x2026;";
+      menuBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        showGroupChatMenu(gc, e);
+      });
+
+      row.appendChild(avatarWrap);
+      row.appendChild(info);
+      row.appendChild(menuBtn);
+      row.addEventListener("click", () => openGroupChat(gc.id));
+      list.appendChild(row);
+    }
+
+    shell.appendChild(list);
+    el.appendChild(shell);
+
+    if (visibleCount === 0 && gcs.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "chatList__empty";
+      empty.textContent = "Нет мульти-чатов. Создайте первый!";
+      el.appendChild(empty);
+    }
+  }
+
+  function showGroupChatMenu(gc, event) {
+    closeMessengerDropdown();
+    const overlay = document.createElement("div");
+    overlay.className = "messengerDropdown__overlay";
+    overlay.addEventListener("click", closeMessengerDropdown);
+
+    const menu = document.createElement("div");
+    menu.className = "messengerDropdown";
+
+    const btnOpen = document.createElement("button");
+    btnOpen.type = "button";
+    btnOpen.className = "messengerDropdown__item";
+    btnOpen.textContent = "Открыть чат";
+    btnOpen.addEventListener("click", () => { closeMessengerDropdown(); openGroupChat(gc.id); });
+
+    const btnDelete = document.createElement("button");
+    btnDelete.type = "button";
+    btnDelete.className = "messengerDropdown__item messengerDropdown__item--danger";
+    btnDelete.textContent = "Удалить";
+    btnDelete.addEventListener("click", () => {
+      closeMessengerDropdown();
+      if (!window.confirm("Удалить этот мульти-чат?")) return;
+      deleteGroupChat(gc.id);
+      refreshChatsView();
+    });
+
+    menu.appendChild(btnOpen);
+    menu.appendChild(btnDelete);
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    menu.style.position = "fixed";
+    menu.style.top = rect.bottom + "px";
+    menu.style.right = (window.innerWidth - rect.right) + "px";
+
+    document.body.appendChild(overlay);
+    document.body.appendChild(menu);
+  }
+
+  function openGroupChat(gcId) {
+    state.activeGroupChatId = gcId;
+    saveActiveGroupChatId();
+    renderGroupChatHeader();
+    renderGroupMessages();
+    setView("groupchat");
+  }
+
+  function renderGroupChatHeader() {
+    const gc = activeGroupChat();
+    if (!gc) return;
+    const chars = gc.characterIds
+      .map((cid) => state.characters.find((c) => c.id === cid))
+      .filter(Boolean);
+
+    const nameEl = $("#groupChatName");
+    const metaEl = $("#groupChatMeta");
+    const avatarsEl = $("#groupAvatars");
+    if (nameEl) nameEl.textContent = gc.title || "Мульти-чат";
+    if (metaEl) metaEl.textContent = chars.map((c) => c.name).join(", ");
+
+    if (avatarsEl) {
+      avatarsEl.innerHTML = "";
+      chars.slice(0, 4).forEach((ch) => {
+        const img = document.createElement("img");
+        img.className = "groupAvatars__img";
+        setImg(img, getBestCharacterDisplayImage(ch), ch.name);
+        avatarsEl.appendChild(img);
+      });
+    }
+  }
+
+  function renderGroupMessages() {
+    const gc = activeGroupChat();
+    const list = $("#groupMessages");
+    if (!list || !gc) return;
+    list.innerHTML = "";
+
+    const disclaimer = document.createElement("div");
+    disclaimer.className = "chatDisclaimer";
+    disclaimer.textContent = "Мульти-чат: все персонажи отвечают по очереди.";
+    list.appendChild(disclaimer);
+
+    for (const m of gc.messages) {
+      const row = document.createElement("div");
+
+      if (m.role === "user") {
+        row.className = "msg msg--me";
+
+        const avatar = document.createElement("img");
+        avatar.className = "avatar avatar--me";
+        setImg(avatar, state.profile?.avatar, state.profile?.name);
+
+        const bubbleWrap = document.createElement("div");
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        renderBubbleContent(bubble, m.content, { role: "user", characterName: "" });
+
+        const meta = document.createElement("div");
+        meta.className = "msg__meta";
+        meta.textContent = m.ts ? formatTime(m.ts) : "";
+
+        bubbleWrap.appendChild(bubble);
+        bubbleWrap.appendChild(meta);
+        row.appendChild(bubbleWrap);
+        row.appendChild(avatar);
+      } else {
+        const ch = state.characters.find((c) => c.id === m.characterId);
+        row.className = "msg msg--group";
+
+        const avatar = document.createElement("img");
+        avatar.className = "avatar";
+        setImg(avatar, ch ? getBestCharacterDisplayImage(ch) : "", ch?.name || "?");
+
+        const bubbleWrap = document.createElement("div");
+
+        const charLabel = document.createElement("div");
+        charLabel.className = "msg__charName";
+        charLabel.textContent = ch?.name || "Персонаж";
+
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        if (m.pending) {
+          bubble.textContent = "...";
+          bubble.classList.add("bubble--pending");
+        } else {
+          renderBubbleContent(bubble, m.content, { role: "assistant", characterName: ch?.name || "" });
+        }
+
+        const meta = document.createElement("div");
+        meta.className = "msg__meta";
+        meta.textContent = m.ts ? formatTime(m.ts) : "";
+
+        bubbleWrap.appendChild(charLabel);
+        bubbleWrap.appendChild(bubble);
+        bubbleWrap.appendChild(meta);
+        row.appendChild(avatar);
+        row.appendChild(bubbleWrap);
+      }
+
+      row.dataset.msgId = m.id;
+      list.appendChild(row);
+    }
+
+    requestAnimationFrame(() => {
+      list.scrollTop = list.scrollHeight;
+    });
+  }
+
+  function getGroupStreamingBubble(msgId) {
+    const list = $("#groupMessages");
+    if (!list) return null;
+    const row = list.querySelector(`[data-msg-id="${msgId}"]`);
+    return row ? row.querySelector(".bubble") : null;
+  }
+
+  async function sendGroupMessage(userText) {
+    const gc = activeGroupChat();
+    if (!gc) return;
+    if (!state.lmOk) {
+      const hint = $("#groupComposerHint");
+      if (hint) hint.textContent = `${providerLabel()} недоступна.`;
+      return;
+    }
+    if (state.generating) return;
+
+    // Add user message
+    const userMsg = { id: uuid(), role: "user", content: userText, ts: nowTs() };
+    gc.messages.push(userMsg);
+    gc.updatedAt = nowTs();
+    saveGroupChats();
+    renderGroupMessages();
+
+    setGenerating(true);
+    const hint = $("#groupComposerHint");
+    if (hint) hint.textContent = "Генерирую ответы...";
+
+    // Each character responds sequentially
+    for (const cid of gc.characterIds) {
+      const ch = state.characters.find((c) => c.id === cid);
+      if (!ch) continue;
+
+      const placeholderId = uuid();
+      const placeholder = { id: placeholderId, role: "assistant", characterId: cid, content: "...", ts: nowTs(), pending: true };
+      gc.messages.push(placeholder);
+      saveGroupChats();
+      renderGroupMessages();
+
+      try {
+        let content;
+
+        if (state.provider === "mistral") {
+          const messages = buildGroupOpenAiMessages(gc, cid);
+          const bubble = getGroupStreamingBubble(placeholderId);
+          const listEl = $("#groupMessages");
+
+          // Stream manually for group chat
+          const headers = { "Content-Type": "application/json" };
+          if (state.mistralKey) headers["X-Mistral-Key"] = state.mistralKey;
+          const payload = {
+            model: state.modelId || "mistral-small-latest",
+            messages,
+            temperature: 0.75,
+            stream: true
+          };
+          const res = await fetch("/api/mistral/chat", { method: "POST", headers, body: JSON.stringify(payload) });
+          if (!res.ok) {
+            const text = await res.text();
+            const data = safeJsonParse(text);
+            throw new Error(data?.error?.message || data?.error || `Mistral error (${res.status})`);
+          }
+
+          let generated = "";
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || !trimmed.startsWith("data:")) continue;
+              const jsonStr = trimmed.slice(5).trim();
+              if (jsonStr === "[DONE]") continue;
+              const chunk = safeJsonParse(jsonStr);
+              if (!chunk) continue;
+              const delta = chunk.choices?.[0]?.delta?.content;
+              if (typeof delta === "string") {
+                generated += delta;
+                if (bubble) {
+                  renderBubbleContent(bubble, generated, { role: "assistant", characterName: ch.name });
+                  if (listEl) listEl.scrollTop = listEl.scrollHeight;
+                }
+              }
+            }
+          }
+          content = generated.trim() || "(пустой ответ)";
+        } else {
+          // LM Studio
+          const allChars = gc.characterIds.map((id) => state.characters.find((c) => c.id === id)).filter(Boolean);
+          const systemPrompt = buildGroupSystemPrompt(state.profile, ch, allChars);
+
+          // Build input text from recent messages
+          const recentMsgs = gc.messages.filter((m) => !m.pending).slice(-20);
+          const inputLines = [];
+          for (const m of recentMsgs) {
+            if (m.role === "user") {
+              inputLines.push(`${state.profile?.name || "Пользователь"}: ${m.content}`);
+            } else {
+              const mc = state.characters.find((c) => c.id === m.characterId);
+              inputLines.push(`${mc?.name || "Персонаж"}: ${m.content}`);
+            }
+          }
+          const inputText = inputLines.join("\n");
+
+          const bubble = getGroupStreamingBubble(placeholderId);
+          const listEl = $("#groupMessages");
+
+          const payload = {
+            api: "rest",
+            model: state.modelId || "local-model",
+            input: inputText,
+            temperature: 0.75,
+            stream: true,
+            store: false,
+            system_prompt: systemPrompt
+          };
+          const res = await fetch("/api/lmstudio/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) {
+            const text = await res.text();
+            const data = safeJsonParse(text);
+            throw new Error(data?.error || `LM Studio error (${res.status})`);
+          }
+
+          let generated = "";
+          const contentType = res.headers.get("content-type") || "";
+          if (contentType.includes("text/event-stream") && res.body) {
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = "";
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buf += decoder.decode(value, { stream: true });
+              const lines = buf.split("\n");
+              buf = lines.pop() || "";
+              for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || !trimmed.startsWith("data:")) continue;
+                const jsonStr = trimmed.slice(5).trim();
+                if (jsonStr === "[DONE]") continue;
+                const chunk = safeJsonParse(jsonStr);
+                if (!chunk) continue;
+                // REST v1 streaming
+                if (chunk.type === "content.delta" && typeof chunk.delta === "string") {
+                  generated += chunk.delta;
+                } else if (chunk.choices?.[0]?.delta?.content) {
+                  generated += chunk.choices[0].delta.content;
+                } else if (chunk.type === "response.completed" && chunk.response) {
+                  const respText = extractRestMessagesFromResult(chunk.response);
+                  if (respText && !generated) generated = respText;
+                }
+                if (bubble) {
+                  renderBubbleContent(bubble, generated, { role: "assistant", characterName: ch.name });
+                  if (listEl) listEl.scrollTop = listEl.scrollHeight;
+                }
+              }
+            }
+          } else {
+            const text = await res.text();
+            const data = safeJsonParse(text);
+            generated = extractRestMessagesFromResult(data) || extractChatTextFromResponse(data) || "";
+          }
+          content = generated.trim() || "(пустой ответ)";
+        }
+
+        // Replace placeholder with final content
+        const idx = gc.messages.findIndex((m) => m.id === placeholderId);
+        if (idx >= 0) {
+          gc.messages[idx] = { id: placeholderId, role: "assistant", characterId: cid, content, ts: nowTs() };
+        }
+        gc.updatedAt = nowTs();
+        saveGroupChats();
+        renderGroupMessages();
+
+      } catch (err) {
+        const msg = String(err?.message || err || "Ошибка");
+        const idx = gc.messages.findIndex((m) => m.id === placeholderId);
+        if (idx >= 0) {
+          gc.messages[idx] = { id: placeholderId, role: "assistant", characterId: cid, content: `Ошибка: ${msg}`, ts: nowTs() };
+        }
+        gc.updatedAt = nowTs();
+        saveGroupChats();
+        renderGroupMessages();
+      }
+    }
+
+    setGenerating(false);
+    if (hint) hint.textContent = "";
+    refreshChatsView();
+  }
+
+  // Multi-chat modal
+  function openMultiChatModal() {
+    const modal = $("#multiChatModal");
+    if (!modal) return;
+    modal.hidden = false;
+
+    const titleInput = $("#multiChatTitle");
+    if (titleInput) titleInput.value = "";
+
+    const noteEl = $("#multiModalNote");
+    if (noteEl) noteEl.textContent = "";
+
+    renderMultiCharPicker();
+  }
+
+  function closeMultiChatModal() {
+    const modal = $("#multiChatModal");
+    if (modal) modal.hidden = true;
+  }
+
+  function renderMultiCharPicker() {
+    const el = $("#multiCharPicker");
+    if (!el) return;
+    el.innerHTML = "";
+
+    for (const ch of state.characters) {
+      const item = document.createElement("label");
+      item.className = "multiCharPicker__item";
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.className = "multiCharPicker__cb";
+      cb.value = ch.id;
+
+      const avatar = document.createElement("img");
+      avatar.className = "multiCharPicker__avatar";
+      setImg(avatar, getBestCharacterDisplayImage(ch), ch.name);
+
+      const name = document.createElement("span");
+      name.className = "multiCharPicker__name";
+      name.textContent = ch.name || "(без имени)";
+
+      item.appendChild(cb);
+      item.appendChild(avatar);
+      item.appendChild(name);
+      el.appendChild(item);
+    }
+  }
+
+  function createMultiChatFromModal() {
+    const titleInput = $("#multiChatTitle");
+    const noteEl = $("#multiModalNote");
+    const picker = $("#multiCharPicker");
+    if (!picker) return;
+
+    const selected = [];
+    picker.querySelectorAll(".multiCharPicker__cb:checked").forEach((cb) => {
+      selected.push(cb.value);
+    });
+
+    if (selected.length < 2) {
+      if (noteEl) noteEl.textContent = "Выберите минимум 2 персонажа.";
+      return;
+    }
+
+    const title = String(titleInput?.value || "").trim() || "Мульти-чат";
+    const gc = createGroupChat(title, selected);
+    closeMultiChatModal();
+    openGroupChat(gc.id);
+  }
+
   function setStatus(text, ok = true) {
     const el = $("#lmStatus");
     if (!el) return;
@@ -1377,12 +2031,14 @@
   }
 
   function setView(next) {
-    const v = next === "chat" || next === "profile" ? next : "chats";
+    const v = next === "chat" || next === "profile" || next === "polybuzz" || next === "groupchat" ? next : "chats";
     state.view = v;
 
     const views = {
       chats: $("#viewChats"),
       chat: $("#viewChat"),
+      groupchat: $("#viewGroupChat"),
+      polybuzz: $("#viewPolybuzz"),
       profile: $("#viewProfile")
     };
 
@@ -1394,21 +2050,29 @@
 
     const appbarChats = $("#appbarChats");
     const appbarChat = $("#appbarChat");
+    const appbarGroupChat = $("#appbarGroupChat");
+    const appbarPolybuzz = $("#appbarPolybuzz");
     const appbarProfile = $("#appbarProfile");
     if (appbarChats) appbarChats.hidden = v !== "chats";
     if (appbarChat) appbarChat.hidden = v !== "chat";
+    if (appbarGroupChat) appbarGroupChat.hidden = v !== "groupchat";
+    if (appbarPolybuzz) appbarPolybuzz.hidden = v !== "polybuzz";
     if (appbarProfile) appbarProfile.hidden = v !== "profile";
 
     const tChats = $("#tabChats");
+    const tPolybuzz = $("#tabPolybuzz");
     const tProfile = $("#tabProfile");
-    if (tChats) tChats.classList.toggle("tab--active", v === "chats" || v === "chat");
+    if (tChats) tChats.classList.toggle("tab--active", v === "chats" || v === "chat" || v === "groupchat");
+    if (tPolybuzz) tPolybuzz.classList.toggle("tab--active", v === "polybuzz");
     if (tProfile) tProfile.classList.toggle("tab--active", v === "profile");
 
     // Sidebar active state
     const sChats = $("#sideChats");
+    const sPolybuzz = $("#sidePolybuzz");
     const sProfile = $("#sideProfile");
     const sPlus = $("#sidePlus");
-    if (sChats) sChats.classList.toggle("sidebar__item--active", v === "chats" || v === "chat");
+    if (sChats) sChats.classList.toggle("sidebar__item--active", v === "chats" || v === "chat" || v === "groupchat");
+    if (sPolybuzz) sPolybuzz.classList.toggle("sidebar__item--active", v === "polybuzz");
     if (sProfile) sProfile.classList.toggle("sidebar__item--active", v === "profile");
     if (sPlus) sPlus.classList.toggle("sidebar__item--active", false);
 
@@ -1446,6 +2110,108 @@
     } catch {
       return "";
     }
+  }
+
+  function getDateGroup(ts) {
+    if (!ts) return "";
+    try {
+      const d = new Date(ts);
+      const now = new Date();
+      const sameDay =
+        d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+      if (sameDay) return "Сегодня";
+      const yesterday = new Date(now);
+      yesterday.setDate(yesterday.getDate() - 1);
+      if (
+        d.getFullYear() === yesterday.getFullYear() &&
+        d.getMonth() === yesterday.getMonth() &&
+        d.getDate() === yesterday.getDate()
+      )
+        return "Вчера";
+      return d.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+    } catch {
+      return "";
+    }
+  }
+
+  function messengerPreview(character, snapshot) {
+    if (snapshot?.last?.content) {
+      const text = cleanOneLineText(snapshot.last.content);
+      if (text) return clampText(text, 80);
+    }
+    return characterSummary(character, snapshot);
+  }
+
+  function closeMessengerDropdown() {
+    document.querySelectorAll(".messengerDropdown, .messengerDropdown__overlay").forEach((el) => el.remove());
+  }
+
+  function showMessengerMenu(character, event) {
+    closeMessengerDropdown();
+    const rect = event.currentTarget.getBoundingClientRect();
+
+    const overlay = document.createElement("div");
+    overlay.className = "messengerDropdown__overlay";
+    overlay.addEventListener("click", closeMessengerDropdown);
+
+    const menu = document.createElement("div");
+    menu.className = "messengerDropdown";
+
+    const btnOpen = document.createElement("button");
+    btnOpen.type = "button";
+    btnOpen.className = "messengerDropdown__item";
+    btnOpen.textContent = "Открыть чат";
+    btnOpen.addEventListener("click", () => {
+      closeMessengerDropdown();
+      const snap = latestChatSnapshotForCharacter(character.id);
+      openCharacterChat(character.id, snap.chat?.id || "");
+    });
+
+    const btnSettings = document.createElement("button");
+    btnSettings.type = "button";
+    btnSettings.className = "messengerDropdown__item";
+    btnSettings.textContent = "Настройки персонажа";
+    btnSettings.addEventListener("click", () => {
+      closeMessengerDropdown();
+      state.editingCharacterId = character.id;
+      fillCharacterForm();
+      const modal = $("#charactersModal");
+      if (modal) modal.hidden = false;
+    });
+
+    const btnDelete = document.createElement("button");
+    btnDelete.type = "button";
+    btnDelete.className = "messengerDropdown__item messengerDropdown__item--danger";
+    btnDelete.textContent = "Удалить";
+    btnDelete.addEventListener("click", () => {
+      closeMessengerDropdown();
+      if (state.characters.length <= 1) {
+        alert("Нельзя удалить последнего персонажа.");
+        return;
+      }
+      if (!window.confirm(`Удалить персонажа "${character.name}"?`)) return;
+      deleteCharacter(character.id);
+      ensureInitialMessage();
+      renderHeader();
+      renderMessages();
+      renderChatList($("#chatSearch")?.value || "");
+    });
+
+    menu.appendChild(btnOpen);
+    menu.appendChild(btnSettings);
+    menu.appendChild(btnDelete);
+
+    document.body.appendChild(overlay);
+    document.body.appendChild(menu);
+
+    // Position the dropdown
+    const menuW = 190;
+    let left = rect.right - menuW;
+    let top = rect.bottom + 4;
+    if (left < 8) left = 8;
+    if (top + 160 > window.innerHeight) top = rect.top - 160;
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
   }
 
   function autoGrowTextarea(el) {
@@ -1661,7 +2427,7 @@
     return { history, idx, msg: idx >= 0 ? history[idx] : null };
   }
 
-  function openMsgActions(msgId) {
+  function openMsgActions(msgId, pointerEvent) {
     const ch = activeCharacter();
     if (!ch) return;
 
@@ -1670,24 +2436,71 @@
 
     state.msgActionsTargetId = msgId;
 
-    const who = msg.role === "user" ? (state.profile?.name || "Вы") : (ch.name || "Персонаж");
-    const title = `Сообщение: ${who}`;
-    const titleEl = $("#msgActionsTitle");
-    if (titleEl) titleEl.textContent = title;
+    const menu = $("#ctxMenu");
+    const popup = $("#ctxMenuPopup");
+    const btnEdit = $("#ctxEdit");
+    if (!menu || !popup) return;
 
-    const sheet = $("#msgActions");
-    if (sheet) sheet.hidden = false;
-
+    // Only show edit for user messages and when not generating
     const disabled = !!msg.pending || state.generating;
-    const btnEdit = $("#btnMsgEdit");
-    const btnDel = $("#btnMsgDelete");
-    if (btnEdit) btnEdit.disabled = disabled;
-    if (btnDel) btnDel.disabled = disabled;
+    if (btnEdit) {
+      btnEdit.hidden = msg.role !== "user" || disabled;
+    }
+
+    menu.hidden = false;
+
+    // Position the popup near the message bubble
+    const bubbleEl = document.querySelector(`.msg[data-msg-id="${msgId}"] .bubble`);
+    const rect = bubbleEl ? bubbleEl.getBoundingClientRect() : null;
+
+    requestAnimationFrame(() => {
+      const popW = popup.offsetWidth;
+      const popH = popup.offsetHeight;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const pad = 12;
+
+      let x, y;
+      if (rect) {
+        // Place above or below the bubble, aligned to its horizontal center
+        const cx = rect.left + rect.width / 2;
+        x = Math.max(pad, Math.min(cx - popW / 2, vw - popW - pad));
+
+        const spaceAbove = rect.top;
+        const spaceBelow = vh - rect.bottom;
+        if (spaceBelow >= popH + pad || spaceBelow >= spaceAbove) {
+          y = Math.min(rect.bottom + 8, vh - popH - pad);
+          popup.style.setProperty("--ctx-origin", "center top");
+        } else {
+          y = Math.max(pad, rect.top - popH - 8);
+          popup.style.setProperty("--ctx-origin", "center bottom");
+        }
+      } else if (pointerEvent) {
+        x = Math.max(pad, Math.min(pointerEvent.clientX - popW / 2, vw - popW - pad));
+        y = Math.max(pad, Math.min(pointerEvent.clientY + 8, vh - popH - pad));
+        popup.style.setProperty("--ctx-origin", "center top");
+      } else {
+        x = (vw - popW) / 2;
+        y = (vh - popH) / 2;
+        popup.style.setProperty("--ctx-origin", "center center");
+      }
+
+      popup.style.left = `${x}px`;
+      popup.style.top = `${y}px`;
+
+      // Re-trigger animation
+      popup.style.animation = "none";
+      popup.offsetHeight; // force reflow
+      popup.style.animation = "";
+    });
+
+    // Haptic feedback on mobile
+    if (navigator.vibrate) navigator.vibrate(25);
   }
 
   function closeMsgActions() {
-    const sheet = $("#msgActions");
-    if (sheet) sheet.hidden = true;
+    const menu = $("#ctxMenu");
+    if (menu) menu.hidden = true;
     state.msgActionsTargetId = "";
   }
 
@@ -1702,18 +2515,209 @@
     const { history, idx, msg } = findMessageById(characterId, msgId);
     if (!msg || idx < 0) return;
     if (msg.pending) return;
+    // Only allow editing user messages
+    if (msg.role !== "user") return;
+
+    const bubbleEl = document.querySelector(`.msg[data-msg-id="${msgId}"] .bubble`);
+    if (!bubbleEl) return;
+
+    // Already editing?
+    if (bubbleEl.querySelector(".msg__editWrap")) return;
 
     const current = String(msg.content || "");
-    const next = window.prompt("Редактировать сообщение:", current);
-    if (next === null) return;
 
-    const updated = String(next);
-    const nextHistory = history.slice();
-    nextHistory[idx] = { ...msg, content: updated, ts: msg.ts || nowTs() };
-    setChatHistory(characterId, nextHistory);
+    // Save original content and replace bubble with edit UI
+    const origHTML = bubbleEl.innerHTML;
+
+    const wrap = document.createElement("div");
+    wrap.className = "msg__editWrap";
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "msg__editArea";
+    textarea.value = current;
+    textarea.rows = Math.min(8, Math.max(2, current.split("\n").length));
+
+    const actions = document.createElement("div");
+    actions.className = "msg__editActions";
+
+    const btnCancel = document.createElement("button");
+    btnCancel.className = "msg__editBtn msg__editBtn--cancel";
+    btnCancel.type = "button";
+    btnCancel.textContent = "Отмена";
+
+    const btnSave = document.createElement("button");
+    btnSave.className = "msg__editBtn msg__editBtn--save";
+    btnSave.type = "button";
+    btnSave.textContent = "Сохранить и отправить";
+
+    actions.appendChild(btnCancel);
+    actions.appendChild(btnSave);
+    wrap.appendChild(textarea);
+    wrap.appendChild(actions);
+
+    bubbleEl.innerHTML = "";
+    bubbleEl.appendChild(wrap);
+
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+    // Auto-resize textarea
+    const autoResize = () => {
+      textarea.style.height = "auto";
+      textarea.style.height = Math.min(200, textarea.scrollHeight) + "px";
+    };
+    textarea.addEventListener("input", autoResize);
+    autoResize();
+
+    // Cancel: restore original bubble
+    btnCancel.addEventListener("click", () => {
+      bubbleEl.innerHTML = origHTML;
+    });
+
+    // Save: update message, truncate subsequent messages, regenerate
+    btnSave.addEventListener("click", () => {
+      const newText = textarea.value.trim();
+      if (!newText) return;
+
+      applyEditAndRegenerate(characterId, msgId, newText);
+    });
+
+    // Ctrl+Enter to save
+    textarea.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        btnSave.click();
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        btnCancel.click();
+      }
+    });
+  }
+
+  async function applyEditAndRegenerate(characterId, msgId, newText) {
+    const ch = state.characters.find((c) => c.id === characterId);
+    if (!ch) return;
+
+    const history = chatHistoryFor(characterId);
+    const msgIdx = history.findIndex((m) => m?.id === msgId);
+    if (msgIdx === -1) return;
+
+    const msg = history[msgIdx];
+    if (!msg || msg.role !== "user") return;
+
+    // --- Branch logic: save current content + tail into branchVersions ---
+    const isLastMsg = msgIdx === history.length - 1;
+    const currentTail = isLastMsg ? [] : history.slice(msgIdx + 1);
+    const existingBranches = Array.isArray(msg.branchVersions) ? [...msg.branchVersions] : [];
+    const currentBranchIdx = typeof msg.activeBranchIdx === "number" ? msg.activeBranchIdx : 0;
+
+    // Save current version if first time, or update the current slot
+    if (existingBranches.length === 0) {
+      existingBranches.push({ content: msg.content, tail: currentTail });
+    } else {
+      existingBranches[currentBranchIdx] = { ...existingBranches[currentBranchIdx], content: msg.content, tail: currentTail };
+    }
+
+    // Add new branch with the edited content (tail will be filled after generation)
+    existingBranches.push({ content: newText, tail: [] });
+    const newActiveBranchIdx = existingBranches.length - 1;
+
+    // Update the user message and truncate everything after it
+    const updatedMsg = {
+      ...msg,
+      content: newText,
+      ts: nowTs(),
+      branchVersions: existingBranches,
+      activeBranchIdx: newActiveBranchIdx
+    };
+    const truncatedHistory = [...history.slice(0, msgIdx), updatedMsg];
+    setChatHistory(characterId, truncatedHistory);
 
     noteHistoryChanged(characterId);
     renderMessages();
+
+    // Now generate a new AI response (similar to sendMessage)
+    if (!state.lmOk) {
+      $("#composerHint").textContent = `${providerLabel()} недоступна.`;
+      return;
+    }
+    if (state.generating) return;
+
+    const chatId = activeChatIdFor(characterId);
+    const placeholderId = uuid();
+    const placeholder = { id: placeholderId, role: "assistant", content: "…", ts: nowTs(), pending: true };
+    setChatHistory(characterId, chatHistoryFor(characterId).concat([placeholder]));
+    renderMessages();
+
+    setGenerating(true);
+    $("#composerHint").textContent = "Генерирую ответ…";
+
+    try {
+      let content;
+
+      if (state.provider === "mistral") {
+        const messages = buildOpenAiMessages(characterId);
+        const { fullContent } = await streamMistralToMessage({
+          character: ch,
+          assistantMsgId: placeholderId,
+          messages,
+          baseText: ""
+        });
+        content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
+      } else {
+        // Fresh context since we truncated history
+        if (chatId) resetLmContextFor(chatId);
+        const historyForPrompt = chatHistoryFor(characterId).slice(0, -1); // exclude placeholder
+        const systemPrompt = buildRestStartPrompt(state.profile, ch, historyForPrompt.slice(0, -1), true);
+
+        const { fullContent, respId } = await streamLmStudioRestToMessage({
+          character: ch,
+          assistantMsgId: placeholderId,
+          inputText: newText,
+          previousResponseId: "",
+          systemPrompt,
+          baseText: ""
+        });
+        content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
+
+        if (respId && chatId) {
+          saveResponseIdChain(chatId, [respId]);
+        }
+      }
+
+      const finalAssistant = { id: placeholderId, role: "assistant", content, ts: nowTs() };
+
+      // Update the assistant placeholder in history
+      const histAfterGen = chatHistoryFor(characterId).map((m) =>
+        m.id === placeholderId ? finalAssistant : m
+      );
+
+      // Also update the tail of the active branch on the user message
+      const userMsgNow = histAfterGen.find((m) => m.id === msgId);
+      if (userMsgNow && Array.isArray(userMsgNow.branchVersions)) {
+        const brIdx = typeof userMsgNow.activeBranchIdx === "number" ? userMsgNow.activeBranchIdx : userMsgNow.branchVersions.length - 1;
+        userMsgNow.branchVersions[brIdx] = { ...userMsgNow.branchVersions[brIdx], tail: [finalAssistant] };
+      }
+
+      setChatHistory(characterId, histAfterGen);
+      renderMessages();
+      refreshChatsView();
+      $("#composerHint").textContent = "";
+    } catch (err) {
+      const errMsg = String(err?.message || err || "Ошибка");
+      setChatHistory(
+        characterId,
+        chatHistoryFor(characterId).map((m) =>
+          m.id === placeholderId ? { id: m.id, role: "assistant", content: `Не удалось получить ответ: ${errMsg}`, ts: nowTs() } : m
+        )
+      );
+      renderMessages();
+      refreshChatsView();
+      $("#composerHint").textContent = clampText(errMsg, 140);
+    } finally {
+      setGenerating(false);
+    }
   }
 
   function deleteMessage(characterId, msgId) {
@@ -1757,10 +2761,11 @@
       sy = e.clientY;
 
       const holdMs = e.pointerType === "mouse" ? 650 : 450;
+      const savedEvent = e;
       t = setTimeout(() => {
         t = null;
         if (!active) return;
-        openMsgActions(msgId);
+        openMsgActions(msgId, savedEvent);
       }, holdMs);
     });
 
@@ -1778,7 +2783,7 @@
     el.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       if (state.generating) return;
-      openMsgActions(msgId);
+      openMsgActions(msgId, e);
     });
   }
 
@@ -1816,8 +2821,14 @@
       const action = b.dataset.action;
       const msgId = b.dataset.msgId;
       const canTarget = !disableAll && msgId && msgId === lastAssistantId;
-      if (action === "cont" || action === "thoughts") b.disabled = !canTarget;
-      else if (action === "regen") b.disabled = !(canTarget && hasUserBefore);
+      if (action === "cont" || action === "thoughts") {
+        b.disabled = !canTarget;
+      } else if (action === "regen") {
+        const hasUserBefore = b.dataset.hasUserBefore === "1";
+        b.disabled = disableAll || !hasUserBefore;
+      } else if (action === "branch-prev" || action === "branch-next") {
+        b.disabled = state.generating;
+      }
     }
   }
 
@@ -1979,9 +2990,15 @@
       wireHoldToMessage(bubble, m.id);
 
       let actionsEl = null;
+      let branchNavEl = null;
 
       // Only show regen/cont/thoughts for main character messages (not NPC, not deleted)
       if (m.role === "assistant" && !m.image_url && !m.image_loading && !m.npcId && !m.npcDeleted) {
+        let hasUserBeforeThisMsg = false;
+        for (let i = index - 1; i >= 0; i--) {
+          if (history[i]?.role === "user") { hasUserBeforeThisMsg = true; break; }
+        }
+
         const actions = document.createElement("div");
         actions.className = "msg__actions";
 
@@ -1992,6 +3009,7 @@
         btnRegen.title = "Перегенерировать";
         btnRegen.dataset.action = "regen";
         btnRegen.dataset.msgId = m.id;
+        btnRegen.dataset.hasUserBefore = hasUserBeforeThisMsg ? "1" : "0";
 
         const btnCont = document.createElement("button");
         btnCont.className = "miniBtn";
@@ -2009,15 +3027,88 @@
         btnThoughts.dataset.action = "thoughts";
         btnThoughts.dataset.msgId = m.id;
 
-        const canTarget = !state.generating && state.lmOk && !m.pending && m.id === lastAssistantId;
+        const isLastAssistant = m.id === lastAssistantId;
+        const canTarget = !state.generating && state.lmOk && !m.pending && isLastAssistant;
         btnCont.disabled = !canTarget;
         btnThoughts.disabled = !canTarget;
-        btnRegen.disabled = !(canTarget && hasUserBeforeLastAssistant);
+        btnRegen.disabled = !(
+          !state.generating && state.lmOk && !m.pending && hasUserBeforeThisMsg
+        );
 
         actions.appendChild(btnRegen);
         actions.appendChild(btnCont);
         actions.appendChild(btnThoughts);
         actionsEl = actions;
+
+        const branches = m.branchVersions;
+        if (Array.isArray(branches) && branches.length > 1) {
+          const branchNav = document.createElement("div");
+          branchNav.className = "msg__branchNav";
+
+          const activeIdx = typeof m.activeBranchIdx === "number" ? m.activeBranchIdx : 0;
+
+          const btnPrev = document.createElement("button");
+          btnPrev.className = "miniBtn miniBtn--nav";
+          btnPrev.type = "button";
+          btnPrev.textContent = "‹";
+          btnPrev.title = "Предыдущая версия";
+          btnPrev.dataset.action = "branch-prev";
+          btnPrev.dataset.msgId = m.id;
+          btnPrev.disabled = state.generating;
+
+          const navLabel = document.createElement("span");
+          navLabel.className = "branchNav__label";
+          navLabel.textContent = `${activeIdx + 1}/${branches.length}`;
+
+          const btnNext = document.createElement("button");
+          btnNext.className = "miniBtn miniBtn--nav";
+          btnNext.type = "button";
+          btnNext.textContent = "›";
+          btnNext.title = "Следующая версия";
+          btnNext.dataset.action = "branch-next";
+          btnNext.dataset.msgId = m.id;
+          btnNext.disabled = state.generating;
+
+          branchNav.appendChild(btnPrev);
+          branchNav.appendChild(navLabel);
+          branchNav.appendChild(btnNext);
+          branchNavEl = branchNav;
+        }
+      }
+
+      // Branch nav for user messages
+      if (m.role === "user" && Array.isArray(m.branchVersions) && m.branchVersions.length > 1) {
+        const branchNav = document.createElement("div");
+        branchNav.className = "msg__branchNav";
+
+        const activeIdx = typeof m.activeBranchIdx === "number" ? m.activeBranchIdx : 0;
+
+        const btnPrev = document.createElement("button");
+        btnPrev.className = "miniBtn miniBtn--nav";
+        btnPrev.type = "button";
+        btnPrev.textContent = "‹";
+        btnPrev.title = "Предыдущая версия";
+        btnPrev.dataset.action = "branch-prev";
+        btnPrev.dataset.msgId = m.id;
+        btnPrev.disabled = state.generating;
+
+        const navLabel = document.createElement("span");
+        navLabel.className = "branchNav__label";
+        navLabel.textContent = `${activeIdx + 1}/${m.branchVersions.length}`;
+
+        const btnNext = document.createElement("button");
+        btnNext.className = "miniBtn miniBtn--nav";
+        btnNext.type = "button";
+        btnNext.textContent = "›";
+        btnNext.title = "Следующая версия";
+        btnNext.dataset.action = "branch-next";
+        btnNext.dataset.msgId = m.id;
+        btnNext.disabled = state.generating;
+
+        branchNav.appendChild(btnPrev);
+        branchNav.appendChild(navLabel);
+        branchNav.appendChild(btnNext);
+        branchNavEl = branchNav;
       }
 
       const meta = document.createElement("div");
@@ -2027,6 +3118,7 @@
       bubbleWrap.appendChild(bubble);
       bubbleWrap.appendChild(meta);
       if (actionsEl) bubbleWrap.appendChild(actionsEl);
+      if (branchNavEl) bubbleWrap.appendChild(branchNavEl);
 
       // Pending NPC commands (approval cards)
       if (m.role === "assistant" && Array.isArray(m.pending_npc_cmds) && m.pending_npc_cmds.length > 0) {
@@ -2302,26 +3394,17 @@
 
     $("#charNameInput").value = c.name || "";
     $("#charGenderInput").value = c.gender || "unspecified";
-    $("#charVisibilityInput").value = c.visibility || "public";
     $("#charIntroInput").value = c.intro || "";
-    $("#charOutfitInput").value = c.outfit || "";
-    $("#charSettingInput").value = c.setting || "";
-    $("#charBgHintInput").value = c.backgroundHint || "";
     $("#charBackstoryInput").value = c.backstory || "";
-    $("#charStyleInput").value = c.dialogueStyle || "natural";
     $("#charInitialMessageInput").value = c.initialMessage || "";
-    $("#charTagInput").value = "";
-    $("#charRightsConfirm").checked = true;
+    const outfitInput = $("#charOutfitInput");
+    if (outfitInput) outfitInput.value = c.outfit || "";
     const saveBtn = $("#btnSaveCharacter");
     if (saveBtn) saveBtn.textContent = c.createdAt === c.updatedAt ? "Создать персонажа" : "Сохранить персонажа";
 
     setImg($("#charAvatarPreview"), c.avatar, c.name);
     $("#charFormNote").textContent = "";
-    if ($("#charOutfitNote")) $("#charOutfitNote").textContent = "";
-
     setSegmentedValue($("#charGenderSegment"), c.gender || "unspecified");
-    setSegmentedValue($("#charVisibilitySegment"), c.visibility || "public");
-    renderCharacterTagsEditor(c.tags);
     syncCharacterCounters();
     renderCharacterHeroPreview(c);
     renderChatSelectInSettings(c);
@@ -2351,15 +3434,13 @@
     const hero = $("#charHeroPreview");
     const titleEl = $("#charHeroName");
     const metaEl = $("#charHeroMeta");
-    const styleTag = $("#charHeroStyleTag");
     const genderTag = $("#charHeroGenderTag");
 
     if (titleEl) titleEl.textContent = c.name || "(без имени)";
     if (metaEl) {
-      const desc = String(c.intro || c.backstory || c.setting || c.outfit || "").trim();
+      const desc = String(c.intro || c.backstory || "").trim();
       metaEl.textContent = desc ? desc.slice(0, 140) : "Заполните карточку персонажа";
     }
-    if (styleTag) styleTag.textContent = `Стиль: ${styleById(c.dialogueStyle).label}`;
     if (genderTag) genderTag.textContent = `Пол: ${genderLabel(c.gender)}`;
 
     if (hero) {
@@ -2384,6 +3465,321 @@
     });
   }
 
+  // ===== PolyBuzz Catalog =====
+
+  let polybuzzCatalogItems = [];
+  let polybuzzCatalogLoaded = false;
+  let polybuzzCatalogLoading = false;
+  let polybuzzCatalogPage = 1;
+  let polybuzzCatalogHasMore = true;
+  let polybuzzSearchQuery = "";
+  let polybuzzSearchItems = [];
+  let polybuzzSearchLoading = false;
+  let polybuzzSearchTimer = null;
+  let polybuzzSearchPage = 1;
+  let polybuzzSearchHasMore = true;
+  let polybuzzGenderFilter = "all"; // "all" | "female" | "male"
+
+  async function loadPolybuzzCatalog(nextPage) {
+    if (polybuzzCatalogLoading) return;
+    const page = nextPage || 1;
+    polybuzzCatalogLoading = true;
+    const status = $("#polybuzzStatus");
+    if (page === 1 && status) status.textContent = "Загрузка каталога PolyBuzz...";
+    try {
+      const res = await fetch("/api/polybuzz/catalog?page=" + page);
+      const data = await res.json();
+      if (data.ok && Array.isArray(data.items)) {
+        if (page === 1) {
+          polybuzzCatalogItems = data.items;
+          pollPolybuzzGenders();
+        } else {
+          // Deduplicate by secretSceneId
+          const existing = new Set(polybuzzCatalogItems.map((x) => x.secretSceneId));
+          for (const item of data.items) {
+            if (!existing.has(item.secretSceneId)) polybuzzCatalogItems.push(item);
+          }
+          // Poll for gender enrichment of new items
+          pollPolybuzzGenders(page);
+        }
+        polybuzzCatalogLoaded = true;
+        polybuzzCatalogPage = page;
+        polybuzzCatalogHasMore = data.hasMore !== false;
+        if (status) status.textContent = "";
+      } else {
+        if (page === 1 && status) status.textContent = data.error || "Не удалось загрузить каталог";
+      }
+    } catch (err) {
+      if (page === 1 && status) status.textContent = "Ошибка загрузки каталога PolyBuzz";
+    } finally {
+      polybuzzCatalogLoading = false;
+      renderPolybuzzGrid();
+    }
+  }
+
+  function pollPolybuzzGenders(page) {
+    // Re-fetch catalog page to pick up gender data as it's enriched server-side
+    const pageParam = page ? "?page=" + page : "";
+    let attempts = 0;
+    const maxAttempts = 5;
+    const interval = setInterval(async () => {
+      attempts++;
+      try {
+        const res = await fetch("/api/polybuzz/catalog" + pageParam);
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.items)) {
+          let anyUpdated = false;
+          for (const updated of data.items) {
+            if (updated.gender === undefined) continue;
+            const existing = polybuzzCatalogItems.find((x) => x.secretSceneId === updated.secretSceneId);
+            if (existing && existing.gender === undefined) {
+              existing.gender = updated.gender;
+              anyUpdated = true;
+            }
+          }
+          const allHaveGender = polybuzzCatalogItems.every((x) => x.gender !== undefined);
+          if (anyUpdated && state.view === "polybuzz") renderPolybuzzGrid();
+          if (allHaveGender || attempts >= maxAttempts) clearInterval(interval);
+        }
+      } catch {
+        if (attempts >= maxAttempts) clearInterval(interval);
+      }
+    }, 3000);
+  }
+
+  async function searchPolybuzz(query, page) {
+    const q = String(query || "").trim();
+    polybuzzSearchQuery = q;
+    if (!q) {
+      polybuzzSearchItems = [];
+      polybuzzSearchLoading = false;
+      polybuzzSearchPage = 1;
+      polybuzzSearchHasMore = true;
+      renderPolybuzzGrid();
+      return;
+    }
+    const p = page || 1;
+    polybuzzSearchLoading = true;
+    renderPolybuzzGrid();
+    try {
+      const res = await fetch("/api/polybuzz/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q, page: p, pageSize: 30 })
+      });
+      const data = await res.json();
+      if (polybuzzSearchQuery !== q) return; // stale
+      const newItems = data.ok && Array.isArray(data.items) ? data.items : [];
+      if (p === 1) {
+        polybuzzSearchItems = newItems;
+      } else {
+        const existing = new Set(polybuzzSearchItems.map((x) => x.secretSceneId));
+        for (const item of newItems) {
+          if (!existing.has(item.secretSceneId)) polybuzzSearchItems.push(item);
+        }
+      }
+      polybuzzSearchPage = p;
+      polybuzzSearchHasMore = data.hasMore !== false && newItems.length > 0;
+    } catch {
+      if (polybuzzSearchQuery !== q) return;
+      if (p === 1) polybuzzSearchItems = [];
+    } finally {
+      polybuzzSearchLoading = false;
+      renderPolybuzzGrid();
+    }
+  }
+
+  function formatChatCount(n) {
+    if (!n || n <= 0) return "";
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M чатов";
+    if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "K чатов";
+    return n + " чатов";
+  }
+
+  function isAlreadyImported(secretSceneId) {
+    return state.characters.some((c) =>
+      c.source_url && c.source_url.includes(secretSceneId)
+    );
+  }
+
+  function renderPolybuzzGrid() {
+    const grid = $("#polybuzzGrid");
+    const status = $("#polybuzzStatus");
+    if (!grid) return;
+    grid.innerHTML = "";
+
+    const isSearch = polybuzzSearchQuery.length > 0;
+    let items = isSearch ? polybuzzSearchItems : polybuzzCatalogItems;
+
+    if (isSearch && polybuzzSearchLoading && polybuzzSearchItems.length === 0) {
+      if (status) status.textContent = "Поиск...";
+      return;
+    }
+
+    if (!isSearch && !polybuzzCatalogLoaded && polybuzzCatalogLoading) {
+      return; // status already shows loading
+    }
+
+    // Apply gender filter
+    if (polybuzzGenderFilter !== "all") {
+      items = items.filter((item) => {
+        if (item.gender === undefined) return false; // hide until gender is known
+        return item.gender === polybuzzGenderFilter;
+      });
+    }
+
+    // Sync gender filter button states
+    document.querySelectorAll(".pbGenderBtn").forEach((btn) => {
+      btn.classList.toggle("pbGenderBtn--active", btn.dataset.gender === polybuzzGenderFilter);
+    });
+
+    if (items.length === 0) {
+      if (status) status.textContent = isSearch ? "Ничего не найдено" : (polybuzzGenderFilter !== "all" ? "Нет персонажей с таким полом" : "Каталог пуст");
+      return;
+    }
+
+    if (status) status.textContent = "";
+
+    for (const item of items) {
+      const card = document.createElement("div");
+      card.className = "discoverCard";
+
+      const media = document.createElement("div");
+      media.className = "discoverCard__media";
+      media.style.position = "relative";
+
+      const image = document.createElement("img");
+      image.className = "discoverCard__image";
+      const imgSrc = item.cover || item.avatar || "";
+      if (imgSrc) {
+        image.src = proxiedImageUrl(imgSrc);
+        image.alt = item.name;
+      }
+      image.onerror = function () { this.style.display = "none"; };
+
+      const overlay = document.createElement("div");
+      overlay.className = "discoverCard__overlay";
+
+      const metric = document.createElement("div");
+      metric.className = "discoverCard__metric";
+      metric.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8A8.5 8.5 0 0 1 12.5 20a8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.8-7.6A8.38 8.38 0 0 1 12.5 3a8.5 8.5 0 0 1 8.5 8.5Z"/></svg>';
+      const metricText = document.createElement("span");
+      metricText.textContent = formatChatCount(item.totalChats);
+      metric.appendChild(metricText);
+      overlay.appendChild(metric);
+
+      const importBtn = document.createElement("button");
+      importBtn.className = "polybuzzCard__importBtn";
+      const alreadyDone = isAlreadyImported(item.secretSceneId);
+      importBtn.textContent = alreadyDone ? "Добавлено" : "Добавить";
+      importBtn.disabled = alreadyDone;
+      importBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (importBtn.disabled) return;
+        importBtn.disabled = true;
+        importBtn.textContent = "Импорт...";
+        try {
+          const character = await importFromPolybuzzUrl(item.url);
+          applyImportedCharactersResult(importCharactersFromJsonPayload(character));
+          importBtn.textContent = "Добавлено";
+          flashStatus(`${item.name} импортирован`, true);
+        } catch (err) {
+          importBtn.textContent = "Ошибка";
+          importBtn.disabled = false;
+          flashStatus(String(err?.message || "Ошибка импорта"), false);
+          setTimeout(() => {
+            if (importBtn.textContent === "Ошибка") importBtn.textContent = "Добавить";
+          }, 2000);
+        }
+      });
+
+      media.appendChild(image);
+      media.appendChild(overlay);
+      media.appendChild(importBtn);
+
+      const body = document.createElement("div");
+      body.className = "discoverCard__body";
+
+      const titleRow = document.createElement("div");
+      titleRow.className = "discoverCard__titleRow";
+      const title = document.createElement("div");
+      title.className = "discoverCard__title";
+      title.textContent = item.name || item.oriName || "(без имени)";
+      titleRow.appendChild(title);
+
+      const desc = document.createElement("div");
+      desc.className = "discoverCard__desc";
+      desc.textContent = item.brief ? clampText(item.brief, 120) : "";
+
+      const tagsWrap = document.createElement("div");
+      tagsWrap.className = "discoverCard__tags";
+      const visibleTags = (item.tags || []).slice(0, 3);
+      for (let idx = 0; idx < visibleTags.length; idx++) {
+        const pill = document.createElement("span");
+        pill.className = "discoverCard__tag" + (idx === 0 ? " discoverCard__tag--accent" : "");
+        pill.textContent = visibleTags[idx];
+        tagsWrap.appendChild(pill);
+      }
+
+      body.appendChild(titleRow);
+      body.appendChild(desc);
+      body.appendChild(tagsWrap);
+
+      card.appendChild(media);
+      card.appendChild(body);
+      grid.appendChild(card);
+    }
+
+    // Add "load more" sentinel for infinite scroll
+    const hasMore = isSearch ? polybuzzSearchHasMore : polybuzzCatalogHasMore;
+    if (items.length > 0 && hasMore) {
+      const sentinel = document.createElement("div");
+      sentinel.className = "polybuzzCatalog__sentinel";
+      sentinel.textContent = "Загрузка...";
+      grid.appendChild(sentinel);
+      observePolybuzzSentinel(sentinel);
+    }
+  }
+
+  let polybuzzScrollObserver = null;
+  function observePolybuzzSentinel(sentinel) {
+    if (polybuzzScrollObserver) polybuzzScrollObserver.disconnect();
+    polybuzzScrollObserver = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        polybuzzScrollObserver.disconnect();
+        loadMorePolybuzz();
+      }
+    }, { rootMargin: "200px" });
+    polybuzzScrollObserver.observe(sentinel);
+  }
+
+  function loadMorePolybuzz() {
+    const isSearch = polybuzzSearchQuery.length > 0;
+    if (isSearch) {
+      if (!polybuzzSearchLoading && polybuzzSearchHasMore) {
+        searchPolybuzz(polybuzzSearchQuery, polybuzzSearchPage + 1);
+      }
+    } else {
+      if (!polybuzzCatalogLoading && polybuzzCatalogHasMore) {
+        loadPolybuzzCatalog(polybuzzCatalogPage + 1);
+      }
+    }
+  }
+
+  function openPolybuzzView() {
+    setView("polybuzz");
+    // Reset catalog state so it reloads fresh each time
+    polybuzzCatalogLoaded = false;
+    polybuzzCatalogPage = 1;
+    polybuzzCatalogHasMore = true;
+    polybuzzCatalogItems = [];
+    if (!polybuzzCatalogLoading) {
+      loadPolybuzzCatalog();
+    }
+  }
+
+  // ===== End PolyBuzz Catalog =====
+
   function modalWindow() {
     return $("#charactersModal")?.querySelector(".modal__window");
   }
@@ -2398,7 +3794,12 @@
 
   function refreshChatsView() {
     const q = $("#chatSearch") ? $("#chatSearch").value : "";
-    renderChatList(q || "");
+    syncChatsSubTabs();
+    if (state.chatsSubTab === "multi") {
+      renderGroupChatList(q || "");
+    } else {
+      renderChatList(q || "");
+    }
   }
 
   function closeModal() {
@@ -2641,7 +4042,7 @@
   // ───────────────────────────────────────────────────────────────────────────
 
   async function refreshModels() {
-    const selects = [$("#modelSelect"), $("#modelSelectProfile")].filter(Boolean);
+    const selects = [$("#modelSelect"), $("#modelSelectProfile"), $("#modelSelectGroup")].filter(Boolean);
     for (const s of selects) {
       s.innerHTML = "<option value=''>Загрузка…</option>";
       s.disabled = true;
@@ -2885,6 +4286,11 @@
     const input = $("#userInput");
     if (sendBtn) sendBtn.disabled = state.generating;
     if (input) input.disabled = state.generating;
+
+    const groupSendBtn = $("#groupSendBtn");
+    const groupInput = $("#groupUserInput");
+    if (groupSendBtn) groupSendBtn.disabled = state.generating;
+    if (groupInput) groupInput.disabled = state.generating;
 
     updateChatActionButtons();
   }
@@ -3694,6 +5100,10 @@
     const sheet = $("#promptsSheet");
     if (!sheet) return;
     sheet.hidden = false;
+    state.editingPromptId = null;
+    const editor = $("#promptEditor");
+    if (editor) editor.hidden = true;
+    renderPromptFolderTabs();
     renderSavedPrompts();
   }
 
@@ -3701,6 +5111,144 @@
     const sheet = $("#promptsSheet");
     if (!sheet) return;
     sheet.hidden = true;
+    state.editingPromptId = null;
+  }
+
+  function openPromptEditor(promptId) {
+    const editor = $("#promptEditor");
+    if (!editor) return;
+    const titleInput = $("#promptTitleInput");
+    const textInput = $("#promptTextInput");
+    const folderSelect = $("#promptFolderSelect");
+    const editorTitle = $("#promptEditorTitle");
+    const note = $("#promptSheetNote");
+    if (note) note.textContent = "";
+
+    fillPromptFolderSelect(folderSelect);
+
+    if (promptId) {
+      const item = state.savedPrompts.find((x) => x.id === promptId);
+      if (!item) return;
+      state.editingPromptId = promptId;
+      if (editorTitle) editorTitle.textContent = "Редактировать";
+      if (titleInput) titleInput.value = item.title || "";
+      if (textInput) textInput.value = item.text || "";
+      if (folderSelect) folderSelect.value = item.folderId || "";
+    } else {
+      state.editingPromptId = null;
+      if (editorTitle) editorTitle.textContent = "Новый промт";
+      if (titleInput) titleInput.value = "";
+      if (textInput) textInput.value = "";
+      if (folderSelect) folderSelect.value = state.promptActiveFolder === "__all__" ? "" : (state.promptActiveFolder || "");
+    }
+    editor.hidden = false;
+    if (titleInput) titleInput.focus();
+  }
+
+  function closePromptEditor() {
+    const editor = $("#promptEditor");
+    if (editor) editor.hidden = true;
+    state.editingPromptId = null;
+  }
+
+  function fillPromptFolderSelect(select) {
+    if (!select) return;
+    select.innerHTML = "";
+    const opt0 = document.createElement("option");
+    opt0.value = "";
+    opt0.textContent = "Без папки";
+    select.appendChild(opt0);
+    for (const f of state.promptFolders) {
+      const opt = document.createElement("option");
+      opt.value = f.id;
+      opt.textContent = f.name;
+      select.appendChild(opt);
+    }
+  }
+
+  function renderPromptFolderTabs() {
+    const container = $("#promptFolderTabs");
+    if (!container) return;
+    container.innerHTML = "";
+
+    const counts = { "__all__": state.savedPrompts.length, "": 0 };
+    for (const p of state.savedPrompts) {
+      const fid = p.folderId || "";
+      if (!fid) counts[""] = (counts[""] || 0) + 1;
+      else counts[fid] = (counts[fid] || 0) + 1;
+    }
+
+    const makeTab = (id, label, count, removable) => {
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.className = "promptFolderTab" + (state.promptActiveFolder === id ? " promptFolderTab--active" : "");
+      const textSpan = document.createElement("span");
+      textSpan.textContent = label;
+      tab.appendChild(textSpan);
+      if (typeof count === "number") {
+        const countSpan = document.createElement("span");
+        countSpan.className = "promptFolderTab__count";
+        countSpan.textContent = count;
+        tab.appendChild(countSpan);
+      }
+      tab.addEventListener("click", (e) => {
+        if (e.target.closest(".promptFolderTab__menu")) return;
+        state.promptActiveFolder = id;
+        renderPromptFolderTabs();
+        renderSavedPrompts();
+      });
+      if (removable) {
+        const menu = document.createElement("span");
+        menu.className = "promptFolderTab__menu";
+        menu.innerHTML = "&#8942;";
+        menu.addEventListener("click", (e) => {
+          e.stopPropagation();
+          showFolderMenu(id);
+        });
+        tab.appendChild(menu);
+      }
+      return tab;
+    };
+
+    container.appendChild(makeTab("__all__", "Все", counts["__all__"], false));
+    container.appendChild(makeTab("", "Без папки", counts[""], false));
+    for (const f of state.promptFolders) {
+      container.appendChild(makeTab(f.id, f.name, counts[f.id] || 0, true));
+    }
+  }
+
+  function showFolderMenu(folderId) {
+    const folder = state.promptFolders.find((f) => f.id === folderId);
+    if (!folder) return;
+    const action = window.prompt(
+      `Папка «${folder.name}»\n\nВведите новое имя для переименования,\nили напишите "удалить" для удаления:`,
+      folder.name
+    );
+    if (action === null) return;
+    if (action.trim().toLowerCase() === "удалить") {
+      if (!window.confirm(`Удалить папку «${folder.name}»? Промты останутся без папки.`)) return;
+      state.promptFolders = state.promptFolders.filter((f) => f.id !== folderId);
+      for (const p of state.savedPrompts) {
+        if (p.folderId === folderId) p.folderId = "";
+      }
+      saveJson(STORAGE_KEYS.promptFolders, state.promptFolders);
+      saveJson(STORAGE_KEYS.savedPrompts, state.savedPrompts);
+      if (state.promptActiveFolder === folderId) state.promptActiveFolder = "__all__";
+      renderPromptFolderTabs();
+      renderSavedPrompts();
+    } else if (action.trim()) {
+      folder.name = clampText(action.trim(), 40);
+      saveJson(STORAGE_KEYS.promptFolders, state.promptFolders);
+      renderPromptFolderTabs();
+    }
+  }
+
+  function createPromptFolder() {
+    const name = window.prompt("Название новой папки:");
+    if (!name || !name.trim()) return;
+    state.promptFolders.push({ id: uuid(), name: clampText(name.trim(), 40), createdAt: nowTs() });
+    saveJson(STORAGE_KEYS.promptFolders, state.promptFolders);
+    renderPromptFolderTabs();
   }
 
   function renderSavedPrompts() {
@@ -3708,24 +5256,48 @@
     if (!list) return;
     list.innerHTML = "";
 
-    const items = Array.isArray(state.savedPrompts) ? state.savedPrompts.slice() : [];
+    let items = Array.isArray(state.savedPrompts) ? state.savedPrompts.slice() : [];
     items.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+    if (state.promptActiveFolder === "__all__") {
+      // show all
+    } else if (state.promptActiveFolder === "") {
+      items = items.filter((x) => !x.folderId);
+    } else {
+      items = items.filter((x) => x.folderId === state.promptActiveFolder);
+    }
 
     if (!items.length) {
       const empty = document.createElement("div");
-      empty.className = "smallNote";
-      empty.textContent = "Пока нет сохраненных промтов.";
+      empty.className = "promptManager__empty";
+      empty.innerHTML =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4h16v16H4z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg>' +
+        "<span>Нет промтов</span>";
       list.appendChild(empty);
       return;
     }
+
+    const folderMap = {};
+    for (const f of state.promptFolders) folderMap[f.id] = f.name;
 
     for (const item of items) {
       const card = document.createElement("div");
       card.className = "promptCard";
 
+      const header = document.createElement("div");
+      header.className = "promptCard__header";
+
       const title = document.createElement("div");
       title.className = "promptCard__title";
       title.textContent = item.title || "Промт";
+      header.appendChild(title);
+
+      if (item.folderId && folderMap[item.folderId] && state.promptActiveFolder === "__all__") {
+        const badge = document.createElement("span");
+        badge.className = "promptCard__folder";
+        badge.textContent = folderMap[item.folderId];
+        header.appendChild(badge);
+      }
 
       const text = document.createElement("div");
       text.className = "promptCard__text";
@@ -3742,29 +5314,34 @@
         const input = $("#userInput");
         if (!input) return;
         const current = String(input.value || "");
-        input.value = current ? `${current}
-${item.text}` : item.text;
+        input.value = current ? current + "\n" + item.text : item.text;
         autoGrowTextarea(input);
         input.focus();
-        $("#promptSheetNote").textContent = "Промт вставлен в поле сообщения.";
+        closePromptsSheet();
       });
+
+      const btnEdit = document.createElement("button");
+      btnEdit.className = "btn btn--tiny btn--ghost";
+      btnEdit.type = "button";
+      btnEdit.textContent = "Редактировать";
+      btnEdit.addEventListener("click", () => openPromptEditor(item.id));
 
       const btnDelete = document.createElement("button");
       btnDelete.className = "btn btn--tiny btn--danger";
       btnDelete.type = "button";
       btnDelete.textContent = "Удалить";
       btnDelete.addEventListener("click", () => {
-        const ok = window.confirm(`Удалить промт «${item.title || "Промт"}»?`);
-        if (!ok) return;
+        if (!window.confirm(`Удалить промт «${item.title || "Промт"}»?`)) return;
         state.savedPrompts = state.savedPrompts.filter((x) => x && x.id !== item.id);
         saveJson(STORAGE_KEYS.savedPrompts, state.savedPrompts);
+        renderPromptFolderTabs();
         renderSavedPrompts();
-        $("#promptSheetNote").textContent = "Промт удален.";
       });
 
       actions.appendChild(btnUse);
+      actions.appendChild(btnEdit);
       actions.appendChild(btnDelete);
-      card.appendChild(title);
+      card.appendChild(header);
       card.appendChild(text);
       card.appendChild(actions);
       list.appendChild(card);
@@ -3774,22 +5351,34 @@ ${item.text}` : item.text;
   function savePromptFromDraft() {
     const titleInput = $("#promptTitleInput");
     const textInput = $("#promptTextInput");
+    const folderSelect = $("#promptFolderSelect");
     const note = $("#promptSheetNote");
     if (!titleInput || !textInput || !note) return;
 
     const title = clampText(String(titleInput.value || "").trim() || "Промт", 80);
     const text = clampText(String(textInput.value || "").trim(), 4000);
+    const folderId = folderSelect ? String(folderSelect.value || "") : "";
     if (!text) {
       note.textContent = "Введите текст промта.";
       return;
     }
 
-    state.savedPrompts.unshift({ id: uuid(), title, text, createdAt: nowTs(), updatedAt: nowTs() });
+    if (state.editingPromptId) {
+      const existing = state.savedPrompts.find((x) => x.id === state.editingPromptId);
+      if (existing) {
+        existing.title = title;
+        existing.text = text;
+        existing.folderId = folderId;
+        existing.updatedAt = nowTs();
+      }
+      state.editingPromptId = null;
+    } else {
+      state.savedPrompts.unshift({ id: uuid(), title, text, folderId, createdAt: nowTs(), updatedAt: nowTs() });
+    }
     saveJson(STORAGE_KEYS.savedPrompts, state.savedPrompts);
 
-    titleInput.value = "";
-    textInput.value = "";
-    note.textContent = "Промт сохранен.";
+    closePromptEditor();
+    renderPromptFolderTabs();
     renderSavedPrompts();
   }
 
@@ -3905,7 +5494,7 @@ ${item.text}` : item.text;
     }
   }
 
-  async function regenerateLastAnswer() {
+  async function regenerateMessageAt(targetMsgId) {
     const ch = activeCharacter();
     if (!ch) return;
     if (!state.lmOk) {
@@ -3916,27 +5505,37 @@ ${item.text}` : item.text;
 
     const chatId = activeChatIdFor(ch.id);
     const history = chatHistoryFor(ch.id);
-    if (history.length === 0) return;
 
-    const lastIdx = history.length - 1;
-    const last = history[lastIdx];
-    if (!last || last.role !== "assistant" || last.pending) return;
+    const msgIdx = history.findIndex((m) => m?.id === targetMsgId);
+    if (msgIdx === -1) return;
+
+    const msg = history[msgIdx];
+    if (!msg || msg.role !== "assistant" || msg.pending) return;
 
     let userIdx = -1;
-    for (let i = lastIdx - 1; i >= 0; i--) {
-      if (history[i] && history[i].role === "user") {
-        userIdx = i;
-        break;
-      }
+    for (let i = msgIdx - 1; i >= 0; i--) {
+      if (history[i]?.role === "user") { userIdx = i; break; }
     }
     if (userIdx === -1) return;
 
+    const isLastMsg = msgIdx === history.length - 1;
     const userText = String(history[userIdx].content || "");
-    const assistantMsgId = String(last.id);
 
-    const nextHistory = history.slice(0, lastIdx + 1);
-    nextHistory[lastIdx] = { ...last, content: "…", pending: true, ts: nowTs() };
-    setChatHistory(ch.id, nextHistory);
+    // Save current content + tail into the current branch slot
+    const existingBranches = Array.isArray(msg.branchVersions) ? [...msg.branchVersions] : [];
+    const currentBranchIdx = typeof msg.activeBranchIdx === "number" ? msg.activeBranchIdx : 0;
+    const currentTail = isLastMsg ? [] : history.slice(msgIdx + 1);
+
+    if (existingBranches.length === 0) {
+      existingBranches.push({ content: msg.content, tail: currentTail });
+    } else {
+      existingBranches[currentBranchIdx] = { ...existingBranches[currentBranchIdx], content: msg.content, tail: currentTail };
+    }
+
+    // Show pending state; truncate messages after this message
+    const pendingMsg = { ...msg, content: "…", pending: true, ts: nowTs(), branchVersions: existingBranches, activeBranchIdx: currentBranchIdx };
+    const pendingHistory = [...history.slice(0, msgIdx), pendingMsg];
+    setChatHistory(ch.id, pendingHistory);
     renderMessages();
 
     setGenerating(true);
@@ -3946,28 +5545,35 @@ ${item.text}` : item.text;
       let content;
 
       if (state.provider === "mistral") {
-        // For regeneration with Mistral, rebuild messages without the last assistant reply.
-        const truncatedHistory = history.slice(0, lastIdx);
-        setChatHistory(ch.id, truncatedHistory.concat([{ ...last, content: "…", pending: true, ts: nowTs() }]));
+        // pendingHistory already set; buildOpenAiMessages filters out pending messages,
+        // giving context up to (but not including) the assistant message being regenerated.
         const messages = buildOpenAiMessages(ch.id);
-        const filteredMessages = messages.filter((m) => m.content !== "…");
 
         const { fullContent } = await streamMistralToMessage({
           character: ch,
-          assistantMsgId,
-          messages: filteredMessages,
+          assistantMsgId: targetMsgId,
+          messages,
           baseText: ""
         });
         content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
       } else {
-        const chain = chatId ? responseIdChainFor(chatId) : [];
-        const prevResponseId = chain.length >= 2 ? chain[chain.length - 2] : "";
-        const historyForPrompt = history.slice(0, userIdx);
-        const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, historyForPrompt, true, getTempCharactersForChat(ch.id));
+        // LM Studio REST: use response chain for last message optimization, fresh context otherwise
+        let prevResponseId = "";
+        let systemPrompt;
+
+        if (isLastMsg) {
+          const chain = chatId ? responseIdChainFor(chatId) : [];
+          prevResponseId = chain.length >= 2 ? chain[chain.length - 2] : "";
+        }
+
+        if (!prevResponseId) {
+          const historyForPrompt = history.slice(0, userIdx);
+          systemPrompt = buildRestStartPrompt(state.profile, ch, historyForPrompt, true, getTempCharactersForChat(ch.id));
+        }
 
         const { fullContent, respId } = await streamLmStudioRestToMessage({
           character: ch,
-          assistantMsgId,
+          assistantMsgId: targetMsgId,
           inputText: userText,
           previousResponseId: prevResponseId,
           systemPrompt,
@@ -3975,32 +5581,49 @@ ${item.text}` : item.text;
         });
         content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
 
-        if (respId && chatId) {
-          const nextChain = chain.length > 0 ? chain.slice(0, chain.length - 1).concat([respId]) : [respId];
-          saveResponseIdChain(chatId, nextChain);
+        if (chatId) {
+          if (!isLastMsg) resetLmContextFor(chatId);
+          if (respId) {
+            const chain = responseIdChainFor(chatId);
+            const nextChain = chain.length > 0 ? chain.slice(0, -1).concat([respId]) : [respId];
+            saveResponseIdChain(chatId, nextChain);
+          }
         }
       }
 
+      // Append new branch with generated content
+      const newBranches = [...existingBranches, { content, tail: [] }];
+      const newActiveBranchIdx = newBranches.length - 1;
+
+      const finalMsg = {
+        id: targetMsgId,
+        role: "assistant",
+        content,
+        ts: nowTs(),
+        branchVersions: newBranches,
+        activeBranchIdx: newActiveBranchIdx
+      };
+
       setChatHistory(
         ch.id,
-        chatHistoryFor(ch.id).map((m) =>
-          m.id === assistantMsgId ? { id: m.id, role: "assistant", content, ts: nowTs() } : m
-        )
+        chatHistoryFor(ch.id).map((m) => m.id === targetMsgId ? finalMsg : m)
       );
       renderMessages();
       refreshChatsView();
       $("#composerHint").textContent = "";
     } catch (err) {
-      const msg = String(err?.message || err || "Ошибка");
+      const errMsg = String(err?.message || err || "Ошибка");
       setChatHistory(
         ch.id,
         chatHistoryFor(ch.id).map((m) =>
-          m.id === assistantMsgId ? { id: m.id, role: "assistant", content: `Не удалось перегенерировать: ${msg}`, ts: nowTs() } : m
+          m.id === targetMsgId
+            ? { ...msg, content: `Не удалось перегенерировать: ${errMsg}`, branchVersions: existingBranches, activeBranchIdx: currentBranchIdx }
+            : m
         )
       );
       renderMessages();
       refreshChatsView();
-      $("#composerHint").textContent = clampText(msg, 140);
+      $("#composerHint").textContent = clampText(errMsg, 140);
     } finally {
       setGenerating(false);
     }
@@ -4050,6 +5673,52 @@ ${item.text}` : item.text;
 
   // ───────────────────────────────────────────────────────────────────────────
 
+  function switchMessageBranch(targetMsgId, direction) {
+    const ch = activeCharacter();
+    if (!ch || state.generating) return;
+
+    const chatId = activeChatIdFor(ch.id);
+    const history = chatHistoryFor(ch.id);
+
+    const msgIdx = history.findIndex((m) => m?.id === targetMsgId);
+    if (msgIdx === -1) return;
+
+    const msg = history[msgIdx];
+    if (!msg) return;
+
+    const branches = Array.isArray(msg.branchVersions) ? msg.branchVersions : [];
+    if (branches.length <= 1) return;
+
+    const currentIdx = typeof msg.activeBranchIdx === "number" ? msg.activeBranchIdx : 0;
+    const newIdx = (currentIdx + direction + branches.length) % branches.length;
+    if (newIdx === currentIdx) return;
+
+    // Save current tail into the current branch before switching
+    const currentTail = history.slice(msgIdx + 1);
+    const updatedBranches = branches.map((b, i) =>
+      i === currentIdx ? { ...b, content: msg.content, tail: currentTail } : b
+    );
+
+    const newBranch = updatedBranches[newIdx];
+    const newMsg = {
+      ...msg,
+      content: newBranch.content,
+      branchVersions: updatedBranches,
+      activeBranchIdx: newIdx
+    };
+
+    const newHistory = [
+      ...history.slice(0, msgIdx),
+      newMsg,
+      ...(newBranch.tail || [])
+    ];
+
+    setChatHistory(ch.id, newHistory);
+    if (chatId) resetLmContextFor(chatId);
+    renderMessages();
+    refreshChatsView();
+  }
+
   const THOUGHT_DELIM = "\n\n{{THOUGHTS}}\n";
 
   async function continueLastAnswerWithPrompt({ inputText, hintText, failurePrefix, isThoughts }) {
@@ -4084,9 +5753,10 @@ ${item.text}` : item.text;
       let content;
 
       if (state.provider === "mistral") {
-        const continueMsg = { role: "user", content: inputText };
         const messages = buildOpenAiMessages(ch.id);
-        messages.push(continueMsg);
+        // Include the existing assistant response so the AI knows what it already wrote
+        if (rawBase) messages.push({ role: "assistant", content: rawBase });
+        messages.push({ role: "user", content: inputText });
 
         const { fullContent } = await streamMistralToMessage({
           character: ch,
@@ -4099,10 +5769,15 @@ ${item.text}` : item.text;
         const prevResponseId = chatId ? lastResponseIdFor(chatId) : "";
         const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, history, true, getTempCharactersForChat(ch.id));
 
+        // Include the existing content so the AI can continue from where it stopped
+        const continueInput = rawBase
+          ? inputText + "\n\nТвой текущий ответ (продолжи его, не переписывай):\n" + rawBase
+          : inputText;
+
         const { fullContent, respId } = await streamLmStudioRestToMessage({
           character: ch,
           assistantMsgId,
-          inputText,
+          inputText: continueInput,
           previousResponseId: prevResponseId,
           systemPrompt,
           baseText: base
@@ -4175,12 +5850,14 @@ ${item.text}` : item.text;
 
   function wireUI() {
     const styleSel = $("#charStyleInput");
-    styleSel.innerHTML = "";
-    for (const s of DIALOGUE_STYLES) {
-      const opt = document.createElement("option");
-      opt.value = s.id;
-      opt.textContent = s.label;
-      styleSel.appendChild(opt);
+    if (styleSel) {
+      styleSel.innerHTML = "";
+      for (const s of DIALOGUE_STYLES) {
+        const opt = document.createElement("option");
+        opt.value = s.id;
+        opt.textContent = s.label;
+        styleSel.appendChild(opt);
+      }
     }
 
     const bindSegmented = (containerSel, hiddenSel, onChange) => {
@@ -4203,13 +5880,19 @@ ${item.text}` : item.text;
         name: String($("#charNameInput")?.value || "").trim(),
         gender: String($("#charGenderInput")?.value || "unspecified"),
         intro: String($("#charIntroInput")?.value || ""),
-        dialogueStyle: String($("#charStyleInput")?.value || "natural")
+        backstory: String($("#charBackstoryInput")?.value || "")
       });
     });
-    bindSegmented("#charVisibilitySegment", "#charVisibilityInput");
 
     const btnOpenCharacters = $("#btnOpenCharacters");
-    if (btnOpenCharacters) btnOpenCharacters.addEventListener("click", () => openModal());
+    if (btnOpenCharacters) btnOpenCharacters.addEventListener("click", () => {
+      const modal = $("#charactersModal");
+      modal.hidden = false;
+      state.editingCharacterId = state.selectedCharacterId;
+      fillCharacterForm();
+      renderCharacterList();
+      modalWindow()?.classList.add("modal__window--editing");
+    });
 
     const tabChats = $("#tabChats");
     const tabPlus = $("#tabPlus");
@@ -4228,6 +5911,8 @@ ${item.text}` : item.text;
       });
     }
 
+    const tabPolybuzz = $("#tabPolybuzz");
+    if (tabPolybuzz) tabPolybuzz.addEventListener("click", () => openPolybuzzView());
     if (tabPlus) tabPlus.addEventListener("click", () => openModal());
     if (tabProfile) tabProfile.addEventListener("click", () => setView("profile"));
     if (btnOpenProfileFromChats) btnOpenProfileFromChats.addEventListener("click", () => setView("profile"));
@@ -4275,6 +5960,8 @@ ${item.text}` : item.text;
       });
     }
 
+    const sidePolybuzz = $("#sidePolybuzz");
+    if (sidePolybuzz) sidePolybuzz.addEventListener("click", () => openPolybuzzView());
     if (sidePlus) sidePlus.addEventListener("click", () => openModal());
     if (sideProfile) sideProfile.addEventListener("click", () => setView("profile"));
 
@@ -4293,6 +5980,31 @@ ${item.text}` : item.text;
       });
     }
 
+    // Gender filter buttons
+    document.querySelectorAll(".pbGenderBtn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        polybuzzGenderFilter = btn.dataset.gender || "all";
+        renderPolybuzzGrid();
+      });
+    });
+
+    const polybuzzSearchInput = $("#polybuzzSearch");
+    if (polybuzzSearchInput) {
+      polybuzzSearchInput.addEventListener("input", () => {
+        const q = polybuzzSearchInput.value.trim();
+        clearTimeout(polybuzzSearchTimer);
+        if (!q) {
+          polybuzzSearchQuery = "";
+          polybuzzSearchItems = [];
+          polybuzzSearchPage = 1;
+          polybuzzSearchHasMore = true;
+          renderPolybuzzGrid();
+          return;
+        }
+        polybuzzSearchTimer = setTimeout(() => searchPolybuzz(q), 400);
+      });
+    }
+
     const messages = $("#messages");
     if (messages) {
       messages.addEventListener("click", (e) => {
@@ -4304,11 +6016,15 @@ ${item.text}` : item.text;
         if (btn.disabled) return;
 
         if (action === "regen") {
-          regenerateLastAnswer();
+          regenerateMessageAt(msgId);
         } else if (action === "cont") {
           continueLastAnswer();
         } else if (action === "thoughts") {
           continueLastAnswerAsThoughts();
+        } else if (action === "branch-prev") {
+          switchMessageBranch(msgId, -1);
+        } else if (action === "branch-next") {
+          switchMessageBranch(msgId, +1);
         }
       });
     }
@@ -4353,42 +6069,52 @@ ${item.text}` : item.text;
 
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
-      const msgSheet = $("#msgActions");
+      const ctxMenu = $("#ctxMenu");
       const promptsSheet = $("#promptsSheet");
       const charModal = $("#charactersModal");
-      if (msgSheet && !msgSheet.hidden) closeMsgActions();
+      const multiModal = $("#multiChatModal");
+      if (ctxMenu && !ctxMenu.hidden) closeMsgActions();
+      else if (multiModal && !multiModal.hidden) closeMultiChatModal();
       else if (promptsSheet && !promptsSheet.hidden) closePromptsSheet();
       else if (charModal && !charModal.hidden) closeModal();
     });
 
-    const msgActions = $("#msgActions");
-    if (msgActions) {
-      msgActions.addEventListener("click", (e) => {
-        const t = e.target;
-        if (t && t.dataset && t.dataset.close) closeMsgActions();
+    // Context menu: overlay closes menu
+    const ctxMenuOverlay = $("#ctxMenuOverlay");
+    if (ctxMenuOverlay) {
+      ctxMenuOverlay.addEventListener("click", () => closeMsgActions());
+    }
+
+    // Context menu: Copy
+    const ctxCopy = $("#ctxCopy");
+    if (ctxCopy) {
+      ctxCopy.addEventListener("click", () => {
+        const ch = activeCharacter();
+        const msgId = state.msgActionsTargetId;
+        closeMsgActions();
+        if (!ch || !msgId) return;
+
+        const { msg } = findMessageById(ch.id, msgId);
+        if (!msg) return;
+
+        const text = String(msg.content || "");
+        navigator.clipboard.writeText(text).then(() => {
+          flashStatus("Скопировано", true);
+        }).catch(() => {
+          flashStatus("Не удалось скопировать", false);
+        });
       });
     }
 
-    const btnMsgEdit = $("#btnMsgEdit");
-    const btnMsgDelete = $("#btnMsgDelete");
-
-    if (btnMsgEdit) {
-      btnMsgEdit.addEventListener("click", () => {
+    // Context menu: Edit
+    const ctxEdit = $("#ctxEdit");
+    if (ctxEdit) {
+      ctxEdit.addEventListener("click", () => {
         const ch = activeCharacter();
         const msgId = state.msgActionsTargetId;
         closeMsgActions();
         if (!ch || !msgId) return;
         editMessage(ch.id, msgId);
-      });
-    }
-
-    if (btnMsgDelete) {
-      btnMsgDelete.addEventListener("click", () => {
-        const ch = activeCharacter();
-        const msgId = state.msgActionsTargetId;
-        closeMsgActions();
-        if (!ch || !msgId) return;
-        deleteMessage(ch.id, msgId);
       });
     }
 
@@ -4678,21 +6404,10 @@ ${item.text}` : item.text;
       next.name = String($("#charNameInput").value || "").trim() || "(без имени)";
       next.gender = $("#charGenderInput").value || "unspecified";
       next.intro = String($("#charIntroInput").value || "").trim();
-      next.visibility = $("#charVisibilityInput").value || "public";
-      next.tags = Array.isArray(c.tags) ? c.tags.slice(0, 5) : [];
-      next.outfit = String($("#charOutfitInput").value || "");
-      next.setting = String($("#charSettingInput").value || "");
-      next.backgroundHint = String($("#charBgHintInput").value || "");
       next.backstory = String($("#charBackstoryInput").value || "");
-      next.dialogueStyle = $("#charStyleInput").value || "natural";
       next.initialMessage = String($("#charInitialMessageInput").value || "");
+      next.outfit = String($("#charOutfitInput")?.value || "");
       next.updatedAt = nowTs();
-
-      const rightsOk = $("#charRightsConfirm")?.checked;
-      if (!rightsOk) {
-        $("#charFormNote").textContent = "Подтвердите права на контент персонажа.";
-        return;
-      }
 
       if (next.name.length < 3) {
         $("#charFormNote").textContent = "Имя персонажа должно быть не короче 3 символов.";
@@ -4716,10 +6431,7 @@ ${item.text}` : item.text;
     const previewInputs = [
       "#charNameInput",
       "#charIntroInput",
-      "#charOutfitInput",
-      "#charSettingInput",
       "#charBackstoryInput",
-      "#charStyleInput"
     ]
       .map((sel) => $(sel))
       .filter(Boolean);
@@ -4732,10 +6444,7 @@ ${item.text}` : item.text;
         name: String($("#charNameInput")?.value || "").trim() || c.name,
         gender: String($("#charGenderInput")?.value || c.gender || "unspecified"),
         intro: String($("#charIntroInput")?.value || ""),
-        outfit: String($("#charOutfitInput")?.value || ""),
-        setting: String($("#charSettingInput")?.value || ""),
-        backstory: String($("#charBackstoryInput")?.value || ""),
-        dialogueStyle: String($("#charStyleInput")?.value || c.dialogueStyle || "natural")
+        backstory: String($("#charBackstoryInput")?.value || "")
       });
       syncCharacterCounters();
     };
@@ -4927,19 +6636,21 @@ ${item.text}` : item.text;
       });
     }
 
+    const btnPromptsAdd = $("#btnPromptsAdd");
+    if (btnPromptsAdd) btnPromptsAdd.addEventListener("click", () => openPromptEditor(null));
+
+    const btnPromptsAddFolder = $("#btnPromptsAddFolder");
+    if (btnPromptsAddFolder) btnPromptsAddFolder.addEventListener("click", () => createPromptFolder());
+
+    const btnEditorBack = $("#btnEditorBack");
+    if (btnEditorBack) btnEditorBack.addEventListener("click", () => closePromptEditor());
+
     const btnSavePrompt = $("#btnSavePrompt");
     if (btnSavePrompt) btnSavePrompt.addEventListener("click", () => savePromptFromDraft());
 
     const btnClearPromptDraft = $("#btnClearPromptDraft");
     if (btnClearPromptDraft) {
-      btnClearPromptDraft.addEventListener("click", () => {
-        const titleInput = $("#promptTitleInput");
-        const textInput = $("#promptTextInput");
-        if (titleInput) titleInput.value = "";
-        if (textInput) textInput.value = "";
-        const note = $("#promptSheetNote");
-        if (note) note.textContent = "";
-      });
+      btnClearPromptDraft.addEventListener("click", () => closePromptEditor());
     }
 
     const btnClearChat = $("#btnClearChat");
@@ -5055,6 +6766,102 @@ ${item.text}` : item.text;
 
     const hint = $("#composerHint");
     if (hint) hint.textContent = "";
+
+    // ── Multi-chat wiring ──
+    const subTabPersonal = $("#subTabPersonal");
+    const subTabMulti = $("#subTabMulti");
+    if (subTabPersonal) {
+      subTabPersonal.addEventListener("click", () => {
+        state.chatsSubTab = "personal";
+        refreshChatsView();
+      });
+    }
+    if (subTabMulti) {
+      subTabMulti.addEventListener("click", () => {
+        state.chatsSubTab = "multi";
+        refreshChatsView();
+      });
+    }
+
+    const btnBackFromGroupChat = $("#btnBackFromGroupChat");
+    if (btnBackFromGroupChat) {
+      btnBackFromGroupChat.addEventListener("click", () => {
+        state.chatsSubTab = "multi";
+        setView("chats");
+        refreshChatsView();
+      });
+    }
+
+    const btnClearGroupChat = $("#btnClearGroupChat");
+    if (btnClearGroupChat) {
+      btnClearGroupChat.addEventListener("click", () => {
+        if (!window.confirm("Очистить этот мульти-чат?")) return;
+        const gc = activeGroupChat();
+        if (!gc) return;
+        gc.messages = [];
+        gc.updatedAt = nowTs();
+        saveGroupChats();
+        // Re-add initial greetings
+        const msgs = [];
+        for (const cid of gc.characterIds) {
+          const ch = state.characters.find((c) => c.id === cid);
+          if (!ch) continue;
+          const initial = (ch.initialMessage || "").trim();
+          const content = initial || `Привет. Я ${ch.name}.`;
+          msgs.push({ id: uuid(), role: "assistant", characterId: cid, content, ts: nowTs() + msgs.length });
+        }
+        gc.messages = msgs;
+        gc.updatedAt = nowTs();
+        saveGroupChats();
+        renderGroupMessages();
+      });
+    }
+
+    // Multi-chat modal events
+    const btnCloseMultiModal = $("#btnCloseMultiModal");
+    if (btnCloseMultiModal) btnCloseMultiModal.addEventListener("click", () => closeMultiChatModal());
+
+    const multiChatModal = $("#multiChatModal");
+    if (multiChatModal) {
+      multiChatModal.addEventListener("click", (e) => {
+        if (e.target?.dataset?.closeMulti) closeMultiChatModal();
+      });
+    }
+
+    const btnCreateMultiChat = $("#btnCreateMultiChat");
+    if (btnCreateMultiChat) btnCreateMultiChat.addEventListener("click", () => createMultiChatFromModal());
+
+    // Group chat composer
+    const groupInput = $("#groupUserInput");
+    if (groupInput) groupInput.addEventListener("input", () => autoGrowTextarea(groupInput));
+
+    const groupForm = $("#groupComposerForm");
+    if (groupForm) {
+      groupForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (state.generating) return;
+        const text = String(groupInput.value || "").trim();
+        if (!text) return;
+        groupInput.value = "";
+        autoGrowTextarea(groupInput);
+        await sendGroupMessage(text);
+      });
+    }
+
+    if (groupInput) {
+      groupInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          if (state.generating) return;
+          const text = String(groupInput.value || "").trim();
+          if (!text) return;
+          groupForm?.requestSubmit();
+        }
+      });
+    }
+
+    const groupHint = $("#groupComposerHint");
+    if (groupHint) groupHint.textContent = "";
   }
 
   // Fetch characters from server and merge into local state
@@ -5127,6 +6934,7 @@ ${item.text}` : item.text;
 
   async function bootstrap() {
     ensureSeed();
+    loadGroupChats();
     wireUI();
     fillProfileUI();
     await syncCharactersFromServer();
@@ -5134,7 +6942,7 @@ ${item.text}` : item.text;
     renderHeader();
     renderMessages();
     setView("chats");
-    renderChatList("");
+    refreshChatsView();
     refreshModels();
 
     setInterval(syncCharactersFromServer, 15000);
