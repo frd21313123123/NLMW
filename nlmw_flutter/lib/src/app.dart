@@ -8,6 +8,7 @@ import 'ui/screens/group_chat_screen.dart';
 import 'ui/screens/polybuzz_screen.dart';
 import 'ui/screens/profile_screen.dart';
 import 'ui/screens/prompts_screen.dart';
+import 'ui/web_theme.dart';
 
 class NlmwApp extends StatelessWidget {
   const NlmwApp({super.key});
@@ -56,22 +57,78 @@ class NlmwApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
+        fontFamily: WebText.fontFamily,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1AA37A),
+          seedColor: WebColors.accent,
           brightness: Brightness.dark,
+          surface: WebColors.surface,
+          primary: WebColors.accent,
+          secondary: WebColors.accent2,
         ),
-        scaffoldBackgroundColor: const Color(0xFF101418),
+        scaffoldBackgroundColor: WebColors.bg,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: WebColors.bg,
+          foregroundColor: WebColors.text,
+          elevation: 0,
+          centerTitle: false,
+          scrolledUnderElevation: 0,
+        ),
         cardTheme: const CardThemeData(
-          margin: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          color: WebColors.surface,
+          margin: EdgeInsets.zero,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(8)),
+            borderRadius: BorderRadius.all(Radius.circular(16)),
           ),
         ),
-        inputDecorationTheme: const InputDecorationTheme(
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.all(Radius.circular(8)),
+        textTheme: const TextTheme(
+          titleLarge: TextStyle(
+            color: WebColors.text,
+            fontSize: 20,
+            fontWeight: FontWeight.w800,
           ),
+          titleMedium: TextStyle(
+            color: WebColors.text,
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+          ),
+          bodyMedium: TextStyle(color: WebColors.text, fontSize: 15),
+          bodySmall: TextStyle(color: WebColors.muted, fontSize: 13),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
           filled: true,
+          fillColor: WebColors.surface2,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: WebColors.border),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: WebColors.border),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: WebColors.accent),
+          ),
+          labelStyle: const TextStyle(color: WebColors.muted),
+          hintStyle: const TextStyle(color: WebColors.muted),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: WebColors.accent,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: WebColors.text,
+            side: const BorderSide(color: WebColors.border2),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
         ),
       ),
       routerConfig: router,

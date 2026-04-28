@@ -1,0 +1,38 @@
+{
+  "name": "flutter-app-manager",
+  "version": "0.1.0",
+  "description": "Local Codex plugin for managing Flutter applications.",
+  "author": {
+    "name": "Local User"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "flutter",
+    "dart",
+    "mobile",
+    "android",
+    "ios",
+    "web",
+    "desktop"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Flutter App Manager",
+    "shortDescription": "Inspect, run, test, build, and maintain Flutter apps.",
+    "longDescription": "Adds Codex workflows for Flutter and Dart projects, including project discovery, dependency changes, asset wiring, platform builds, diagnostics, formatting, analysis, tests, and release-safety checks.",
+    "developerName": "Local User",
+    "category": "Development",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Analyze",
+      "Run"
+    ],
+    "defaultPrompt": [
+      "Check this Flutter app and explain issues.",
+      "Add a Flutter screen and wire navigation.",
+      "Build this Flutter app for web or Android."
+    ],
+    "brandColor": "#02569B"
+  }
+}

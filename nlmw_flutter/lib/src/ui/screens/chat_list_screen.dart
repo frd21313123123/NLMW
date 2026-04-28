@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../../domain/models.dart';
 import '../../state/app_controller.dart';
+import '../web_theme.dart';
 import '../widgets/app_avatar.dart';
 import '../widgets/controller_gate.dart';
 
@@ -23,47 +24,52 @@ class _ChatListScreenState extends State<ChatListScreen> {
       builder: (context, controller) {
         return DefaultTabController(
           length: 2,
-          child: Scaffold(
-            appBar: AppBar(
-              title: const Text('NLMW Chat'),
-              actions: [
-                IconButton(
-                  tooltip: 'PolyBuzz',
-                  onPressed: () => context.go('/polybuzz'),
-                  icon: const Icon(Icons.travel_explore),
-                ),
-                IconButton(
-                  tooltip: 'Промты',
-                  onPressed: () => context.go('/prompts'),
-                  icon: const Icon(Icons.library_books),
-                ),
-                IconButton(
-                  tooltip: 'Профиль',
-                  onPressed: () => context.go('/profile'),
-                  icon: const Icon(Icons.person),
-                ),
-              ],
-              bottom: const TabBar(
-                tabs: [
-                  Tab(text: 'Личные'),
-                  Tab(text: 'Мульти'),
-                ],
-              ),
-            ),
-            floatingActionButton: FloatingActionButton(
-              onPressed: () => context.go('/character/new'),
-              child: const Icon(Icons.add),
-            ),
-            body: Column(
+          child: WebPage(
+            bottomNav: 'chats',
+            child: Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: TextField(
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search),
-                      hintText: 'Поиск персонажей',
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: WebSearchField(
+                          hint: 'Поиск',
+                          onChanged: (value) => setState(() => query = value),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      WebIconButton(
+                        tooltip: 'Промты',
+                        icon: Icons.library_books,
+                        onPressed: () => context.go('/prompts'),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                  child: Container(
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: WebColors.surface,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: WebColors.border),
                     ),
-                    onChanged: (value) => setState(() => query = value),
+                    child: TabBar(
+                      dividerColor: Colors.transparent,
+                      indicatorSize: TabBarIndicatorSize.tab,
+                      labelColor: WebColors.text,
+                      unselectedLabelColor: WebColors.muted,
+                      indicator: BoxDecoration(
+                        color: WebColors.surface2,
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      tabs: const [
+                        Tab(text: 'Личные'),
+                        Tab(text: 'Мульти'),
+                      ],
+                    ),
                   ),
                 ),
                 Expanded(
@@ -101,9 +107,12 @@ class _PersonalChats extends StatelessWidget {
         }).toList();
 
         if (characters.isEmpty) {
-          return const Center(child: Text('Ничего не найдено'));
+          return const Center(
+            child: Text('Ничего не найдено', style: WebText.muted),
+          );
         }
         return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
           itemCount: characters.length,
           itemBuilder: (context, index) {
             final character = characters[index];
@@ -112,34 +121,25 @@ class _PersonalChats extends StatelessWidget {
               (message) => message.isChatMessage,
               orElse: () => ChatMessage.assistant(character.initialMessage),
             );
-            return Card(
-              child: ListTile(
-                leading: AppAvatar(
-                  imagePath: character.avatarPath,
-                  label: character.name,
-                ),
-                title: Text(
-                  character.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(
-                  last?.content.trim().isNotEmpty == true
-                      ? last!.content
-                      : character.intro,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                trailing: IconButton(
-                  tooltip: 'Редактировать',
-                  icon: const Icon(Icons.edit),
-                  onPressed: () => context.go('/character/${character.id}'),
-                ),
-                onTap: () async {
-                  await controller.selectCharacter(character.id);
-                  if (context.mounted) context.go('/chat/${character.id}');
-                },
+            return _ChatRow(
+              avatar: AppAvatar(
+                imagePath: character.avatarPath,
+                label: character.name,
+                radius: 26,
               ),
+              title: character.name,
+              subtitle: last?.content.trim().isNotEmpty == true
+                  ? last!.content
+                  : character.intro,
+              trailing: IconButton(
+                tooltip: 'Редактировать',
+                icon: const Icon(Icons.more_horiz, color: WebColors.muted),
+                onPressed: () => context.go('/character/${character.id}'),
+              ),
+              onTap: () async {
+                await controller.selectCharacter(character.id);
+                if (context.mounted) context.go('/chat/${character.id}');
+              },
             );
           },
         );
@@ -159,17 +159,27 @@ class _GroupChats extends StatelessWidget {
         return Column(
           children: [
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: FilledButton.icon(
-                onPressed: () => _showCreateGroup(context, controller),
-                icon: const Icon(Icons.group_add),
-                label: const Text('Создать мульти-чат'),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+              child: SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: OutlinedButton.icon(
+                  onPressed: () => _showCreateGroup(context, controller),
+                  icon: const Icon(Icons.group_add),
+                  label: const Text('Создать мульти-чат'),
+                ),
               ),
             ),
             Expanded(
               child: groups.isEmpty
-                  ? const Center(child: Text('Мульти-чаты пока не созданы'))
+                  ? const Center(
+                      child: Text(
+                        'Мульти-чаты пока не созданы',
+                        style: WebText.muted,
+                      ),
+                    )
                   : ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
                       itemCount: groups.length,
                       itemBuilder: (context, index) {
                         final group = groups[index];
@@ -182,22 +192,23 @@ class _GroupChats extends StatelessWidget {
                             )
                             .whereType<String>()
                             .join(', ');
-                        return Card(
-                          child: ListTile(
-                            leading: const CircleAvatar(
-                              child: Icon(Icons.groups),
-                            ),
-                            title: Text(group.title),
-                            subtitle: Text(names),
-                            trailing: Text(
-                              DateFormat('dd.MM').format(
-                                DateTime.fromMillisecondsSinceEpoch(
-                                  group.updatedAt,
-                                ),
+                        return _ChatRow(
+                          avatar: const CircleAvatar(
+                            radius: 26,
+                            backgroundColor: WebColors.surface2,
+                            child: Icon(Icons.groups, color: WebColors.text),
+                          ),
+                          title: group.title,
+                          subtitle: names,
+                          trailing: Text(
+                            DateFormat('dd.MM').format(
+                              DateTime.fromMillisecondsSinceEpoch(
+                                group.updatedAt,
                               ),
                             ),
-                            onTap: () => context.go('/group/${group.id}'),
+                            style: WebText.muted,
                           ),
+                          onTap: () => context.go('/group/${group.id}'),
                         );
                       },
                     ),
@@ -220,6 +231,7 @@ class _GroupChats extends StatelessWidget {
         return StatefulBuilder(
           builder: (context, setState) {
             return AlertDialog(
+              backgroundColor: WebColors.surface,
               title: const Text('Новый мульти-чат'),
               content: SizedBox(
                 width: double.maxFinite,
@@ -278,6 +290,68 @@ class _GroupChats extends StatelessWidget {
       result,
     );
     if (context.mounted) context.go('/group/${group.id}');
+  }
+}
+
+class _ChatRow extends StatelessWidget {
+  const _ChatRow({
+    required this.avatar,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.trailing,
+  });
+
+  final Widget avatar;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+        child: Row(
+          children: [
+            avatar,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: WebColors.text,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: WebColors.muted,
+                      fontSize: 13,
+                      height: 1.25,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (trailing != null) ...[const SizedBox(width: 8), trailing!],
+          ],
+        ),
+      ),
+    );
   }
 }
 

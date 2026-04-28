@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/polybuzz_client.dart';
+import '../web_theme.dart';
 import '../widgets/app_avatar.dart';
 import '../widgets/controller_gate.dart';
 
@@ -19,7 +20,6 @@ class _PolybuzzScreenState extends State<PolybuzzScreen> {
   int page = 1;
   bool loading = false;
   String error = '';
-  String lastQuery = '';
 
   @override
   void dispose() {
@@ -35,49 +35,42 @@ class _PolybuzzScreenState extends State<PolybuzzScreen> {
         if (items.isEmpty && !loading && error.isEmpty) {
           Future.microtask(() => _load(controller, reset: true));
         }
-        return Scaffold(
-          appBar: AppBar(
-            leading: IconButton(
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () => context.go('/'),
-            ),
-            title: const Text('PolyBuzz'),
-          ),
-          body: Column(
+        return WebPage(
+          bottomNav: 'polybuzz',
+          child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                 child: Row(
                   children: [
                     Expanded(
-                      child: TextField(
+                      child: WebSearchField(
                         controller: searchController,
-                        decoration: const InputDecoration(
-                          prefixIcon: Icon(Icons.search),
-                          hintText: 'Поиск PolyBuzz',
-                        ),
+                        hint: 'Поиск PolyBuzz',
                         onSubmitted: (_) => _load(controller, reset: true),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    FilledButton(
+                    const SizedBox(width: 10),
+                    WebIconButton(
+                      tooltip: 'Найти',
+                      icon: Icons.search,
                       onPressed: loading
                           ? null
                           : () => _load(controller, reset: true),
-                      child: const Icon(Icons.search),
                     ),
                   ],
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                 child: Row(
                   children: [
                     Expanded(
                       child: TextField(
                         controller: importController,
-                        decoration: const InputDecoration(
-                          hintText: 'Ссылка PolyBuzz или JSON карточки',
+                        style: WebText.body,
+                        decoration: webInputDecoration(
+                          'Ссылка PolyBuzz или JSON карточки',
                         ),
                       ),
                     ),
@@ -85,13 +78,11 @@ class _PolybuzzScreenState extends State<PolybuzzScreen> {
                     OutlinedButton(
                       onPressed: loading
                           ? null
-                          : () async {
-                              await _importText(
-                                context,
-                                controller,
-                                importController.text,
-                              );
-                            },
+                          : () => _importText(
+                              context,
+                              controller,
+                              importController.text,
+                            ),
                       child: const Text('Импорт'),
                     ),
                   ],
@@ -99,17 +90,15 @@ class _PolybuzzScreenState extends State<PolybuzzScreen> {
               ),
               if (error.isNotEmpty)
                 Padding(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                   child: Text(
                     error,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
+                    style: const TextStyle(color: WebColors.danger),
                   ),
                 ),
               Expanded(
                 child: GridView.builder(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
                     childAspectRatio: 0.72,
@@ -130,42 +119,9 @@ class _PolybuzzScreenState extends State<PolybuzzScreen> {
                       );
                     }
                     final item = items[index];
-                    return Card(
-                      clipBehavior: Clip.antiAlias,
-                      child: InkWell(
-                        onTap: () => _importText(context, controller, item.url),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(child: _PolyImage(item: item)),
-                            Padding(
-                              padding: const EdgeInsets.all(8),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    item.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.titleSmall,
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    item.brief,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodySmall,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                    return _PolyCard(
+                      item: item,
+                      onTap: () => _importText(context, controller, item.url),
                     );
                   },
                 ),
@@ -193,7 +149,6 @@ class _PolybuzzScreenState extends State<PolybuzzScreen> {
           ? await controller.loadPolybuzzCatalogPage(page)
           : await controller.searchPolybuzz(query, page: page);
       setState(() {
-        lastQuery = query;
         page += 1;
         items.addAll(result);
       });
@@ -227,6 +182,66 @@ class _PolybuzzScreenState extends State<PolybuzzScreen> {
     } finally {
       if (mounted) setState(() => loading = false);
     }
+  }
+}
+
+class _PolyCard extends StatelessWidget {
+  const _PolyCard({required this.item, required this.onTap});
+
+  final PolybuzzItem item;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: onTap,
+      child: Ink(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A1C),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: WebColors.border),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: _PolyImage(item: item)),
+              Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: WebColors.text,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      item.brief,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: WebColors.muted,
+                        fontSize: 12,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../domain/models.dart';
+import '../web_theme.dart';
 import '../widgets/controller_gate.dart';
 
 class GroupChatScreen extends StatefulWidget {
@@ -30,9 +31,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             .where((item) => item.id == widget.groupId)
             .firstOrNull;
         if (group == null) {
-          return Scaffold(
-            appBar: AppBar(),
-            body: const Center(child: Text('Мульти-чат не найден')),
+          return const WebPage(
+            child: Center(
+              child: Text('Мульти-чат не найден', style: WebText.muted),
+            ),
           );
         }
         final participants = group.characterIds
@@ -44,82 +46,114 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             .whereType<CharacterProfile>()
             .toList();
         return Scaffold(
-          appBar: AppBar(
-            leading: IconButton(
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () => context.go('/'),
-            ),
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(group.title),
-                Text(
-                  participants.map((item) => item.name).join(', '),
-                  style: Theme.of(context).textTheme.bodySmall,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          body: Column(
+          backgroundColor: WebColors.bg,
+          body: Stack(
             children: [
-              Expanded(
-                child: ListView.builder(
-                  reverse: true,
-                  padding: const EdgeInsets.all(12),
-                  itemCount: group.messages.length,
-                  itemBuilder: (context, index) {
-                    final message =
-                        group.messages[group.messages.length - index - 1];
-                    final speaker = participants
-                        .where((item) => item.id == message.characterId)
-                        .firstOrNull;
-                    return _GroupBubble(message: message, speaker: speaker);
-                  },
-                ),
+              Column(
+                children: [
+                  SafeArea(
+                    bottom: false,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(6, 8, 6, 8),
+                      child: Row(
+                        children: [
+                          WebIconButton(
+                            icon: Icons.arrow_back,
+                            onPressed: () => context.go('/'),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(group.title, style: WebText.title),
+                                Text(
+                                  participants
+                                      .map((item) => item.name)
+                                      .join(', '),
+                                  style: WebText.muted,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      reverse: true,
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 108),
+                      itemCount: group.messages.length,
+                      itemBuilder: (context, index) {
+                        final message =
+                            group.messages[group.messages.length - index - 1];
+                        final speaker = participants
+                            .where((item) => item.id == message.characterId)
+                            .firstOrNull;
+                        return _GroupBubble(message: message, speaker: speaker);
+                      },
+                    ),
+                  ),
+                ],
               ),
-              if (controller.status.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 4,
-                  ),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(controller.status),
-                  ),
-                ),
-              SafeArea(
-                top: false,
-                child: Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: inputController,
-                          minLines: 1,
-                          maxLines: 5,
-                          enabled: !controller.generating,
-                          decoration: const InputDecoration(
-                            hintText: 'Сообщение в мульти-чат...',
+              Positioned(
+                left: 8,
+                right: 8,
+                bottom: 8,
+                child: SafeArea(
+                  top: false,
+                  child: WebBlurPanel(
+                    padding: const EdgeInsets.all(6),
+                    radius: 18,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: inputController,
+                            minLines: 1,
+                            maxLines: 5,
+                            enabled: !controller.generating,
+                            style: WebText.body,
+                            decoration: const InputDecoration(
+                              hintText: 'Сообщение в мульти-чат...',
+                              filled: true,
+                              fillColor: Color(0x3D000000),
+                              border: OutlineInputBorder(
+                                borderSide: BorderSide.none,
+                                borderRadius: BorderRadius.all(
+                                  Radius.circular(14),
+                                ),
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton(
-                        onPressed: controller.generating
-                            ? null
-                            : () {
-                                final text = inputController.text.trim();
-                                if (text.isEmpty) return;
-                                inputController.clear();
-                                controller.sendGroupMessage(group.id, text);
-                              },
-                        child: const Icon(Icons.send),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: FilledButton(
+                            onPressed: controller.generating
+                                ? null
+                                : () {
+                                    final text = inputController.text.trim();
+                                    if (text.isEmpty) return;
+                                    inputController.clear();
+                                    controller.sendGroupMessage(group.id, text);
+                                  },
+                            style: FilledButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            child: const Icon(Icons.send, size: 20),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -144,14 +178,14 @@ class _GroupBubble extends StatelessWidget {
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.sizeOf(context).width * 0.84,
+          maxWidth: MediaQuery.sizeOf(context).width * 0.78,
         ),
-        child: Card(
-          color: isUser
-              ? Theme.of(context).colorScheme.primaryContainer
-              : Theme.of(context).colorScheme.surfaceContainerHighest,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: WebBlurPanel(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+            radius: 18,
+            color: isUser ? WebColors.chatUser : WebColors.chatBot,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -160,13 +194,18 @@ class _GroupBubble extends StatelessWidget {
                     padding: const EdgeInsets.only(bottom: 4),
                     child: Text(
                       speaker!.name,
-                      style: Theme.of(context).textTheme.labelMedium,
+                      style: const TextStyle(
+                        color: WebColors.accentText,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                 SelectableText(
                   message.pending && message.content.isEmpty
                       ? '...'
                       : message.content,
+                  style: WebText.body,
                 ),
                 if (message.pending)
                   const Padding(

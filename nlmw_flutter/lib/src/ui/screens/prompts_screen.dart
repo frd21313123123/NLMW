@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../domain/models.dart';
+import '../web_theme.dart';
 import '../widgets/controller_gate.dart';
 
 class PromptsScreen extends StatefulWidget {
@@ -23,28 +24,37 @@ class _PromptsScreenState extends State<PromptsScreen> {
           if (folderFilter == '__all__') return true;
           return prompt.folderId == folderFilter;
         }).toList()..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-        return Scaffold(
-          appBar: AppBar(
-            leading: IconButton(
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () => context.go('/'),
-            ),
-            title: const Text('Промты'),
-            actions: [
-              IconButton(
-                tooltip: 'Новая папка',
-                onPressed: () => _editFolder(context, controller),
-                icon: const Icon(Icons.create_new_folder),
-              ),
-              IconButton(
-                tooltip: 'Новый промт',
-                onPressed: () => _editPrompt(context, controller),
-                icon: const Icon(Icons.add),
-              ),
-            ],
-          ),
-          body: Column(
+        return WebPage(
+          child: Column(
             children: [
+              SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
+                  child: Row(
+                    children: [
+                      WebIconButton(
+                        icon: Icons.arrow_back,
+                        onPressed: () => context.go('/'),
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text('Промты', style: WebText.title),
+                      ),
+                      WebIconButton(
+                        tooltip: 'Новая папка',
+                        icon: Icons.create_new_folder,
+                        onPressed: () => _editFolder(context, controller),
+                      ),
+                      WebIconButton(
+                        tooltip: 'Новый промт',
+                        icon: Icons.add,
+                        onPressed: () => _editPrompt(context, controller),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
               SizedBox(
                 height: 48,
                 child: ListView(
@@ -54,72 +64,93 @@ class _PromptsScreenState extends State<PromptsScreen> {
                     vertical: 6,
                   ),
                   children: [
-                    ChoiceChip(
-                      label: const Text('Все'),
+                    _FilterChip(
+                      label: 'Все',
                       selected: folderFilter == '__all__',
-                      onSelected: (_) =>
-                          setState(() => folderFilter = '__all__'),
+                      onTap: () => setState(() => folderFilter = '__all__'),
                     ),
-                    const SizedBox(width: 8),
-                    ChoiceChip(
-                      label: const Text('Без папки'),
+                    _FilterChip(
+                      label: 'Без папки',
                       selected: folderFilter.isEmpty,
-                      onSelected: (_) => setState(() => folderFilter = ''),
+                      onTap: () => setState(() => folderFilter = ''),
                     ),
-                    for (final folder in controller.data.promptFolders) ...[
-                      const SizedBox(width: 8),
-                      ChoiceChip(
-                        label: Text(folder.name),
+                    for (final folder in controller.data.promptFolders)
+                      _FilterChip(
+                        label: folder.name,
                         selected: folderFilter == folder.id,
-                        onSelected: (_) =>
-                            setState(() => folderFilter = folder.id),
+                        onTap: () => setState(() => folderFilter = folder.id),
                       ),
-                    ],
                   ],
                 ),
               ),
               Expanded(
                 child: prompts.isEmpty
-                    ? const Center(child: Text('Сохраненных промтов пока нет'))
+                    ? const Center(
+                        child: Text(
+                          'Сохраненных промтов пока нет',
+                          style: WebText.muted,
+                        ),
+                      )
                     : ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                         itemCount: prompts.length,
                         itemBuilder: (context, index) {
                           final prompt = prompts[index];
-                          return Card(
-                            child: ListTile(
-                              title: Text(prompt.title),
-                              subtitle: Text(
-                                prompt.text,
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              onTap: () =>
-                                  _editPrompt(context, controller, prompt),
-                              trailing: Wrap(
-                                children: [
-                                  IconButton(
-                                    tooltip: 'Копировать',
-                                    icon: const Icon(Icons.copy),
-                                    onPressed: () {
-                                      Clipboard.setData(
-                                        ClipboardData(text: prompt.text),
-                                      );
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Скопировано'),
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: WebCard(
+                              child: InkWell(
+                                onTap: () =>
+                                    _editPrompt(context, controller, prompt),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            prompt.title,
+                                            style: const TextStyle(
+                                              color: WebColors.text,
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          ),
                                         ),
-                                      );
-                                    },
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Удалить',
-                                    icon: const Icon(Icons.delete),
-                                    onPressed: () =>
-                                        controller.deletePrompt(prompt.id),
-                                  ),
-                                ],
+                                        IconButton(
+                                          tooltip: 'Копировать',
+                                          icon: const Icon(Icons.copy),
+                                          color: WebColors.muted,
+                                          onPressed: () {
+                                            Clipboard.setData(
+                                              ClipboardData(text: prompt.text),
+                                            );
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              const SnackBar(
+                                                content: Text('Скопировано'),
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                        IconButton(
+                                          tooltip: 'Удалить',
+                                          icon: const Icon(Icons.delete),
+                                          color: WebColors.muted,
+                                          onPressed: () => controller
+                                              .deletePrompt(prompt.id),
+                                        ),
+                                      ],
+                                    ),
+                                    Text(
+                                      prompt.text,
+                                      maxLines: 3,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: WebText.muted,
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           );
@@ -142,10 +173,11 @@ class _PromptsScreenState extends State<PromptsScreen> {
     final result = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: WebColors.surface,
         title: Text(folder == null ? 'Новая папка' : 'Папка'),
         content: TextField(
           controller: text,
-          decoration: const InputDecoration(labelText: 'Название'),
+          decoration: webInputDecoration('', label: 'Название'),
         ),
         actions: [
           if (folder != null)
@@ -185,6 +217,7 @@ class _PromptsScreenState extends State<PromptsScreen> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setState) => AlertDialog(
+            backgroundColor: WebColors.surface,
             title: Text(prompt == null ? 'Новый промт' : 'Промт'),
             content: SizedBox(
               width: double.maxFinite,
@@ -193,12 +226,12 @@ class _PromptsScreenState extends State<PromptsScreen> {
                 children: [
                   TextField(
                     controller: title,
-                    decoration: const InputDecoration(labelText: 'Название'),
+                    decoration: webInputDecoration('', label: 'Название'),
                   ),
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
                     initialValue: folderId,
-                    decoration: const InputDecoration(labelText: 'Папка'),
+                    decoration: webInputDecoration('', label: 'Папка'),
                     items: [
                       const DropdownMenuItem(
                         value: '',
@@ -218,7 +251,7 @@ class _PromptsScreenState extends State<PromptsScreen> {
                     controller: text,
                     minLines: 5,
                     maxLines: 10,
-                    decoration: const InputDecoration(labelText: 'Текст'),
+                    decoration: webInputDecoration('', label: 'Текст'),
                   ),
                 ],
               ),
@@ -245,5 +278,35 @@ class _PromptsScreenState extends State<PromptsScreen> {
         folderId: folderId,
       );
     }
+  }
+}
+
+class _FilterChip extends StatelessWidget {
+  const _FilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ActionChip(
+        label: Text(label),
+        onPressed: onTap,
+        labelStyle: TextStyle(
+          color: selected ? WebColors.text : WebColors.muted,
+          fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
+        ),
+        backgroundColor: selected ? WebColors.surface2 : WebColors.surface,
+        side: const BorderSide(color: WebColors.border),
+        shape: const StadiumBorder(),
+      ),
+    );
   }
 }

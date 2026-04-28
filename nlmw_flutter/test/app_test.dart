@@ -130,10 +130,10 @@ void main() {
     await tester.pumpWidget(_testApp(controller));
     await tester.pumpAndSettle();
 
-    expect(find.text('NLMW Chat'), findsOneWidget);
+    expect(find.text('Личные'), findsOneWidget);
     await tester.tap(find.byIcon(Icons.person));
     await tester.pumpAndSettle();
-    expect(find.text('Профиль и API'), findsOneWidget);
+    expect(find.text('Профиль'), findsOneWidget);
   });
 
   testWidgets('character editor saves a new character', (tester) async {
@@ -141,7 +141,7 @@ void main() {
     await tester.pumpWidget(_testApp(controller));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.add));
+    await tester.tap(find.byIcon(Icons.add_circle));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.widgetWithText(TextField, 'Имя'),

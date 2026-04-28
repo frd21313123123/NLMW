@@ -1,0 +1,20 @@
+{
+  "name": "local-development",
+  "interface": {
+    "displayName": "Local Development"
+  },
+  "plugins": [
+    {
+      "name": "flutter-app-manager",
+      "source": {
+        "source": "local",
+        "path": "./plugins/flutter-app-manager"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Development"
+    }
+  ]
+}
