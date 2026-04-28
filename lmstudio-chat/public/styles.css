@@ -1160,6 +1160,7 @@ body {
 /* ===== COMPOSER ===== */
 
 .chat__composer {
+  flex-shrink: 0;
   padding: 10px 16px;
   padding-bottom: max(10px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
@@ -1300,6 +1301,19 @@ body {
   width: 20px;
   height: 20px;
   fill: #000;
+}
+
+.btn--send.btn--stop {
+  background: #e5484d;
+}
+
+.btn--send.btn--stop svg {
+  fill: #fff;
+  color: #fff;
+}
+
+.btn--send.btn--stop:hover {
+  background: #d3383c;
 }
 
 /* ===== PANELS ===== */
@@ -2801,6 +2815,12 @@ body {
     padding-top: max(10px, env(safe-area-inset-top, 10px));
   }
 
+  .sheet--prompts .promptsHeader .iconBtn--close {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+  }
+
   /* --- Tab bar: safe area for notch phones --- */
   .tabbar {
     height: auto;
@@ -3714,6 +3734,19 @@ body {
     color: rgba(255, 255, 255, 0.72);
   }
 
+  #app[data-view="chat"] .npcStrip {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(70px + max(10px, env(safe-area-inset-bottom)));
+    z-index: 2;
+    border-top: none;
+    border-radius: 12px;
+    margin: 0 10px;
+    background: rgba(127, 103, 84, 0.55);
+    backdrop-filter: blur(14px);
+  }
+
   #app[data-view="chat"] .chat__composer {
     position: absolute;
     left: 10px;
@@ -3824,8 +3857,13 @@ body {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
+  flex-shrink: 0;
   border-top: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.npcStrip[hidden] {
+  display: none;
 }
 
 .npcChip {
@@ -3912,6 +3950,38 @@ body {
 /* NPC modal (smaller window) */
 .modal__window--sm {
   max-width: 420px;
+}
+
+/* ===== Scene events (NPC join / leave) ===== */
+
+.sceneEvent {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 16px;
+  margin: 6px 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.sceneEvent span {
+  font-size: 0.72rem;
+  font-style: italic;
+  letter-spacing: 0.01em;
+  padding: 2px 10px;
+  border-radius: 99px;
+}
+
+.sceneEvent--joined span {
+  color: rgba(109, 225, 193, 0.65);
+  background: rgba(109, 225, 193, 0.07);
+  border: 1px solid rgba(109, 225, 193, 0.15);
+}
+
+.sceneEvent--left span {
+  color: rgba(255, 100, 80, 0.55);
+  background: rgba(255, 100, 80, 0.06);
+  border: 1px solid rgba(255, 100, 80, 0.12);
 }
 
 /* ===== POLYBUZZ GENDER BAR ===== */
@@ -4204,6 +4274,23 @@ body {
 /* Multi-chat modal */
 .modal__window--multi {
   max-width: 440px;
+}
+
+/* Copy fallback modal */
+.modal__window--tiny {
+  max-width: 320px;
+  height: auto !important;
+  max-height: 90vh;
+}
+
+#copyModalText {
+  resize: none;
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  background: rgba(0, 0, 0, 0.1);
+  color: var(--text);
+  border: 1px solid var(--border2);
 }
 
 .multiModal__body {

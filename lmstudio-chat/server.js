@@ -14,6 +14,8 @@ const LMSTUDIO_BASE_URL = String(process.env.LMSTUDIO_BASE_URL || "http://localh
 const LMSTUDIO_API_KEY = process.env.LMSTUDIO_API_KEY ? String(process.env.LMSTUDIO_API_KEY) : "";
 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY ? String(process.env.MISTRAL_API_KEY) : "";
 const MISTRAL_BASE_URL = String(process.env.MISTRAL_BASE_URL || "https://api.mistral.ai/v1").replace(/\/+$/, "");
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY ? String(process.env.OPENROUTER_API_KEY) : "";
+const OPENROUTER_BASE_URL = String(process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
 const POLYBUZZ_COOKIE = process.env.POLYBUZZ_COOKIE ? String(process.env.POLYBUZZ_COOKIE) : "";
 
 function stripSlashes(u) {
@@ -43,7 +45,8 @@ app.get("/api/health", (_req, res) => {
     lmstudioBaseUrl: LMSTUDIO_BASE_URL,
     lmstudioRestBaseUrl: LMSTUDIO_REST_BASE_URL,
     lmstudioOpenAiBaseUrl: LMSTUDIO_OPENAI_BASE_URL,
-    mistralBaseUrl: MISTRAL_BASE_URL
+    mistralBaseUrl: MISTRAL_BASE_URL,
+    openrouterBaseUrl: OPENROUTER_BASE_URL
   });
 });
 
@@ -333,6 +336,113 @@ app.post("/api/mistral/chat", async (req, res) => {
   } catch (err) {
     console.error("[mistral chat]", err);
     res.status(502).json({ error: "Не удалось получить ответ от Mistral", details: String(err) });
+  }
+});
+
+function openrouterHeaders(apiKey) {
+  const key = apiKey || OPENROUTER_API_KEY;
+  const headers = {
+    "Content-Type": "application/json",
+    "HTTP-Referer": "http://localhost",
+    "X-OpenRouter-Title": "NLMW Chat Studio"
+  };
+  if (key) headers.Authorization = `Bearer ${key}`;
+  return headers;
+}
+
+const OPENROUTER_FALLBACK_MODELS = [
+  { id: "openrouter/auto", name: "OpenRouter Auto" },
+  { id: "meta-llama/llama-3.1-8b-instruct:free", name: "Llama 3.1 8B Instruct (free)" },
+  { id: "google/gemma-2-9b-it:free", name: "Gemma 2 9B IT (free)" },
+  { id: "mistralai/mistral-7b-instruct:free", name: "Mistral 7B Instruct (free)" }
+];
+
+// --- OpenRouter API integration ---
+
+app.get("/api/openrouter/models", async (req, res) => {
+  const clientKey = req.headers["x-openrouter-key"] || "";
+
+  try {
+    const upstream = await fetch(`${OPENROUTER_BASE_URL}/models`, {
+      method: "GET",
+      headers: openrouterHeaders(clientKey)
+    });
+
+    const text = await upstream.text();
+    if (!upstream.ok) {
+      res.status(upstream.status);
+      res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
+      res.send(text);
+      return;
+    }
+
+    try {
+      const data = JSON.parse(text);
+      const models = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+      if (!models.length) {
+        res.json({ data: OPENROUTER_FALLBACK_MODELS });
+        return;
+      }
+    } catch {
+      // If parsing fails, fall back to raw text below.
+    }
+
+    res.status(upstream.status);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
+    res.send(text);
+  } catch (err) {
+    console.error("[openrouter models]", err);
+    res.json({
+      warning: "Не удалось получить список моделей OpenRouter, используется резервный список",
+      details: String(err),
+      data: OPENROUTER_FALLBACK_MODELS
+    });
+  }
+});
+
+app.post("/api/openrouter/chat", async (req, res) => {
+  const clientKey = req.headers["x-openrouter-key"] || "";
+  const key = clientKey || OPENROUTER_API_KEY;
+  if (!key) {
+    res.status(401).json({ error: "OpenRouter API key required" });
+    return;
+  }
+
+  try {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const wantStream = body.stream === true;
+
+    const payload = {
+      model: typeof body.model === "string" && body.model.trim() ? body.model.trim() : "openrouter/auto",
+      messages: Array.isArray(body.messages) ? body.messages : [],
+      temperature: typeof body.temperature === "number" ? body.temperature : 0.75,
+      max_tokens: typeof body.max_tokens === "number" ? body.max_tokens : undefined,
+      stream: wantStream
+    };
+
+    if (wantStream) {
+      await proxyStream(
+        `${OPENROUTER_BASE_URL}/chat/completions`,
+        payload,
+        openrouterHeaders(clientKey),
+        res
+      );
+      return;
+    }
+
+    const upstream = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: openrouterHeaders(clientKey),
+      body: JSON.stringify(payload)
+    });
+
+    const text = await upstream.text();
+    res.status(upstream.status);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
+    res.send(text);
+  } catch (err) {
+    console.error("[openrouter chat]", err);
+    res.status(502).json({ error: "Не удалось получить ответ от OpenRouter", details: String(err) });
   }
 });
 

@@ -11,6 +11,7 @@
     responseIdChains: "nlmw.lmstudioResponseIdChains",
     provider: "nlmw.provider",
     mistralKey: "nlmw.mistralKey",
+    openrouterKey: "nlmw.openrouterKey",
     savedPrompts: "nlmw.savedPrompts",
     promptFolders: "nlmw.promptFolders",
     groupChats: "nlmw.groupChats",
@@ -46,12 +47,14 @@
     modelId: "",
     provider: "lmstudio",
     mistralKey: "",
+    openrouterKey: "",
     savedPrompts: [],
     promptFolders: [],
     promptActiveFolder: "__all__",
     editingPromptId: null,
     lmOk: false,
     generating: false,
+    genAbort: null,
     msgActionsTargetId: "",
     view: "chats",
     discoverTab: "explore",
@@ -107,6 +110,7 @@
   }
 
   function providerLabel() {
+    if (state.provider === "openrouter") return "OpenRouter";
     if (state.provider === "mistral") return "Mistral";
     return "LM Studio";
   }
@@ -232,10 +236,11 @@
     state.modelId = String(loadJson(STORAGE_KEYS.modelId, ""));
     state.provider = String(loadJson(STORAGE_KEYS.provider, "lmstudio"));
     state.mistralKey = String(loadJson(STORAGE_KEYS.mistralKey, ""));
+    state.openrouterKey = String(loadJson(STORAGE_KEYS.openrouterKey, ""));
     state.savedPrompts = loadJson(STORAGE_KEYS.savedPrompts, []);
     state.promptFolders = loadJson(STORAGE_KEYS.promptFolders, []);
 
-    if (state.provider !== "lmstudio" && state.provider !== "mistral") {
+    if (!["lmstudio", "mistral", "openrouter"].includes(state.provider)) {
       state.provider = "lmstudio";
     }
 
@@ -489,6 +494,7 @@
         modelId: state.modelId,
         provider: state.provider,
         mistralKey: state.mistralKey,
+        openrouterKey: state.openrouterKey,
         savedPrompts: state.savedPrompts,
         promptFolders: state.promptFolders
       }
@@ -515,8 +521,9 @@
       src.responseIdChains && typeof src.responseIdChains === "object" && !Array.isArray(src.responseIdChains) ? src.responseIdChains : {}
     );
     saveJson(STORAGE_KEYS.modelId, String(src.modelId || ""));
-    saveJson(STORAGE_KEYS.provider, src.provider === "mistral" ? "mistral" : "lmstudio");
+    saveJson(STORAGE_KEYS.provider, ["lmstudio", "mistral", "openrouter"].includes(src.provider) ? src.provider : "lmstudio");
     saveJson(STORAGE_KEYS.mistralKey, String(src.mistralKey || ""));
+    saveJson(STORAGE_KEYS.openrouterKey, String(src.openrouterKey || ""));
     saveJson(STORAGE_KEYS.savedPrompts, Array.isArray(src.savedPrompts) ? src.savedPrompts : []);
     saveJson(STORAGE_KEYS.promptFolders, Array.isArray(src.promptFolders) ? src.promptFolders : []);
 
@@ -824,6 +831,7 @@
       gender: normalizeGender(raw.gender),
       intro: String(raw.intro || "").trim(),
       avatar: typeof raw.avatar === "string" ? raw.avatar : "",
+      source: raw.source === "auto" ? "auto" : "manual",
       createdAt: typeof raw.createdAt === "number" ? raw.createdAt : nowTs()
     };
   }
@@ -1229,6 +1237,10 @@
     return Array.isArray(chat?.tempCharacters) ? chat.tempCharacters : [];
   }
 
+  function canonicalNpcName(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
   function saveTempCharacters(characterId, npcs) {
     const bucket = conversationBucketFor(characterId);
     const chat = activeChatFor(characterId);
@@ -1242,8 +1254,20 @@
 
   function addTempCharacter(characterId, npcData) {
     const npcs = getTempCharactersForChat(characterId).slice();
-    npcs.push(normalizeTempCharacter({ ...npcData, id: uuid(), createdAt: nowTs() }));
+    const nameKey = canonicalNpcName(npcData?.name);
+    const existing = nameKey ? npcs.find((n) => canonicalNpcName(n.name) === nameKey) : null;
+    if (existing) return existing;
+
+    const npc = normalizeTempCharacter({
+      ...npcData,
+      id: uuid(),
+      createdAt: nowTs(),
+      source: npcData?.source || "manual"
+    });
+    if (!npc) return null;
+    npcs.push(npc);
     saveTempCharacters(characterId, npcs);
+    return npc;
   }
 
   function updateTempCharacter(characterId, npcId, patch) {
@@ -1253,14 +1277,58 @@
     saveTempCharacters(characterId, npcs);
   }
 
-  function deleteTempCharacter(characterId, npcId) {
-    const npcs = getTempCharactersForChat(characterId).filter((n) => n.id !== npcId);
+  function deleteTempCharacter(characterId, npcId, opts = {}) {
+    const current = getTempCharactersForChat(characterId);
+    const removed = current.find((n) => n.id === npcId) || null;
+    const npcs = current.filter((n) => n.id !== npcId);
     saveTempCharacters(characterId, npcs);
-    // Mark the NPC's messages as deleted
-    const history = chatHistoryFor(characterId).map((m) =>
-      m.npcId === npcId ? { ...m, npcDeleted: true } : m
-    );
+    if (removed) preserveHistoricalNpcSpeaker(characterId, removed);
+    if (removed && opts.sceneEvent) appendSceneEvent(characterId, "npc_left", removed);
+    return removed;
+  }
+
+  function preserveHistoricalNpcSpeaker(characterId, npc) {
+    if (!npc) return;
+    const history = chatHistoryFor(characterId).map((m) => {
+      if (!m || m.role !== "assistant") return m;
+      const isNpcMessage = m.npcId === npc.id || m.speakerId === npc.id;
+      if (!isNpcMessage) return m;
+      return {
+        ...m,
+        speakerType: "npc",
+        speakerId: npc.id,
+        speakerName: m.speakerName || npc.name,
+        npcId: m.npcId || npc.id
+      };
+    });
     setChatHistory(characterId, history);
+  }
+
+  function appendSceneEvent(characterId, type, npc) {
+    if (!npc) return;
+    const event = {
+      id: uuid(),
+      role: "scene_event",
+      type,
+      npcId: npc.id,
+      npcName: npc.name,
+      npcGender: npc.gender || "unspecified",
+      npcIntro: npc.intro || "",
+      ts: nowTs()
+    };
+    setChatHistory(characterId, chatHistoryFor(characterId).concat([event]));
+  }
+
+  function findTempCharacterByRef(characterId, ref) {
+    const npcs = getTempCharactersForChat(characterId);
+    const refId = typeof ref === "string" ? ref.trim() : String(ref?.id || ref?.npcId || ref?.speakerId || "").trim();
+    const refName = typeof ref === "string" ? ref.trim() : String(ref?.name || ref?.npcName || ref?.speakerName || "").trim();
+    if (refId) {
+      const byId = npcs.find((n) => n.id === refId);
+      if (byId) return byId;
+    }
+    const key = canonicalNpcName(refName || refId);
+    return key ? npcs.find((n) => canonicalNpcName(n.name) === key) || null : null;
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -1292,6 +1360,451 @@
     delete state.responseIdChains[chatId];
     saveJson(STORAGE_KEYS.responseIds, state.responseIds);
     saveJson(STORAGE_KEYS.responseIdChains, state.responseIdChains);
+  }
+
+  function mainSpeakerFor(character) {
+    return {
+      type: "main",
+      id: character?.id || "main",
+      name: character?.name || "Персонаж",
+      character
+    };
+  }
+
+  function npcSpeakerFor(npc) {
+    return {
+      type: "npc",
+      id: npc?.id || "",
+      name: npc?.name || "НПС",
+      npc
+    };
+  }
+
+  function speakerKey(speaker) {
+    if (!speaker) return "";
+    return `${speaker.type || "main"}:${speaker.id || canonicalNpcName(speaker.name)}`;
+  }
+
+  function sameSpeaker(a, b) {
+    if (!a || !b) return false;
+    if (a.type !== b.type) return false;
+    if (a.id && b.id) return a.id === b.id;
+    return canonicalNpcName(a.name) === canonicalNpcName(b.name);
+  }
+
+  function speakerDisplayCharacter(mainChar, speaker) {
+    if (!speaker || speaker.type !== "npc") return mainChar;
+    return {
+      ...(speaker.npc || {}),
+      id: speaker.id,
+      name: speaker.name,
+      avatar: speaker.npc?.avatar || ""
+    };
+  }
+
+  function messageSpeaker(mainChar, message, npcs = getTempCharactersForChat(mainChar.id)) {
+    if (!message || message.role !== "assistant") return null;
+    const isNpc = message.speakerType === "npc" || Boolean(message.npcId);
+    if (!isNpc) return mainSpeakerFor(mainChar);
+
+    const id = String(message.speakerId || message.npcId || "").trim();
+    const byId = id ? npcs.find((n) => n.id === id) : null;
+    const name = String(message.speakerName || "").trim();
+    const byName = name ? npcs.find((n) => canonicalNpcName(n.name) === canonicalNpcName(name)) : null;
+    const npc = byId || byName || {
+      id,
+      name: name || "НПС",
+      gender: message.npcGender || "unspecified",
+      intro: "",
+      avatar: "",
+      source: "auto",
+      createdAt: message.ts || nowTs()
+    };
+
+    return npcSpeakerFor(npc);
+  }
+
+  function messageSpeakerName(mainChar, message) {
+    if (!message) return "";
+    if (message.role === "user") return state.profile?.name || "Пользователь";
+    if (message.role === "scene_event") return "Сцена";
+    const speaker = messageSpeaker(mainChar, message);
+    return speaker?.name || mainChar?.name || "Персонаж";
+  }
+
+  function assistantMessageForSpeaker(speaker, content, extra = {}) {
+    const msg = {
+      id: extra.id || uuid(),
+      role: "assistant",
+      content: String(content || ""),
+      ts: typeof extra.ts === "number" ? extra.ts : nowTs(),
+      speakerType: speaker?.type || "main",
+      speakerId: speaker?.id || "",
+      speakerName: speaker?.name || "Персонаж"
+    };
+
+    if (speaker?.type === "npc") msg.npcId = speaker.id;
+    if (extra.pending) msg.pending = true;
+    if (extra.branchVersions) msg.branchVersions = extra.branchVersions;
+    if (typeof extra.activeBranchIdx === "number") msg.activeBranchIdx = extra.activeBranchIdx;
+    if (extra.image_url) msg.image_url = extra.image_url;
+    if (extra.image_loading) msg.image_loading = true;
+    return msg;
+  }
+
+  function sceneEventText(message) {
+    const name = String(message?.npcName || "Персонаж").trim();
+    if (message?.type === "npc_joined") return `${name} появился в сцене.`;
+    if (message?.type === "npc_left") return `${name} покинул сцену.`;
+    return String(message?.content || "").trim();
+  }
+
+  function pushChatMessage(messages, role, content) {
+    const text = String(content || "").trim();
+    if (!text) return;
+    const prev = messages[messages.length - 1];
+    if (prev && prev.role === role) prev.content += "\n\n" + text;
+    else messages.push({ role, content: text });
+  }
+
+  function sceneTranscriptLines(mainChar, history, maxMessages = 30) {
+    const items = (Array.isArray(history) ? history : [])
+      .filter((m) => m && !m.pending)
+      .slice(-maxMessages);
+    const lines = [];
+    for (const m of items) {
+      if (m.role === "user") {
+        const text = String(m.content || "").trim();
+        if (text) lines.push(`${state.profile?.name || "Пользователь"}: ${text}`);
+      } else if (m.role === "assistant") {
+        const text = stripThoughtsContent(m.content).trim();
+        if (text) lines.push(`${messageSpeakerName(mainChar, m)}: ${text}`);
+      } else if (m.role === "scene_event") {
+        const text = sceneEventText(m);
+        if (text) lines.push(`Сцена: ${text}`);
+      }
+    }
+    return lines;
+  }
+
+  function buildSpeakerSystemPrompt(profile, mainChar, speaker, activeNpcs) {
+    const parts = [];
+    const userName = (profile.name || "Пользователь").trim();
+    const mainName = (mainChar.name || "Персонаж").trim();
+    const speakerName = (speaker?.name || mainName).trim();
+    const speakerIsNpc = speaker?.type === "npc";
+    const style = styleById(mainChar.dialogueStyle);
+
+    if (speakerIsNpc) {
+      const npc = speaker.npc || {};
+      parts.push(`Ты — ${speakerName}. Ты временный участник текущей ролевой сцены.`);
+      parts.push(`Основной персонаж сцены: ${mainName}. Пользователь: ${userName}.`);
+      parts.push(`Пол: ${genderLabel(npc.gender)}.`);
+      if ((npc.intro || "").trim()) parts.push(`Характер, роль и внешность: ${npc.intro.trim()}`);
+    } else {
+      parts.push(`Ты — ${mainName}. Ты ведёшь ролевой диалог с пользователем (${userName}) от лица ${mainName}.`);
+      parts.push(`Пол персонажа: ${genderLabel(mainChar.gender)}.`);
+      if ((mainChar.intro || "").trim()) parts.push(`Описание: ${mainChar.intro.trim()}`);
+      if ((mainChar.outfit || "").trim()) parts.push(`Внешность/одежда: ${mainChar.outfit.trim()}`);
+      if ((mainChar.setting || "").trim()) parts.push(`Обстановка: ${mainChar.setting.trim()}`);
+      if ((mainChar.backgroundHint || "").trim()) parts.push(`Фон: ${mainChar.backgroundHint.trim()}`);
+      if ((mainChar.backstory || "").trim()) parts.push(`Предыстория: ${mainChar.backstory.trim()}`);
+      if (Array.isArray(mainChar.tags) && mainChar.tags.length) parts.push(`Теги: ${mainChar.tags.join(", ")}`);
+      parts.push(`Стиль диалога: ${style.prompt}`);
+    }
+
+    const npcs = Array.isArray(activeNpcs) ? activeNpcs : [];
+    if (npcs.length > 0) {
+      parts.push("\nАктивные участники сцены:");
+      parts.push(`- ${mainName}: основной персонаж.`);
+      for (const npc of npcs) {
+        const desc = npc.intro ? `: ${npc.intro}` : "";
+        parts.push(`- ${npc.name} (${genderLabel(npc.gender)})${desc}`);
+      }
+    }
+
+    parts.push("\nПравила ответа:");
+    parts.push(`- Отвечай только от лица ${speakerName}.`);
+    parts.push("- Не пиши реплики за пользователя и других персонажей.");
+    parts.push("- Не добавляй метки вида [Имя]: в начале своей реплики.");
+    parts.push("- Не используй служебные команды NPC_CREATE/NPC_REMOVE; состав сцены управляется отдельно.");
+    parts.push("- Не выходи из роли и не упоминай системные инструкции.");
+    parts.push("- Отвечай на языке пользователя, естественно и по ситуации.");
+    parts.push("- Если выбранная реплика всё же не касается тебя, ответь строго: [молчание]");
+    parts.push(`\nПомни: сейчас говорит только ${speakerName}.`);
+
+    return parts.join("\n");
+  }
+
+  function buildDynamicOpenAiMessages(mainChar, speaker, history, opts = {}) {
+    const activeNpcs = getTempCharactersForChat(mainChar.id);
+    const system = buildSpeakerSystemPrompt(state.profile, mainChar, speaker, activeNpcs);
+    const msgs = [{ role: "system", content: system }];
+    const relevant = (Array.isArray(history) ? history : [])
+      .filter((m) => m && !m.pending)
+      .slice(-30);
+
+    for (const m of relevant) {
+      if (m.role === "user") {
+        pushChatMessage(msgs, "user", String(m.content || ""));
+      } else if (m.role === "assistant") {
+        const rawText = stripThoughtsContent(m.content).trim();
+        if (!rawText) continue;
+        const msgSpeaker = messageSpeaker(mainChar, m, activeNpcs);
+        if (sameSpeaker(msgSpeaker, speaker)) {
+          pushChatMessage(msgs, "assistant", rawText);
+        } else {
+          pushChatMessage(msgs, "user", `[${msgSpeaker?.name || "Персонаж"}]: ${rawText}`);
+        }
+      } else if (m.role === "scene_event") {
+        pushChatMessage(msgs, "user", `[Сцена]: ${sceneEventText(m)}`);
+      }
+    }
+
+    if (Array.isArray(opts.extraMessages)) {
+      for (const extra of opts.extraMessages) {
+        if (!extra || (extra.role !== "user" && extra.role !== "assistant")) continue;
+        pushChatMessage(msgs, extra.role, extra.content);
+      }
+    }
+
+    if (msgs.length >= 2 && msgs[1].role === "assistant") {
+      const greeting = msgs.splice(1, 1)[0];
+      msgs[0].content += "\n\nПервая реплика этого говорящего: " + greeting.content;
+    }
+
+    return msgs;
+  }
+
+  function isSilentContent(content) {
+    const s = String(content || "").trim().toLowerCase();
+    return s === "[молчание]" || s === "молчание" || s === "[silence]" || s === "silence";
+  }
+
+  function parseLooseJsonObject(text) {
+    let s = String(text || "").trim();
+    s = s.replace(/^```(?:json)?\s*/i, "").replace(/```$/i, "").trim();
+    let parsed = safeJsonParse(s);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    const first = s.indexOf("{");
+    const last = s.lastIndexOf("}");
+    if (first >= 0 && last > first) {
+      parsed = safeJsonParse(s.slice(first, last + 1));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    }
+    return null;
+  }
+
+  async function requestChatCompletionText(messages, opts = {}) {
+    const payload = {
+      model: state.modelId || (isRemoteOpenAiProvider() ? openAiProviderDefaults(state.provider).model : "local-model"),
+      messages,
+      temperature: typeof opts.temperature === "number" ? opts.temperature : 0.2,
+      max_tokens: typeof opts.maxTokens === "number" ? opts.maxTokens : undefined,
+      stream: false
+    };
+
+    const cfg = isRemoteOpenAiProvider() ? openAiProviderDefaults(state.provider) : null;
+    const endpoint = cfg ? cfg.endpoint : "/api/lmstudio/chat";
+    const headers = cfg ? openAiProviderHeaders(state.provider) : { "Content-Type": "application/json" };
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      signal: state.genAbort?.signal
+    });
+
+    const text = await res.text();
+    const data = safeJsonParse(text);
+    if (!res.ok) {
+      const msg = data?.error?.message || data?.error || data?.message || `${providerLabel()} error (${res.status})`;
+      throw new Error(String(msg));
+    }
+
+    return extractChatTextFromResponse(data) || data?.choices?.[0]?.message?.content || text || "";
+  }
+
+  function normalizeScenePlan(raw) {
+    const obj = raw && typeof raw === "object" ? raw : {};
+    const asArray = (value) => Array.isArray(value) ? value : value ? [value] : [];
+    const add = asArray(obj.add || obj.add_npcs);
+    const remove = asArray(obj.remove || obj.remove_npcs);
+    const speakers = asArray(obj.speakers || obj.responders || obj.reply);
+
+    return {
+      add: add
+        .map((x) => ({
+          name: String(x?.name || x?.npcName || "").trim(),
+          gender: normalizeGender(x?.gender),
+          intro: String(x?.intro || x?.description || x?.role || "").trim()
+        }))
+        .filter((x) => x.name)
+        .slice(0, 4),
+      remove: remove.slice(0, 6),
+      speakers: speakers.slice(0, 6)
+    };
+  }
+
+  async function planSceneTurn(mainChar, history) {
+    const activeNpcs = getTempCharactersForChat(mainChar.id);
+    const lastUser = [...(Array.isArray(history) ? history : [])].reverse().find((m) => m?.role === "user");
+    const system =
+      "Ты менеджер ролевой сцены. Ты не пишешь реплики персонажей, а только обновляешь состав сцены и выбираешь, кто должен ответить сейчас. " +
+      "Верни только валидный JSON без Markdown. Формат: " +
+      '{"add":[{"name":"...","gender":"male|female|other|unspecified","intro":"..."}],"remove":[{"id":"..."}],"speakers":[{"type":"main"},{"type":"npc","id":"..."}]}. ' +
+      "В speakers используй либо {\"type\":\"main\"}, либо {\"type\":\"npc\",\"id\":\"id активного NPC\"}. " +
+      "Добавляй временного NPC, когда новый персонаж реально входит в сцену или начинает взаимодействовать. Удаляй NPC, когда он ушёл или больше не участвует. " +
+      "В speakers включай только тех, кто должен ответить на последний ход пользователя; не выбирай всех подряд. Если сомневаешься, выбери основного персонажа.";
+
+    const payload = {
+      main_character: {
+        id: mainChar.id,
+        name: mainChar.name,
+        gender: mainChar.gender,
+        intro: mainChar.intro,
+        setting: mainChar.setting
+      },
+      user: {
+        name: state.profile?.name || "Пользователь",
+        gender: state.profile?.gender || "unspecified"
+      },
+      active_npcs: activeNpcs.map((n) => ({
+        id: n.id,
+        name: n.name,
+        gender: n.gender,
+        intro: n.intro
+      })),
+      last_user_message: String(lastUser?.content || ""),
+      recent_scene: sceneTranscriptLines(mainChar, history, 28)
+    };
+
+    try {
+      const text = await requestChatCompletionText(
+        [
+          { role: "system", content: system },
+          { role: "user", content: JSON.stringify(payload, null, 2) }
+        ],
+        { temperature: 0.1, maxTokens: 700 }
+      );
+      return normalizeScenePlan(parseLooseJsonObject(text));
+    } catch (err) {
+      console.warn("[scene manager]", err);
+      return { add: [], remove: [], speakers: [{ type: "main" }] };
+    }
+  }
+
+  function resolveSpeakerRef(mainChar, ref) {
+    const rawType = typeof ref === "string" ? "" : String(ref?.type || ref?.speakerType || "").trim().toLowerCase();
+    const rawId = typeof ref === "string" ? ref.trim() : String(ref?.id || ref?.speakerId || ref?.npcId || "").trim();
+    const rawName = typeof ref === "string" ? ref.trim() : String(ref?.name || ref?.speakerName || ref?.npcName || "").trim();
+    const mainName = canonicalNpcName(mainChar.name);
+    const probe = canonicalNpcName(rawName || rawId || rawType);
+    const wantsMain =
+      rawType === "main" ||
+      rawType === "character" ||
+      rawType === "primary" ||
+      rawId === mainChar.id ||
+      probe === "main" ||
+      probe === "основной" ||
+      probe === "главный" ||
+      probe === mainName;
+
+    if (wantsMain) return mainSpeakerFor(mainChar);
+    const npc = findTempCharacterByRef(mainChar.id, { id: rawId, name: rawName });
+    return npc ? npcSpeakerFor(npc) : null;
+  }
+
+  function applyScenePlan(mainChar, plan) {
+    const safePlan = normalizeScenePlan(plan);
+    const mainNameKey = canonicalNpcName(mainChar.name);
+
+    for (const item of safePlan.add) {
+      if (canonicalNpcName(item.name) === mainNameKey) continue;
+      const existing = findTempCharacterByRef(mainChar.id, { name: item.name });
+      if (existing) continue;
+      const npc = addTempCharacter(mainChar.id, { ...item, source: "auto" });
+      if (npc) appendSceneEvent(mainChar.id, "npc_joined", npc);
+    }
+
+    for (const item of safePlan.remove) {
+      const npc = findTempCharacterByRef(mainChar.id, item);
+      if (npc) deleteTempCharacter(mainChar.id, npc.id, { sceneEvent: true });
+    }
+
+    const speakers = [];
+    for (const ref of safePlan.speakers) {
+      const speaker = resolveSpeakerRef(mainChar, ref);
+      if (!speaker) continue;
+      if (!speakers.some((s) => speakerKey(s) === speakerKey(speaker))) speakers.push(speaker);
+    }
+
+    if (speakers.length === 0) speakers.push(mainSpeakerFor(mainChar));
+    return speakers;
+  }
+
+  function applyLegacySceneCommands(mainChar, commands) {
+    const created = [];
+    for (const cmd of Array.isArray(commands) ? commands : []) {
+      if (cmd.type === "NPC_CREATE") {
+        const existing = findTempCharacterByRef(mainChar.id, { name: cmd.name });
+        if (existing) continue;
+        const npc = addTempCharacter(mainChar.id, {
+          name: cmd.name,
+          gender: cmd.gender,
+          intro: cmd.intro,
+          source: "auto"
+        });
+        if (npc) {
+          created.push(npc);
+          appendSceneEvent(mainChar.id, "npc_joined", npc);
+        }
+      } else if (cmd.type === "NPC_REMOVE") {
+        const npc = findTempCharacterByRef(mainChar.id, { name: cmd.name });
+        if (npc) deleteTempCharacter(mainChar.id, npc.id, { sceneEvent: true });
+      }
+    }
+    return created;
+  }
+
+  function reconcileAutoTempCharactersFromHistory(characterId) {
+    const current = getTempCharactersForChat(characterId);
+    const manual = current.filter((n) => n.source !== "auto");
+    const auto = [];
+
+    for (const m of chatHistoryFor(characterId)) {
+      if (!m || m.role !== "scene_event") continue;
+      const id = String(m.npcId || "").trim();
+      const name = String(m.npcName || "").trim();
+      if (!name && !id) continue;
+
+      if (m.type === "npc_joined") {
+        const existingIdx = auto.findIndex((n) => (id && n.id === id) || canonicalNpcName(n.name) === canonicalNpcName(name));
+        const npc = normalizeTempCharacter({
+          id: id || uuid(),
+          name: name || "НПС",
+          gender: m.npcGender || "unspecified",
+          intro: m.npcIntro || "",
+          source: "auto",
+          createdAt: m.ts || nowTs()
+        });
+        if (existingIdx >= 0) auto[existingIdx] = npc;
+        else auto.push(npc);
+      } else if (m.type === "npc_left") {
+        for (let i = auto.length - 1; i >= 0; i--) {
+          if ((id && auto[i].id === id) || canonicalNpcName(auto[i].name) === canonicalNpcName(name)) {
+            auto.splice(i, 1);
+          }
+        }
+      }
+    }
+
+    const merged = manual.slice();
+    for (const npc of auto) {
+      if (!merged.some((n) => n.id === npc.id || canonicalNpcName(n.name) === canonicalNpcName(npc.name))) {
+        merged.push(npc);
+      }
+    }
+    saveTempCharacters(characterId, merged);
   }
 
   function upsertCharacter(next) {
@@ -1683,6 +2196,7 @@
         const bubble = document.createElement("div");
         bubble.className = "bubble";
         renderBubbleContent(bubble, m.content, { role: "user", characterName: "" });
+        wireHoldToMessage(bubble, m.id);
 
         const meta = document.createElement("div");
         meta.className = "msg__meta";
@@ -1777,34 +2291,46 @@
       try {
         let content;
 
-        if (state.provider === "mistral") {
+        if (isRemoteOpenAiProvider()) {
           const messages = buildGroupOpenAiMessages(gc, cid);
           const bubble = getGroupStreamingBubble(placeholderId);
           const listEl = $("#groupMessages");
 
           // Stream manually for group chat
-          const headers = { "Content-Type": "application/json" };
-          if (state.mistralKey) headers["X-Mistral-Key"] = state.mistralKey;
+          const cfg = openAiProviderDefaults(state.provider);
+          const headers = openAiProviderHeaders(state.provider);
           const payload = {
-            model: state.modelId || "mistral-small-latest",
+            model: cfg.model,
             messages,
             temperature: 0.75,
             stream: true
           };
-          const res = await fetch("/api/mistral/chat", { method: "POST", headers, body: JSON.stringify(payload) });
+          const signal = state.genAbort?.signal;
+          let stallTimer = null;
+          const resetStall = () => {
+            if (stallTimer) clearTimeout(stallTimer);
+            stallTimer = setTimeout(() => abortGeneration("stall_timeout"), STALL_TIMEOUT_MS);
+          };
+          resetStall();
+          const res = await fetch(cfg.endpoint, { method: "POST", headers, body: JSON.stringify(payload), signal });
           if (!res.ok) {
+            if (stallTimer) clearTimeout(stallTimer);
             const text = await res.text();
             const data = safeJsonParse(text);
-            throw new Error(data?.error?.message || data?.error || `Mistral error (${res.status})`);
+            throw new Error(data?.error?.message || data?.error || `${cfg.label} error (${res.status})`);
           }
 
           let generated = "";
           const reader = res.body.getReader();
           const decoder = new TextDecoder();
           let buffer = "";
-          while (true) {
-            const { done, value } = await reader.read();
+          try { while (true) {
+            let readResult;
+            try { readResult = await reader.read(); }
+            catch (err) { if (isAbortError(err)) break; throw err; }
+            const { done, value } = readResult;
             if (done) break;
+            resetStall();
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split("\n");
             buffer = lines.pop() || "";
@@ -1815,6 +2341,7 @@
               if (jsonStr === "[DONE]") continue;
               const chunk = safeJsonParse(jsonStr);
               if (!chunk) continue;
+              if (chunk.error) throw new Error(String(chunk.error.message || chunk.error));
               const delta = chunk.choices?.[0]?.delta?.content;
               if (typeof delta === "string") {
                 generated += delta;
@@ -1824,7 +2351,7 @@
                 }
               }
             }
-          }
+          } } finally { if (stallTimer) clearTimeout(stallTimer); try { reader.releaseLock?.(); } catch {} }
           content = generated.trim() || "(пустой ответ)";
         } else {
           // LM Studio
@@ -1856,12 +2383,21 @@
             store: false,
             system_prompt: systemPrompt
           };
+          const signal2 = state.genAbort?.signal;
+          let stallTimer2 = null;
+          const resetStall2 = () => {
+            if (stallTimer2) clearTimeout(stallTimer2);
+            stallTimer2 = setTimeout(() => abortGeneration("stall_timeout"), STALL_TIMEOUT_MS);
+          };
+          resetStall2();
           const res = await fetch("/api/lmstudio/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: signal2
           });
           if (!res.ok) {
+            if (stallTimer2) clearTimeout(stallTimer2);
             const text = await res.text();
             const data = safeJsonParse(text);
             throw new Error(data?.error || `LM Studio error (${res.status})`);
@@ -1873,9 +2409,13 @@
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buf = "";
-            while (true) {
-              const { done, value } = await reader.read();
+            try { while (true) {
+              let readResult;
+              try { readResult = await reader.read(); }
+              catch (err) { if (isAbortError(err)) break; throw err; }
+              const { done, value } = readResult;
               if (done) break;
+              resetStall2();
               buf += decoder.decode(value, { stream: true });
               const lines = buf.split("\n");
               buf = lines.pop() || "";
@@ -1900,8 +2440,9 @@
                   if (listEl) listEl.scrollTop = listEl.scrollHeight;
                 }
               }
-            }
+            } } finally { if (stallTimer2) clearTimeout(stallTimer2); try { reader.releaseLock?.(); } catch {} }
           } else {
+            if (stallTimer2) clearTimeout(stallTimer2);
             const text = await res.text();
             const data = safeJsonParse(text);
             generated = extractRestMessagesFromResult(data) || extractChatTextFromResponse(data) || "";
@@ -2421,17 +2962,25 @@
     bubble.appendChild(thoughtsBlock);
   }
 
-  function findMessageById(characterId, msgId) {
+  function findMessageById(characterId, msgId, gcId = "") {
+    if (gcId) {
+      const gc = state.groupChats.find((g) => g.id === gcId);
+      const history = gc ? gc.messages : [];
+      const idx = history.findIndex((m) => m && m.id === msgId);
+      return { history, idx, msg: idx >= 0 ? history[idx] : null };
+    }
     const history = chatHistoryFor(characterId);
     const idx = history.findIndex((m) => m && m.id === msgId);
     return { history, idx, msg: idx >= 0 ? history[idx] : null };
   }
 
   function openMsgActions(msgId, pointerEvent) {
+    const isGroup = state.view === "groupchat";
+    const gcId = isGroup ? state.activeGroupChatId : "";
     const ch = activeCharacter();
-    if (!ch) return;
+    if (!isGroup && !ch) return;
 
-    const { msg } = findMessageById(ch.id, msgId);
+    const { msg } = findMessageById(ch ? ch.id : "", msgId, gcId);
     if (!msg) return;
 
     state.msgActionsTargetId = msgId;
@@ -2441,10 +2990,11 @@
     const btnEdit = $("#ctxEdit");
     if (!menu || !popup) return;
 
-    // Only show edit for user messages and when not generating
+    // Only show edit for user messages and when not generating.
+    // In group chats, edit is currently not supported for simplicity.
     const disabled = !!msg.pending || state.generating;
     if (btnEdit) {
-      btnEdit.hidden = msg.role !== "user" || disabled;
+      btnEdit.hidden = isGroup || msg.role !== "user" || disabled;
     }
 
     menu.hidden = false;
@@ -2633,6 +3183,7 @@
     };
     const truncatedHistory = [...history.slice(0, msgIdx), updatedMsg];
     setChatHistory(characterId, truncatedHistory);
+    reconcileAutoTempCharactersFromHistory(characterId);
 
     noteHistoryChanged(characterId);
     renderMessages();
@@ -2644,60 +3195,29 @@
     }
     if (state.generating) return;
 
-    const chatId = activeChatIdFor(characterId);
-    const placeholderId = uuid();
-    const placeholder = { id: placeholderId, role: "assistant", content: "…", ts: nowTs(), pending: true };
-    setChatHistory(characterId, chatHistoryFor(characterId).concat([placeholder]));
-    renderMessages();
-
     setGenerating(true);
-    $("#composerHint").textContent = "Генерирую ответ…";
+    $("#composerHint").textContent = "Анализирую сцену…";
 
     try {
-      let content;
+      const chatId = activeChatIdFor(characterId);
+      if (chatId) resetLmContextFor(chatId);
 
-      if (state.provider === "mistral") {
-        const messages = buildOpenAiMessages(characterId);
-        const { fullContent } = await streamMistralToMessage({
-          character: ch,
-          assistantMsgId: placeholderId,
-          messages,
-          baseText: ""
-        });
-        content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
-      } else {
-        // Fresh context since we truncated history
-        if (chatId) resetLmContextFor(chatId);
-        const historyForPrompt = chatHistoryFor(characterId).slice(0, -1); // exclude placeholder
-        const systemPrompt = buildRestStartPrompt(state.profile, ch, historyForPrompt.slice(0, -1), true);
+      const scenePlan = await planSceneTurn(ch, chatHistoryFor(characterId));
+      const speakers = applyScenePlan(ch, scenePlan);
+      renderMessages();
+      refreshChatsView();
+      $("#composerHint").textContent = "Генерирую ответ…";
+      await respondAsSpeakers(ch, speakers);
 
-        const { fullContent, respId } = await streamLmStudioRestToMessage({
-          character: ch,
-          assistantMsgId: placeholderId,
-          inputText: newText,
-          previousResponseId: "",
-          systemPrompt,
-          baseText: ""
-        });
-        content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
-
-        if (respId && chatId) {
-          saveResponseIdChain(chatId, [respId]);
-        }
-      }
-
-      const finalAssistant = { id: placeholderId, role: "assistant", content, ts: nowTs() };
-
-      // Update the assistant placeholder in history
-      const histAfterGen = chatHistoryFor(characterId).map((m) =>
-        m.id === placeholderId ? finalAssistant : m
-      );
-
-      // Also update the tail of the active branch on the user message
+      const histAfterGen = chatHistoryFor(characterId).slice();
       const userMsgNow = histAfterGen.find((m) => m.id === msgId);
       if (userMsgNow && Array.isArray(userMsgNow.branchVersions)) {
         const brIdx = typeof userMsgNow.activeBranchIdx === "number" ? userMsgNow.activeBranchIdx : userMsgNow.branchVersions.length - 1;
-        userMsgNow.branchVersions[brIdx] = { ...userMsgNow.branchVersions[brIdx], tail: [finalAssistant] };
+        const userIdxNow = histAfterGen.findIndex((m) => m.id === msgId);
+        userMsgNow.branchVersions[brIdx] = {
+          ...userMsgNow.branchVersions[brIdx],
+          tail: userIdxNow >= 0 ? histAfterGen.slice(userIdxNow + 1) : []
+        };
       }
 
       setChatHistory(characterId, histAfterGen);
@@ -2706,12 +3226,9 @@
       $("#composerHint").textContent = "";
     } catch (err) {
       const errMsg = String(err?.message || err || "Ошибка");
-      setChatHistory(
-        characterId,
-        chatHistoryFor(characterId).map((m) =>
-          m.id === placeholderId ? { id: m.id, role: "assistant", content: `Не удалось получить ответ: ${errMsg}`, ts: nowTs() } : m
-        )
-      );
+      setChatHistory(characterId, chatHistoryFor(characterId).concat([
+        assistantMessageForSpeaker(mainSpeakerFor(ch), `Не удалось получить ответ: ${errMsg}`)
+      ]));
       renderMessages();
       refreshChatsView();
       $("#composerHint").textContent = clampText(errMsg, 140);
@@ -2731,10 +3248,81 @@
 
     const nextHistory = history.filter((m) => m && m.id !== msgId);
     setChatHistory(characterId, nextHistory);
+    reconcileAutoTempCharactersFromHistory(characterId);
     noteHistoryChanged(characterId);
 
     ensureInitialMessage();
     renderMessages();
+  }
+
+  // ─── Clipboard & Fallback ──────────────────────────────────────────────────
+
+  function showCopyModal(text) {
+    const modal = $("#copyModal");
+    const textarea = $("#copyModalText");
+    if (!modal || !textarea) return;
+
+    textarea.value = text;
+    modal.hidden = false;
+
+    requestAnimationFrame(() => {
+      textarea.select();
+      textarea.setSelectionRange(0, 99999);
+    });
+  }
+
+  async function copyToClipboard(text, successMsg = "Скопировано") {
+    if (!text) {
+      flashStatus("Нечего копировать", false);
+      return;
+    }
+
+    // Try modern clipboard API (requires HTTPS or localhost)
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      try {
+        await navigator.clipboard.writeText(text);
+        flashStatus(successMsg, true);
+        return;
+      } catch {
+        // fall through to execCommand
+      }
+    }
+
+    // Fallback: hidden textarea + execCommand (works on HTTP)
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, 99999);
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch { ok = false; }
+    document.body.removeChild(ta);
+
+    if (ok) {
+      flashStatus(successMsg, true);
+    } else {
+      showCopyModal(text);
+    }
+  }
+
+  function bootstrapCopyModal() {
+    const modal = $("#copyModal");
+    if (!modal) return;
+    const btnAction = $("#btnCopyModalAction");
+    if (btnAction) {
+      btnAction.addEventListener("click", () => {
+        const textarea = $("#copyModalText");
+        if (textarea) {
+          textarea.select();
+          textarea.setSelectionRange(0, 99999);
+          document.execCommand("copy");
+          flashStatus("Скопировано", true);
+          modal.hidden = true;
+        }
+      });
+    }
   }
 
   function wireHoldToMessage(el, msgId) {
@@ -2937,6 +3525,21 @@
 
     for (let index = 0; index < history.length; index += 1) {
       const m = history[index];
+
+      // ── Scene events (NPC joined / left) ──
+      if (m.role === "scene_event") {
+        const evRow = document.createElement("div");
+        evRow.className = `sceneEvent sceneEvent--${m.type === "npc_joined" ? "joined" : "left"}`;
+        evRow.dataset.msgId = m.id;
+        const arrow = m.type === "npc_joined" ? "→" : "←";
+        const verb = m.type === "npc_joined" ? "появился в сцене" : "покинул сцену";
+        const span = document.createElement("span");
+        span.textContent = `${arrow} ${m.npcName} ${verb}`;
+        evRow.appendChild(span);
+        list.appendChild(evRow);
+        continue;
+      }
+
       const row = document.createElement("div");
       row.className = `msg ${m.role === "user" ? "msg--me" : ""}`;
       if (index === 0 && m.role === "assistant") row.classList.add("msg--intro");
@@ -2946,13 +3549,12 @@
       // Resolve display identity (NPC vs main character)
       let displayAvatar = ch.avatar;
       let displayName = ch.name;
+      const speaker = m.role === "assistant" ? messageSpeaker(ch, m) : null;
       let npcObj = null;
-      if (m.role === "assistant" && m.npcId) {
-        npcObj = getTempCharactersForChat(ch.id).find((n) => n.id === m.npcId) || null;
-        if (npcObj) {
-          displayAvatar = npcObj.avatar;
-          displayName = npcObj.name;
-        }
+      if (speaker?.type === "npc") {
+        npcObj = speaker.npc || { name: speaker.name, avatar: "" };
+        displayAvatar = npcObj.avatar || "";
+        displayName = speaker.name;
       }
 
       avatar.className = `avatar ${m.role === "user" ? "avatar--me" : ""}`;
@@ -2967,7 +3569,7 @@
       if (npcObj) {
         const npcLabel = document.createElement("div");
         npcLabel.className = "msg__npcName";
-        npcLabel.textContent = npcObj.name;
+        npcLabel.textContent = displayName;
         bubbleWrap.appendChild(npcLabel);
       }
 
@@ -2993,7 +3595,7 @@
       let branchNavEl = null;
 
       // Only show regen/cont/thoughts for main character messages (not NPC, not deleted)
-      if (m.role === "assistant" && !m.image_url && !m.image_loading && !m.npcId && !m.npcDeleted) {
+      if (m.role === "assistant" && !m.image_url && !m.image_loading && speaker?.type !== "npc" && !m.npcDeleted) {
         let hasUserBeforeThisMsg = false;
         for (let i = index - 1; i >= 0; i--) {
           if (history[i]?.role === "user") { hasUserBeforeThisMsg = true; break; }
@@ -3180,7 +3782,7 @@
       delBtn.textContent = "×";
       delBtn.addEventListener("click", () => {
         if (!window.confirm(`Убрать «${npc.name}» из чата?`)) return;
-        deleteTempCharacter(characterId, npc.id);
+        deleteTempCharacter(characterId, npc.id, { sceneEvent: true });
         renderNpcStrip(characterId);
         renderMessages();
       });
@@ -3247,14 +3849,15 @@
         renderMessages();
 
         if (cmd.type === "NPC_CREATE") {
-          addTempCharacter(ch.id, { name: cmd.name, gender: cmd.gender, intro: cmd.intro });
+          const existing = findTempCharacterByRef(ch.id, { name: cmd.name });
+          const newNpc = addTempCharacter(ch.id, { name: cmd.name, gender: cmd.gender, intro: cmd.intro, source: "auto" });
+          if (newNpc && !existing) appendSceneEvent(ch.id, "npc_joined", newNpc);
           renderNpcStrip(ch.id);
-          const newNpc = getTempCharactersForChat(ch.id).find((n) => n.name === cmd.name);
           if (newNpc) await respondAsNpcs(ch, [newNpc]);
         } else if (cmd.type === "NPC_REMOVE") {
           const npc = getTempCharactersForChat(ch.id).find((n) => n.name === cmd.name);
           if (npc) {
-            deleteTempCharacter(ch.id, npc.id);
+            deleteTempCharacter(ch.id, npc.id, { sceneEvent: true });
             renderNpcStrip(ch.id);
             renderMessages();
           }
@@ -3832,8 +4435,14 @@
     const mistralKeyInput = $("#mistralKeyInput");
     if (mistralKeyInput) mistralKeyInput.value = state.mistralKey || "";
 
+    const openrouterKeyInput = $("#openrouterKeyInput");
+    if (openrouterKeyInput) openrouterKeyInput.value = state.openrouterKey || "";
+
     const mistralSection = $("#mistralSettings");
     if (mistralSection) mistralSection.hidden = state.provider !== "mistral";
+
+    const openrouterSection = $("#openrouterSettings");
+    if (openrouterSection) openrouterSection.hidden = state.provider !== "openrouter";
   }
 
   function buildSystemPrompt(profile, character, tempCharacters) {
@@ -3874,24 +4483,22 @@
     const npcs = Array.isArray(tempCharacters) ? tempCharacters : [];
     if (npcs.length > 0) {
       parts.push("\n[Побочные персонажи сцены]");
-      parts.push("В этой сцене присутствуют побочные персонажи, которыми ты управляешь от первого лица:");
+      parts.push("В этой сцене также присутствуют побочные персонажи:");
       for (const npc of npcs) {
         const desc = npc.intro ? `: ${npc.intro}` : "";
         parts.push(`- ${npc.name} (${genderLabel(npc.gender)})${desc}`);
       }
-      parts.push("Их описание выше задаёт манеру речи, характер и мотивацию.");
+      parts.push("ВАЖНО: Каждый побочный персонаж отвечает ОТДЕЛЬНО, своим собственным сообщением.");
+      parts.push("Ты НЕ должен говорить за них, писать их реплики или описывать их действия от их лица.");
+      parts.push("Ты можешь упоминать их, обращаться к ним, реагировать на них — но отвечай ТОЛЬКО от лица " + charName + ".");
       parts.push("Текущие NPC в сцене: " + npcs.map((n) => n.name).join(", ") + ".");
     } else {
       parts.push("\n[Побочные персонажи]");
       parts.push("Текущих NPC в сцене нет.");
     }
 
-    parts.push("[Управление побочными персонажами]");
-    parts.push("Ты можешь в любой момент предложить ввести нового персонажа в сцену или убрать существующего.");
-    parts.push("Для этого добавь в КОНЕЦ своего ответа (на отдельной строке) одну из команд:");
-    parts.push('Создать: [[NPC_CREATE: name="Имя", gender="male|female|other", intro="описание характера"]]');
-    parts.push('Убрать:  [[NPC_REMOVE: name="Имя"]]');
-    parts.push("Используй эти команды только когда это органично для сюжета. Пользователь должен одобрить изменение.");
+    parts.push("\n[Управление сценой]");
+    parts.push("Состав сцены управляется автоматически отдельным менеджером. Не вставляй служебные команды NPC_CREATE/NPC_REMOVE в реплику.");
 
     // ── Финальный якорь (важно для слабых моделей) ──
     parts.push(`\nПомни: ты ЯВЛЯЕШЬСЯ ${charName} и отвечаешь ${userName}. Не путай роли.`);
@@ -3911,7 +4518,6 @@
 
   function buildTranscript(profile, character, history, maxMessages = 30) {
     const userLabel = String((profile?.name || "Пользователь").trim() || "Пользователь");
-    const charLabel = String((character?.name || "Персонаж").trim() || "Персонаж");
 
     const items = Array.isArray(history) ? history.filter((m) => m && !m.pending) : [];
     const slice = items.slice(Math.max(0, items.length - maxMessages));
@@ -3923,7 +4529,10 @@
         if (text) lines.push(`${userLabel}: ${text}`);
       } else if (m.role === "assistant") {
         const text = stripThoughtsContent(m.content);
-        if (text) lines.push(`${charLabel}: ${text}`);
+        if (text) lines.push(`${messageSpeakerName(character, m)}: ${text}`);
+      } else if (m.role === "scene_event") {
+        const text = sceneEventText(m);
+        if (text) lines.push(`Сцена: ${text}`);
       }
     }
 
@@ -3947,35 +4556,50 @@
   function buildOpenAiMessages(characterId) {
     const ch = state.characters.find((c) => c.id === characterId);
     if (!ch) return [];
-
-    const system = buildSystemPrompt(state.profile, ch, getTempCharactersForChat(characterId));
-    const history = chatHistoryFor(characterId)
-      .filter((m) => (m.role === "user" || m.role === "assistant") && !m.pending)
-      .slice(-24);
-
-    const msgs = [{ role: "system", content: system }];
-
-    for (const m of history) {
-      const content = m.role === "assistant" ? stripThoughtsContent(m.content) : String(m.content || "");
-      if (!content) continue;
-
-      const prev = msgs[msgs.length - 1];
-      if (prev && prev.role === m.role) {
-        prev.content += "\n" + content;
-      } else {
-        msgs.push({ role: m.role, content });
-      }
-    }
-
-    if (msgs.length >= 2 && msgs[1].role === "assistant") {
-      const greeting = msgs.splice(1, 1)[0];
-      msgs[0].content += "\n\nПервая реплика персонажа (приветствие): " + greeting.content;
-    }
-
-    return msgs;
+    return buildDynamicOpenAiMessages(ch, mainSpeakerFor(ch), chatHistoryFor(characterId));
   }
 
   // ─── NPC prompt builders ────────────────────────────────────────────────────
+
+  function historyBeforeFirstUserForExport(characterId) {
+    const history = chatHistoryFor(characterId)
+      .filter((m) => m && !m.pending);
+    const firstUserIdx = history.findIndex((m) => m.role === "user");
+    return firstUserIdx >= 0 ? history.slice(0, firstUserIdx) : history;
+  }
+
+  function buildOpenAiSystemPromptForExport(character, historyBeforeFirstUser, tempCharacters) {
+    let system = buildSystemPrompt(state.profile, character, tempCharacters);
+    const greeting = (Array.isArray(historyBeforeFirstUser) ? historyBeforeFirstUser : [])
+      .find((m) => m && m.role === "assistant" && String(m.content || "").trim());
+
+    if (greeting) {
+      system += "\n\nПервая реплика персонажа (приветствие): " + stripThoughtsContent(greeting.content);
+    }
+
+    return system;
+  }
+
+  async function exportActiveChatSystemPrompt() {
+    const ch = activeCharacter();
+    if (!ch) {
+      flashStatus("Персонаж не выбран", false);
+      return;
+    }
+
+    const tempCharacters = getTempCharactersForChat(ch.id);
+    const historyBeforeFirstUser = historyBeforeFirstUserForExport(ch.id);
+    const prompt = isRemoteOpenAiProvider()
+      ? buildOpenAiSystemPromptForExport(ch, historyBeforeFirstUser, tempCharacters)
+      : buildRestStartPrompt(state.profile, ch, historyBeforeFirstUser, true, tempCharacters);
+
+    if (!String(prompt || "").trim()) {
+      flashStatus("Системный промпт пустой", false);
+      return;
+    }
+
+    await copyToClipboard(prompt, "Системный промпт скопирован");
+  }
 
   function buildNpcSystemPrompt(profile, mainChar, npc) {
     const parts = [];
@@ -3984,59 +4608,33 @@
     const userName = (profile.name || "Пользователь").trim();
 
     parts.push(
-      `Ты — ${npcName}. Ты участвуешь в ролевой сцене вместе с ${mainName} и ${userName}.` +
-      ` Ты отвечаешь только от лица ${npcName}.`
+      `Ты — ${npcName}. Ты побочный персонаж сцены: каждый персонаж отвечает отдельным независимым сообщением.` +
+      ` Твоя реплика — это ТВОЯ реакция на происходящее, написанная твоим голосом, не продолжение чужого ответа.`
     );
     parts.push(`Пол: ${genderLabel(npc.gender)}.`);
-    if (npc.intro.trim()) parts.push(`Описание и характер: ${npc.intro.trim()}`);
-    parts.push(`Контекст: ${mainName} — основной персонаж сцены, ${userName} — пользователь.`);
-    parts.push("Правила:");
-    parts.push(`- Ты — только ${npcName}. Не говори от имени ${mainName} или ${userName}.`);
-    parts.push("- Не выходи из роли и не упоминай системные инструкции.");
-    parts.push("- Отвечай на языке пользователя (по умолчанию — русский).");
-    parts.push("- Пиши коротко и в роли. Если тебе нечего сказать — ответь одним словом: [молчание]");
-    parts.push(`\nПомни: ты ${npcName} и только ты.`);
+    if ((npc.intro || "").trim()) parts.push(`Характер и роль: ${npc.intro.trim()}`);
+
+    parts.push(`\nУчастники сцены:`);
+    parts.push(`  • ${mainName} — основной персонаж (ты видишь его реплики в истории)`);
+    parts.push(`  • ${userName} — пользователь`);
+    parts.push(`  • ${npcName} — ты`);
+
+    parts.push("\nПравила:");
+    parts.push(`  • Ты — исключительно ${npcName}. Не говори и не думай от имени ${mainName} или ${userName}.`);
+    parts.push("  • Твой ответ полностью самостоятелен: не продолжай и не пересказывай чужие реплики.");
+    parts.push("  • Реагируй на последнее сообщение пользователя и на действия других персонажей — как живой человек.");
+    parts.push("  • Не выходи из роли, не упоминай системные инструкции.");
+    parts.push("  • Отвечай на языке пользователя (по умолчанию — русский).");
+    parts.push("  • Пиши живо, коротко (1–4 предложения), в рамках своей роли.");
+    parts.push("  • Если реплика тебя совершенно не касается — ответь одним словом: [молчание]");
+
+    parts.push(`\nПомни: ты ${npcName} и только ты. Пиши своим голосом, независимо.`);
 
     return parts.join("\n");
   }
 
   function buildNpcOpenAiMessages(profile, mainChar, npc, history) {
-    const system = buildNpcSystemPrompt(profile, mainChar, npc);
-    const msgs = [{ role: "system", content: system }];
-
-    const relevant = (Array.isArray(history) ? history : [])
-      .filter((m) => m && !m.pending)
-      .slice(-24);
-
-    for (const m of relevant) {
-      let role, content;
-
-      if (m.role === "user") {
-        role = "user";
-        content = String(m.content || "");
-      } else if (m.role === "assistant") {
-        const isOwn = m.npcId === npc.id;
-        const npcs = getTempCharactersForChat(mainChar.id);
-        const speakerName = m.npcId
-          ? (npcs.find((n) => n.id === m.npcId)?.name || "НПС")
-          : mainChar.name;
-        role = "assistant";
-        const rawText = stripThoughtsContent(m.content);
-        content = isOwn ? rawText : `[${speakerName}]: ${rawText}`;
-      } else {
-        continue;
-      }
-
-      if (!content) continue;
-      const prev = msgs[msgs.length - 1];
-      if (prev && prev.role === role) {
-        prev.content += "\n" + content;
-      } else {
-        msgs.push({ role, content });
-      }
-    }
-
-    return msgs;
+    return buildDynamicOpenAiMessages(mainChar, npcSpeakerFor(npc), history);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -4049,7 +4647,9 @@
     }
     syncModelSelectTitles(selects);
 
-    if (state.provider === "mistral") {
+    if (state.provider === "openrouter") {
+      await refreshOpenRouterModels(selects);
+    } else if (state.provider === "mistral") {
       await refreshMistralModels(selects);
     } else {
       await refreshLmStudioModels(selects);
@@ -4215,13 +4815,12 @@
     // Resolve NPC display identity
     let displayAvatar = ch.avatar;
     let displayName = ch.name;
+    const speaker = m.role === "assistant" ? messageSpeaker(ch, m) : null;
     let npcObj = null;
-    if (m.role === "assistant" && m.npcId) {
-      npcObj = getTempCharactersForChat(ch.id).find((n) => n.id === m.npcId) || null;
-      if (npcObj) {
-        displayAvatar = npcObj.avatar;
-        displayName = npcObj.name;
-      }
+    if (speaker?.type === "npc") {
+      npcObj = speaker.npc || { name: speaker.name, avatar: "" };
+      displayAvatar = npcObj.avatar || "";
+      displayName = speaker.name;
     }
 
     if (m.npcDeleted) row.classList.add("msg--npc-deleted");
@@ -4236,7 +4835,7 @@
     if (npcObj) {
       const npcLabel = document.createElement("div");
       npcLabel.className = "msg__npcName";
-      npcLabel.textContent = npcObj.name;
+      npcLabel.textContent = displayName;
       bubbleWrap.appendChild(npcLabel);
     }
 
@@ -4279,17 +4878,74 @@
     updateChatActionButtons();
   }
 
+  const STALL_TIMEOUT_MS = 60000;
+
+  function abortGeneration(reason) {
+    try {
+      if (state.genAbort) state.genAbort.abort(reason || "user_abort");
+    } catch {}
+  }
+
+  function isAbortError(err) {
+    if (!err) return false;
+    if (err.name === "AbortError") return true;
+    const msg = String(err.message || err);
+    return /aborted|AbortError|stall_timeout|user_abort/i.test(msg);
+  }
+
+  function setSendButtonMode(btn, stopping) {
+    if (!btn) return;
+    if (stopping) {
+      if (!btn.dataset.origHtml) btn.dataset.origHtml = btn.innerHTML;
+      btn.classList.add("btn--stop");
+      btn.setAttribute("aria-label", "Остановить");
+      btn.title = "Остановить генерацию";
+      btn.innerHTML = '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/></svg>';
+      btn.type = "button";
+      btn.disabled = false;
+    } else {
+      btn.classList.remove("btn--stop");
+      btn.setAttribute("aria-label", "Отправить");
+      btn.title = "";
+      if (btn.dataset.origHtml) {
+        btn.innerHTML = btn.dataset.origHtml;
+        delete btn.dataset.origHtml;
+      }
+      btn.type = "submit";
+    }
+  }
+
+  function handleStopClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    abortGeneration("user_abort");
+  }
+
   function setGenerating(flag) {
+    const was = state.generating;
     state.generating = !!flag;
+
+    if (state.generating && !was) {
+      try { state.genAbort = new AbortController(); } catch { state.genAbort = null; }
+    } else if (!state.generating) {
+      state.genAbort = null;
+    }
 
     const sendBtn = $("#sendBtn");
     const input = $("#userInput");
-    if (sendBtn) sendBtn.disabled = state.generating;
-    if (input) input.disabled = state.generating;
-
     const groupSendBtn = $("#groupSendBtn");
     const groupInput = $("#groupUserInput");
-    if (groupSendBtn) groupSendBtn.disabled = state.generating;
+
+    for (const btn of [sendBtn, groupSendBtn]) {
+      if (!btn) continue;
+      btn.removeEventListener("click", handleStopClick);
+      setSendButtonMode(btn, state.generating);
+      if (state.generating) {
+        btn.addEventListener("click", handleStopClick);
+      }
+    }
+
+    if (input) input.disabled = state.generating;
     if (groupInput) groupInput.disabled = state.generating;
 
     updateChatActionButtons();
@@ -4319,6 +4975,113 @@
       .trim();
   }
 
+  function openRouterModelLabel(model) {
+    const id = String(model?.id || model?.name || "").trim();
+    const name = String(model?.name || model?.id || "").trim();
+    const pricing = model?.pricing && typeof model.pricing === "object" ? model.pricing : null;
+    const prompt = pricing ? String(pricing.prompt || "").trim() : "";
+    const completion = pricing ? String(pricing.completion || "").trim() : "";
+    const price = prompt || completion ? ` (${prompt || "?"}/${completion || "?"})` : "";
+    return (name || id) + price;
+  }
+
+  async function refreshOpenRouterModels(selects) {
+    setStatus("Загружаю модели OpenRouter…");
+
+    try {
+      const headers = {};
+      if (state.openrouterKey) headers["X-OpenRouter-Key"] = state.openrouterKey;
+
+      const res = await fetch("/api/openrouter/models", { headers });
+      const text = await res.text();
+      const data = safeJsonParse(text);
+
+      if (!res.ok) {
+        const msg = data?.error?.message || data?.error || data?.message || `Ошибка OpenRouter (${res.status})`;
+        state.lmOk = false;
+        setStatus(String(msg), false);
+        for (const s of selects) s.innerHTML = "<option value='openrouter/auto'>openrouter/auto</option>";
+        syncModelSelectTitles(selects);
+        return;
+      }
+
+      state.lmOk = true;
+      const models = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+      let items = models
+        .map((m) => ({
+          id: String(m?.id || m?.name || "").trim(),
+          name: openRouterModelLabel(m)
+        }))
+        .filter((m) => m.id);
+
+      if (items.length === 0) {
+        items = [{ id: "openrouter/auto", name: "OpenRouter Auto" }];
+      }
+
+      for (const s of selects) {
+        s.innerHTML = "";
+        for (const m of items) {
+          const opt = document.createElement("option");
+          opt.value = m.id;
+          opt.textContent = m.name || m.id;
+          s.appendChild(opt);
+        }
+      }
+
+      const ids = items.map((x) => x.id);
+      if (!state.modelId || !ids.includes(state.modelId)) state.modelId = ids[0] || "openrouter/auto";
+      for (const s of selects) {
+        s.value = state.modelId;
+        s.disabled = false;
+      }
+      syncModelSelectTitles(selects);
+      setStatus(`OpenRouter: ${items.length} моделей`);
+      saveJson(STORAGE_KEYS.modelId, state.modelId);
+    } catch (err) {
+      state.lmOk = true;
+      setStatus("OpenRouter: список моделей недоступен, используется openrouter/auto", false);
+      state.modelId = "openrouter/auto";
+      for (const s of selects) {
+        s.innerHTML = "<option value='openrouter/auto'>openrouter/auto</option>";
+        s.value = "openrouter/auto";
+        s.disabled = false;
+      }
+      syncModelSelectTitles(selects);
+      saveJson(STORAGE_KEYS.modelId, state.modelId);
+    }
+  }
+
+  function openAiProviderDefaults(provider) {
+    if (provider === "openrouter") {
+      return {
+        endpoint: "/api/openrouter/chat",
+        model: state.modelId || "openrouter/auto",
+        keyHeader: "X-OpenRouter-Key",
+        key: state.openrouterKey || "",
+        label: "OpenRouter"
+      };
+    }
+
+    return {
+      endpoint: "/api/mistral/chat",
+      model: state.modelId || "mistral-small-latest",
+      keyHeader: "X-Mistral-Key",
+      key: state.mistralKey || "",
+      label: "Mistral"
+    };
+  }
+
+  function openAiProviderHeaders(provider) {
+    const cfg = openAiProviderDefaults(provider || state.provider);
+    const headers = { "Content-Type": "application/json" };
+    if (cfg.key) headers[cfg.keyHeader] = cfg.key;
+    return headers;
+  }
+
+  function isRemoteOpenAiProvider() {
+    return state.provider === "mistral" || state.provider === "openrouter";
+  }
+
   function currentCharacterAvatarForVision() {
     return String(editingCharacter()?.avatar || "").trim();
   }
@@ -4339,7 +5102,7 @@
   }
 
   function shouldUseMistralForOutfitVision() {
-    return Boolean(String(state.mistralKey || "").trim()) || state.provider === "mistral";
+    return isRemoteOpenAiProvider() || Boolean(String(state.mistralKey || "").trim());
   }
 
   async function generateOutfitFromAvatar() {
@@ -4407,15 +5170,14 @@
 
     try {
       let res;
-      if (shouldUseMistralForOutfitVision()) {
-        const headers = { "Content-Type": "application/json" };
-        if (state.mistralKey) headers["X-Mistral-Key"] = state.mistralKey;
+      if (isRemoteOpenAiProvider()) {
+        const cfg = openAiProviderDefaults(state.provider);
 
-        res = await fetch("/api/mistral/chat", {
+        res = await fetch(cfg.endpoint, {
           method: "POST",
-          headers,
+          headers: openAiProviderHeaders(state.provider),
           body: JSON.stringify({
-            model: preferredMistralVisionModel(),
+            model: state.provider === "mistral" ? preferredMistralVisionModel() : cfg.model,
             messages: mistralMessages,
             temperature: 0.2,
             max_tokens: 220,
@@ -4454,7 +5216,7 @@
       if (note) note.textContent = "Готово: описание подставлено в поле.";
     } catch (err) {
       let msg = String(err?.message || err || "Не удалось описать одежду по фото.");
-      if (!shouldUseMistralForOutfitVision() && /LM Studio/i.test(msg)) {
+      if (!isRemoteOpenAiProvider() && /LM Studio/i.test(msg)) {
         msg = "Не удалось получить ответ от LM Studio. Для заполнения по фото укажите Mistral API key в настройках или включите vision-модель в LM Studio.";
       }
       if (note) note.textContent = msg;
@@ -4500,12 +5262,12 @@
       src
     ].join("\n");
 
-    if (state.provider === "mistral") {
-      const headers = { "Content-Type": "application/json" };
-      if (state.mistralKey) headers["X-Mistral-Key"] = state.mistralKey;
+    if (isRemoteOpenAiProvider()) {
+      const cfg = openAiProviderDefaults(state.provider);
+      const headers = openAiProviderHeaders(state.provider);
 
       const payload = {
-        model: state.modelId || "mistral-small-latest",
+        model: cfg.model,
         messages: [
           { role: "system", content: "Ты профессиональный переводчик." },
           { role: "user", content: prompt }
@@ -4515,7 +5277,7 @@
         stream: false
       };
 
-      const res = await fetch("/api/mistral/chat", {
+      const res = await fetch(cfg.endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify(payload)
@@ -4524,7 +5286,7 @@
       const text = await res.text();
       const data = safeJsonParse(text);
       if (!res.ok) {
-        const errMsg = data?.error?.message || data?.error || data?.message || `Mistral error (${res.status})`;
+        const errMsg = data?.error?.message || data?.error || data?.message || `${cfg.label} error (${res.status})`;
         throw new Error(String(errMsg));
       }
 
@@ -4627,13 +5389,30 @@
       system_prompt: systemPrompt
     };
 
-    const res = await fetch("/api/lmstudio/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+    const signal = state.genAbort?.signal;
+    let stallTimer = null;
+    const resetStall = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => abortGeneration("stall_timeout"), STALL_TIMEOUT_MS);
+    };
+    resetStall();
+
+    let res;
+    try {
+      res = await fetch("/api/lmstudio/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal
+      });
+    } catch (err) {
+      if (stallTimer) clearTimeout(stallTimer);
+      if (isAbortError(err)) return { fullContent: base, respId: "", streamErrorMessage: "aborted" };
+      throw err;
+    }
 
     if (!res.ok) {
+      if (stallTimer) clearTimeout(stallTimer);
       const text = await res.text();
       const data = safeJsonParse(text);
       const errMsg = data?.error || data?.message || `Ошибка LM Studio (${res.status})`;
@@ -4649,9 +5428,18 @@
       let buffer = "";
       let started = base.length > 0;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      try {
+        while (true) {
+          let readResult;
+          try {
+            readResult = await reader.read();
+          } catch (err) {
+            if (isAbortError(err)) break;
+            throw err;
+          }
+          const { done, value } = readResult;
+          if (done) break;
+          resetStall();
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
@@ -4720,8 +5508,13 @@
             renderNow();
           }
         }
+        }
+      } finally {
+        if (stallTimer) clearTimeout(stallTimer);
+        try { reader.releaseLock?.(); } catch {}
       }
     } else {
+      if (stallTimer) clearTimeout(stallTimer);
       const text = await res.text();
       const data = safeJsonParse(text);
 
@@ -4744,7 +5537,7 @@
       }
     }
 
-    if (!generated && streamErrorMessage) {
+    if (!generated && streamErrorMessage && !/aborted|stall/i.test(streamErrorMessage)) {
       throw new Error(String(streamErrorMessage));
     }
 
@@ -4876,26 +5669,43 @@
       if (list) list.scrollTop = list.scrollHeight;
     };
 
-    const headers = { "Content-Type": "application/json" };
-    if (state.mistralKey) headers["X-Mistral-Key"] = state.mistralKey;
+    const cfg = openAiProviderDefaults(state.provider);
+    const headers = openAiProviderHeaders(state.provider);
 
     const payload = {
-      model: state.modelId || "mistral-small-latest",
+      model: cfg.model,
       messages,
       temperature: 0.75,
       stream: true
     };
 
-    const res = await fetch("/api/mistral/chat", {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload)
-    });
+    const signal = state.genAbort?.signal;
+    let stallTimer = null;
+    const resetStall = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => abortGeneration("stall_timeout"), STALL_TIMEOUT_MS);
+    };
+    resetStall();
+
+    let res;
+    try {
+      res = await fetch(cfg.endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+        signal
+      });
+    } catch (err) {
+      if (stallTimer) clearTimeout(stallTimer);
+      if (isAbortError(err)) return { fullContent: base };
+      throw err;
+    }
 
     if (!res.ok) {
+      if (stallTimer) clearTimeout(stallTimer);
       const text = await res.text();
       const data = safeJsonParse(text);
-      const errMsg = data?.error?.message || data?.error || data?.message || `Mistral error (${res.status})`;
+      const errMsg = data?.error?.message || data?.error || data?.message || `${cfg.label} error (${res.status})`;
       throw new Error(String(errMsg));
     }
 
@@ -4908,44 +5718,58 @@
       let buffer = "";
       let started = base.length > 0;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith("data:")) continue;
-          const jsonStr = trimmed.slice(5).trim();
-          if (jsonStr === "[DONE]") continue;
-
-          const chunk = safeJsonParse(jsonStr);
-          if (!chunk) continue;
-
-          if (chunk.error) {
-            const msg = chunk.error.message || chunk.error || "Mistral stream error";
-            throw new Error(String(msg));
+      try {
+        while (true) {
+          let readResult;
+          try {
+            readResult = await reader.read();
+          } catch (err) {
+            if (isAbortError(err)) break;
+            throw err;
           }
+          const { done, value } = readResult;
+          if (done) break;
+          resetStall();
 
-          const choice0 = chunk.choices?.[0];
-          const delta =
-            (typeof choice0?.delta?.content === "string" ? choice0.delta.content : "") ||
-            (typeof choice0?.text === "string" ? choice0.text : "");
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
 
-          if (typeof delta === "string" && delta.length > 0) {
-            if (!started) {
-              started = true;
-              if (bubble && bubble.textContent === "…") bubble.textContent = "";
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith("data:")) continue;
+            const jsonStr = trimmed.slice(5).trim();
+            if (jsonStr === "[DONE]") continue;
+
+            const chunk = safeJsonParse(jsonStr);
+            if (!chunk) continue;
+
+            if (chunk.error) {
+              const msg = chunk.error.message || chunk.error || `${cfg.label} stream error`;
+              throw new Error(String(msg));
             }
-            generated += delta;
-            renderNow();
+
+            const choice0 = chunk.choices?.[0];
+            const delta =
+              (typeof choice0?.delta?.content === "string" ? choice0.delta.content : "") ||
+              (typeof choice0?.text === "string" ? choice0.text : "");
+
+            if (typeof delta === "string" && delta.length > 0) {
+              if (!started) {
+                started = true;
+                if (bubble && bubble.textContent === "…") bubble.textContent = "";
+              }
+              generated += delta;
+              renderNow();
+            }
           }
         }
+      } finally {
+        if (stallTimer) clearTimeout(stallTimer);
+        try { reader.releaseLock?.(); } catch {}
       }
     } else {
+      if (stallTimer) clearTimeout(stallTimer);
       const text = await res.text();
       const data = safeJsonParse(text);
       const content = data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || "";
@@ -4980,13 +5804,30 @@
       stream: true
     };
 
-    const res = await fetch("/api/lmstudio/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+    const signal = state.genAbort?.signal;
+    let stallTimer = null;
+    const resetStall = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => abortGeneration("stall_timeout"), STALL_TIMEOUT_MS);
+    };
+    resetStall();
+
+    let res;
+    try {
+      res = await fetch("/api/lmstudio/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal
+      });
+    } catch (err) {
+      if (stallTimer) clearTimeout(stallTimer);
+      if (isAbortError(err)) return { fullContent: base };
+      throw err;
+    }
 
     if (!res.ok) {
+      if (stallTimer) clearTimeout(stallTimer);
       const text = await res.text();
       const data = safeJsonParse(text);
       const errMsg = data?.error || data?.message || `Ошибка LM Studio (${res.status})`;
@@ -5002,40 +5843,54 @@
       let buffer = "";
       let started = base.length > 0;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      try {
+        while (true) {
+          let readResult;
+          try {
+            readResult = await reader.read();
+          } catch (err) {
+            if (isAbortError(err)) break;
+            throw err;
+          }
+          const { done, value } = readResult;
+          if (done) break;
+          resetStall();
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith("data:")) continue;
-          const jsonStr = trimmed.slice(5).trim();
-          if (jsonStr === "[DONE]") continue;
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith("data:")) continue;
+            const jsonStr = trimmed.slice(5).trim();
+            if (jsonStr === "[DONE]") continue;
 
-          const chunk = safeJsonParse(jsonStr);
-          if (!chunk) continue;
-          if (chunk.error) throw new Error(String(chunk.error.message || chunk.error));
+            const chunk = safeJsonParse(jsonStr);
+            if (!chunk) continue;
+            if (chunk.error) throw new Error(String(chunk.error.message || chunk.error));
 
-          const choice0 = chunk.choices?.[0];
-          const delta =
-            (typeof choice0?.delta?.content === "string" ? choice0.delta.content : "") ||
-            (typeof choice0?.text === "string" ? choice0.text : "");
+            const choice0 = chunk.choices?.[0];
+            const delta =
+              (typeof choice0?.delta?.content === "string" ? choice0.delta.content : "") ||
+              (typeof choice0?.text === "string" ? choice0.text : "");
 
-          if (typeof delta === "string" && delta.length > 0) {
-            if (!started) {
-              started = true;
-              if (bubble && bubble.textContent === "…") bubble.textContent = "";
+            if (typeof delta === "string" && delta.length > 0) {
+              if (!started) {
+                started = true;
+                if (bubble && bubble.textContent === "…") bubble.textContent = "";
+              }
+              generated += delta;
+              renderNow();
             }
-            generated += delta;
-            renderNow();
           }
         }
+      } finally {
+        if (stallTimer) clearTimeout(stallTimer);
+        try { reader.releaseLock?.(); } catch {}
       }
     } else {
+      if (stallTimer) clearTimeout(stallTimer);
       const text = await res.text();
       const data = safeJsonParse(text);
       const content = data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || "";
@@ -5047,51 +5902,72 @@
   }
 
   async function streamChatToMessage({ character, assistantMsgId, messages, baseText }) {
-    if (state.provider === "mistral") {
+    if (isRemoteOpenAiProvider()) {
       return streamMistralToMessage({ character, assistantMsgId, messages, baseText: baseText || "" });
     }
     return streamLmStudioOpenAiToMessage({ character, assistantMsgId, messages, baseText: baseText || "" });
   }
 
-  async function respondAsNpcs(ch, npcs) {
-    for (const npc of npcs) {
+  async function generateSpeakerContent(mainChar, speaker, assistantMsgId, history, opts = {}) {
+    const messages = buildDynamicOpenAiMessages(mainChar, speaker, history, {
+      extraMessages: opts.extraMessages || []
+    });
+    const { fullContent } = await streamChatToMessage({
+      character: speakerDisplayCharacter(mainChar, speaker),
+      assistantMsgId,
+      messages,
+      baseText: opts.baseText || ""
+    });
+
+    const rawContent = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
+    const { displayText, commands } = parseAiCommands(rawContent);
+    return {
+      content: displayText || rawContent,
+      commands
+    };
+  }
+
+  async function respondAsSpeakers(ch, speakers) {
+    const queue = Array.isArray(speakers) ? speakers.filter(Boolean) : [];
+    for (const speaker of queue) {
       const placeholderId = uuid();
-      const ph = { id: placeholderId, role: "assistant", content: "…", ts: nowTs(), pending: true, npcId: npc.id };
+      const ph = assistantMessageForSpeaker(speaker, "…", { id: placeholderId, pending: true });
       setChatHistory(ch.id, chatHistoryFor(ch.id).concat([ph]));
       appendMessageRow(ph, ch);
 
       try {
         const historyCtx = chatHistoryFor(ch.id).filter((m) => !m.pending);
-        const msgs = buildNpcOpenAiMessages(state.profile, ch, npc, historyCtx);
-        const { fullContent } = await streamChatToMessage({
-          character: npc,
-          assistantMsgId: placeholderId,
-          messages: msgs
-        });
-        const npcContent = String(fullContent || "").trim();
-        const isSilent = !npcContent || npcContent === "[молчание]";
+        const { content, commands } = await generateSpeakerContent(ch, speaker, placeholderId, historyCtx);
 
-        if (isSilent) {
-          // Remove placeholder — NPC stayed silent
+        if (isSilentContent(content)) {
           setChatHistory(ch.id, chatHistoryFor(ch.id).filter((m) => m.id !== placeholderId));
         } else {
+          const finalMsg = assistantMessageForSpeaker(speaker, content, { id: placeholderId, ts: nowTs() });
           setChatHistory(
             ch.id,
-            chatHistoryFor(ch.id).map((m) =>
-              m.id === placeholderId
-                ? { id: m.id, role: "assistant", content: npcContent, ts: nowTs(), npcId: npc.id }
-                : m
-            )
+            chatHistoryFor(ch.id).map((m) => (m.id === placeholderId ? finalMsg : m))
           );
         }
-      } catch {
-        // Remove placeholder silently on error
-        setChatHistory(ch.id, chatHistoryFor(ch.id).filter((m) => m.id !== placeholderId));
+
+        applyLegacySceneCommands(ch, commands);
+      } catch (err) {
+        console.error(`[speaker ${speaker.name}] Ошибка ответа:`, err);
+        const errMsg = `⚠ ${speaker.name} не смог ответить: ${err?.message || err}`;
+        const finalMsg = assistantMessageForSpeaker(speaker, errMsg, { id: placeholderId, ts: nowTs() });
+        setChatHistory(
+          ch.id,
+          chatHistoryFor(ch.id).map((m) => (m.id === placeholderId ? finalMsg : m))
+        );
       }
 
       renderMessages();
       refreshChatsView();
     }
+  }
+
+  async function respondAsNpcs(ch, npcs) {
+    const speakers = (Array.isArray(npcs) ? npcs : []).map(npcSpeakerFor);
+    await respondAsSpeakers(ch, speakers);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -5105,14 +5981,31 @@
     if (editor) editor.hidden = true;
     renderPromptFolderTabs();
     renderSavedPrompts();
+    try {
+      if (history.state?.promptsSheet !== true) {
+        history.pushState({ promptsSheet: true }, "");
+        state._promptsSheetPushed = true;
+      }
+    } catch (_) {}
   }
 
-  function closePromptsSheet() {
+  function closePromptsSheet(opts) {
     const sheet = $("#promptsSheet");
     if (!sheet) return;
     sheet.hidden = true;
     state.editingPromptId = null;
+    if (state._promptsSheetPushed && !(opts && opts.fromPop)) {
+      state._promptsSheetPushed = false;
+      try { history.back(); } catch (_) {}
+    } else {
+      state._promptsSheetPushed = false;
+    }
   }
+
+  window.addEventListener("popstate", () => {
+    const sheet = $("#promptsSheet");
+    if (sheet && !sheet.hidden) closePromptsSheet({ fromPop: true });
+  });
 
   function openPromptEditor(promptId) {
     const editor = $("#promptEditor");
@@ -5320,6 +6213,12 @@
         closePromptsSheet();
       });
 
+      const btnCopy = document.createElement("button");
+      btnCopy.className = "btn btn--tiny btn--ghost";
+      btnCopy.type = "button";
+      btnCopy.textContent = "Копировать";
+      btnCopy.addEventListener("click", () => copyToClipboard(item.text));
+
       const btnEdit = document.createElement("button");
       btnEdit.className = "btn btn--tiny btn--ghost";
       btnEdit.type = "button";
@@ -5339,6 +6238,7 @@
       });
 
       actions.appendChild(btnUse);
+      actions.appendChild(btnCopy);
       actions.appendChild(btnEdit);
       actions.appendChild(btnDelete);
       card.appendChild(header);
@@ -5403,89 +6303,25 @@
 
     const userMsg = { id: uuid(), role: "user", content: userText, ts: nowTs() };
     setChatHistory(ch.id, historyBefore.concat([userMsg]));
+    if (chatId) resetLmContextFor(chatId);
     renderMessages();
     refreshChatsView();
 
-    const placeholderId = uuid();
-    const placeholder = { id: placeholderId, role: "assistant", content: "…", ts: nowTs(), pending: true };
-    setChatHistory(ch.id, chatHistoryFor(ch.id).concat([placeholder]));
-    appendMessageRow(placeholder, ch);
-
     setGenerating(true);
-    $("#composerHint").textContent = "Генерирую ответ…";
+    $("#composerHint").textContent = "Анализирую сцену…";
 
     try {
-      let rawContent;
-      const npcs = getTempCharactersForChat(ch.id);
-
-      if (state.provider === "mistral") {
-        const messages = buildOpenAiMessages(ch.id);
-        const { fullContent } = await streamMistralToMessage({
-          character: ch,
-          assistantMsgId: placeholderId,
-          messages,
-          baseText: ""
-        });
-        rawContent = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
-      } else {
-        const prevResponseId = chatId ? lastResponseIdFor(chatId) : "";
-        const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, historyBefore, true, npcs);
-
-        const { fullContent, respId, streamErrorMessage } = await streamLmStudioRestToMessage({
-          character: ch,
-          assistantMsgId: placeholderId,
-          inputText: userText,
-          previousResponseId: prevResponseId,
-          systemPrompt,
-          baseText: ""
-        });
-        rawContent = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
-
-        if (respId && chatId) {
-          const chain = responseIdChainFor(chatId);
-          let nextChain = chain;
-          if (nextChain.length === 0 && prevResponseId) nextChain = [prevResponseId, respId];
-          else nextChain = nextChain.concat([respId]);
-          saveResponseIdChain(chatId, nextChain);
-        } else if (streamErrorMessage && String(streamErrorMessage).toLowerCase().includes("job_not_found")) {
-          if (chatId) resetLmContextFor(chatId);
-        }
-      }
-
-      // Parse NPC commands embedded in the AI response
-      const { displayText, commands } = parseAiCommands(rawContent);
-      const mainContent = displayText || rawContent;
-
-      setChatHistory(
-        ch.id,
-        chatHistoryFor(ch.id).map((m) =>
-          m.id === placeholderId
-            ? {
-                id: m.id,
-                role: "assistant",
-                content: mainContent,
-                ts: nowTs(),
-                ...(commands.length ? { pending_npc_cmds: commands } : {})
-              }
-            : m
-        )
-      );
+      const scenePlan = await planSceneTurn(ch, chatHistoryFor(ch.id));
+      const speakers = applyScenePlan(ch, scenePlan);
       renderMessages();
       refreshChatsView();
+      $("#composerHint").textContent = "Генерирую ответ…";
+      await respondAsSpeakers(ch, speakers);
       $("#composerHint").textContent = "";
-
-      // Existing NPCs respond in sequence
-      if (npcs.length > 0) {
-        await respondAsNpcs(ch, npcs);
-      }
     } catch (err) {
       const msg = String(err?.message || err || "Ошибка");
-      setChatHistory(
-        ch.id,
-        chatHistoryFor(ch.id).map((m) =>
-          m.id === placeholderId ? { id: m.id, role: "assistant", content: `Не удалось получить ответ: ${msg}`, ts: nowTs() } : m
-        )
-      );
+      const errMsg = assistantMessageForSpeaker(mainSpeakerFor(ch), `Не удалось получить ответ: ${msg}`);
+      setChatHistory(ch.id, chatHistoryFor(ch.id).concat([errMsg]));
       renderMessages();
       refreshChatsView();
       $("#composerHint").textContent = clampText(msg, 140);
@@ -5536,78 +6372,38 @@
     const pendingMsg = { ...msg, content: "…", pending: true, ts: nowTs(), branchVersions: existingBranches, activeBranchIdx: currentBranchIdx };
     const pendingHistory = [...history.slice(0, msgIdx), pendingMsg];
     setChatHistory(ch.id, pendingHistory);
+    if (chatId) resetLmContextFor(chatId);
+    reconcileAutoTempCharactersFromHistory(ch.id);
     renderMessages();
 
     setGenerating(true);
     $("#composerHint").textContent = "Перегенерирую ответ…";
 
     try {
-      let content;
-
-      if (state.provider === "mistral") {
-        // pendingHistory already set; buildOpenAiMessages filters out pending messages,
-        // giving context up to (but not including) the assistant message being regenerated.
-        const messages = buildOpenAiMessages(ch.id);
-
-        const { fullContent } = await streamMistralToMessage({
-          character: ch,
-          assistantMsgId: targetMsgId,
-          messages,
-          baseText: ""
-        });
-        content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
-      } else {
-        // LM Studio REST: use response chain for last message optimization, fresh context otherwise
-        let prevResponseId = "";
-        let systemPrompt;
-
-        if (isLastMsg) {
-          const chain = chatId ? responseIdChainFor(chatId) : [];
-          prevResponseId = chain.length >= 2 ? chain[chain.length - 2] : "";
-        }
-
-        if (!prevResponseId) {
-          const historyForPrompt = history.slice(0, userIdx);
-          systemPrompt = buildRestStartPrompt(state.profile, ch, historyForPrompt, true, getTempCharactersForChat(ch.id));
-        }
-
-        const { fullContent, respId } = await streamLmStudioRestToMessage({
-          character: ch,
-          assistantMsgId: targetMsgId,
-          inputText: userText,
-          previousResponseId: prevResponseId,
-          systemPrompt,
-          baseText: ""
-        });
-        content = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
-
-        if (chatId) {
-          if (!isLastMsg) resetLmContextFor(chatId);
-          if (respId) {
-            const chain = responseIdChainFor(chatId);
-            const nextChain = chain.length > 0 ? chain.slice(0, -1).concat([respId]) : [respId];
-            saveResponseIdChain(chatId, nextChain);
-          }
-        }
-      }
+      const speaker = messageSpeaker(ch, msg) || mainSpeakerFor(ch);
+      const { content: mainContent, commands } = await generateSpeakerContent(
+        ch,
+        speaker,
+        targetMsgId,
+        chatHistoryFor(ch.id).filter((m) => !m.pending)
+      );
 
       // Append new branch with generated content
-      const newBranches = [...existingBranches, { content, tail: [] }];
+      const newBranches = [...existingBranches, { content: mainContent, tail: [] }];
       const newActiveBranchIdx = newBranches.length - 1;
 
-      const finalMsg = {
+      const finalMsg = assistantMessageForSpeaker(speaker, mainContent, {
         id: targetMsgId,
-        role: "assistant",
-        content,
         ts: nowTs(),
         branchVersions: newBranches,
         activeBranchIdx: newActiveBranchIdx
-      };
+      });
 
       setChatHistory(
         ch.id,
         chatHistoryFor(ch.id).map((m) => m.id === targetMsgId ? finalMsg : m)
       );
+      applyLegacySceneCommands(ch, commands);
       renderMessages();
       refreshChatsView();
       $("#composerHint").textContent = "";
@@ -5715,6 +6511,7 @@
 
     setChatHistory(ch.id, newHistory);
     if (chatId) resetLmContextFor(chatId);
+    reconcileAutoTempCharactersFromHistory(ch.id);
     renderMessages();
     refreshChatsView();
   }
@@ -5744,62 +6541,34 @@
     const nextHistory = history.slice();
     nextHistory[lastIdx] = { ...last, pending: true };
     setChatHistory(ch.id, nextHistory);
+    if (chatId) resetLmContextFor(chatId);
     renderMessages();
 
     setGenerating(true);
     $("#composerHint").textContent = hintText;
+    const continueSpeaker = messageSpeaker(ch, last) || mainSpeakerFor(ch);
 
     try {
-      let content;
-
-      if (state.provider === "mistral") {
-        const messages = buildOpenAiMessages(ch.id);
-        // Include the existing assistant response so the AI knows what it already wrote
-        if (rawBase) messages.push({ role: "assistant", content: rawBase });
-        messages.push({ role: "user", content: inputText });
-
-        const { fullContent } = await streamMistralToMessage({
-          character: ch,
-          assistantMsgId,
-          messages,
-          baseText: base
-        });
-        content = String(fullContent || "").trim() ? String(fullContent) : (base || "(пустой ответ)");
-      } else {
-        const prevResponseId = chatId ? lastResponseIdFor(chatId) : "";
-        const systemPrompt = prevResponseId ? undefined : buildRestStartPrompt(state.profile, ch, history, true, getTempCharactersForChat(ch.id));
-
-        // Include the existing content so the AI can continue from where it stopped
-        const continueInput = rawBase
-          ? inputText + "\n\nТвой текущий ответ (продолжи его, не переписывай):\n" + rawBase
-          : inputText;
-
-        const { fullContent, respId } = await streamLmStudioRestToMessage({
-          character: ch,
-          assistantMsgId,
-          inputText: continueInput,
-          previousResponseId: prevResponseId,
-          systemPrompt,
-          baseText: base
-        });
-        content = String(fullContent || "").trim() ? String(fullContent) : (base || "(пустой ответ)");
-
-        if (respId && chatId && !isThoughts) {
-          const chain = responseIdChainFor(chatId);
-          let nextChain = chain;
-          if (nextChain.length === 0 && prevResponseId) nextChain = [prevResponseId, respId];
-          else if (nextChain.length === 0) nextChain = [respId];
-          else nextChain = nextChain.slice(0, nextChain.length - 1).concat([respId]);
-          saveResponseIdChain(chatId, nextChain);
-        }
-      }
+      const extraMessages = [];
+      if (rawBase) extraMessages.push({ role: "assistant", content: rawBase });
+      extraMessages.push({ role: "user", content: inputText });
+      const { content: mainContent, commands } = await generateSpeakerContent(
+        ch,
+        continueSpeaker,
+        assistantMsgId,
+        chatHistoryFor(ch.id).filter((m) => !m.pending),
+        { baseText: base, extraMessages }
+      );
 
       setChatHistory(
         ch.id,
         chatHistoryFor(ch.id).map((m) =>
-          m.id === assistantMsgId ? { id: m.id, role: "assistant", content, ts: nowTs() } : m
+          m.id === assistantMsgId
+            ? assistantMessageForSpeaker(continueSpeaker, mainContent, { id: m.id, ts: nowTs() })
+            : m
         )
       );
+      applyLegacySceneCommands(ch, commands);
       renderMessages();
       refreshChatsView();
       $("#composerHint").textContent = "";
@@ -5808,7 +6577,9 @@
       setChatHistory(
         ch.id,
         chatHistoryFor(ch.id).map((m) =>
-          m.id === assistantMsgId ? { id: m.id, role: "assistant", content: base + `\n\n(${failurePrefix}: ${msg})`, ts: nowTs() } : m
+          m.id === assistantMsgId
+            ? assistantMessageForSpeaker(continueSpeaker, base + `\n\n(${failurePrefix}: ${msg})`, { id: m.id, ts: nowTs() })
+            : m
         )
       );
       renderMessages();
@@ -5841,6 +6612,7 @@
     const ch = activeCharacter();
     if (!ch) return;
     setChatHistory(ch.id, []);
+    saveTempCharacters(ch.id, []);
     const chatId = activeChatIdFor(ch.id);
     if (chatId) resetLmContextFor(chatId);
     ensureInitialMessage();
@@ -6089,20 +6861,19 @@
     const ctxCopy = $("#ctxCopy");
     if (ctxCopy) {
       ctxCopy.addEventListener("click", () => {
+        const isGroup = state.view === "groupchat";
+        const gcId = isGroup ? state.activeGroupChatId : "";
         const ch = activeCharacter();
         const msgId = state.msgActionsTargetId;
         closeMsgActions();
-        if (!ch || !msgId) return;
+        if (!isGroup && !ch) return;
+        if (!msgId) return;
 
-        const { msg } = findMessageById(ch.id, msgId);
+        const { msg } = findMessageById(ch ? ch.id : "", msgId, gcId);
         if (!msg) return;
 
-        const text = String(msg.content || "");
-        navigator.clipboard.writeText(text).then(() => {
-          flashStatus("Скопировано", true);
-        }).catch(() => {
-          flashStatus("Не удалось скопировать", false);
-        });
+        const text = stripThoughtsContent(String(msg.content || ""));
+        copyToClipboard(text);
       });
     }
 
@@ -6243,20 +7014,7 @@
         const payload = all ? state.characters : current;
         const json = JSON.stringify(payload, null, 2);
 
-        try {
-          if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-            await navigator.clipboard.writeText(json);
-            $("#charFormNote").textContent = all ? "Экспортировано в буфер: все персонажи" : "Экспортировано в буфер: персонаж";
-            return;
-          }
-        } catch {
-          // ignore -> fall back to download
-        }
-
-        const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-        const filename = all ? `nlmw-characters-${ts}.json` : `nlmw-character-${ts}.json`;
-        downloadText(filename, json);
-        $("#charFormNote").textContent = `Экспорт: ${filename}`;
+        await copyToClipboard(json, all ? "Экспортировано в буфер: все персонажи" : "Экспортировано в буфер: персонаж");
       });
     }
 
@@ -6520,23 +7278,15 @@
       btnExportAllData.addEventListener("click", async () => {
         const payload = buildFullExportPayload();
         const json = JSON.stringify(payload, null, 2);
+        await copyToClipboard(json, "Экспорт данных завершен");
+      });
+    }
 
-        try {
-          if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-            await navigator.clipboard.writeText(json);
-            if (profileDataNote) profileDataNote.textContent = "Экспортировано в буфер обмена.";
-            flashStatus("Экспорт данных завершен", true);
-            return;
-          }
-        } catch {
-          // ignore -> fall back to download
-        }
-
-        const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-        const filename = `nlmw-backup-${ts}.json`;
-        downloadText(filename, json);
-        if (profileDataNote) profileDataNote.textContent = `Экспорт: ${filename}`;
-        flashStatus("Экспорт данных завершен", true);
+    const btnCopyPrompt = $("#btnCopyPrompt");
+    if (btnCopyPrompt) {
+      btnCopyPrompt.addEventListener("click", () => {
+        const textInput = $("#promptTextInput");
+        if (textInput) copyToClipboard(textInput.value);
       });
     }
 
@@ -6573,7 +7323,7 @@
       });
     }
 
-    const modelSelects = [$("#modelSelect"), $("#modelSelectProfile")].filter(Boolean);
+    const modelSelects = [$("#modelSelect"), $("#modelSelectProfile"), $("#modelSelectGroup")].filter(Boolean);
     for (const sel of modelSelects) {
       sel.addEventListener("change", (e) => {
         state.modelId = String(e.target.value || "");
@@ -6591,6 +7341,8 @@
 
         const mistralSection = $("#mistralSettings");
         if (mistralSection) mistralSection.hidden = state.provider !== "mistral";
+        const openrouterSection = $("#openrouterSettings");
+        if (openrouterSection) openrouterSection.hidden = state.provider !== "openrouter";
 
         state.modelId = "";
         saveJson(STORAGE_KEYS.modelId, "");
@@ -6618,9 +7370,34 @@
       });
     }
 
+    let openrouterKeyTimer = null;
+    const openrouterKeyInput = $("#openrouterKeyInput");
+    if (openrouterKeyInput) {
+      openrouterKeyInput.addEventListener("change", () => {
+        state.openrouterKey = String(openrouterKeyInput.value || "").trim();
+        saveJson(STORAGE_KEYS.openrouterKey, state.openrouterKey);
+        if (state.provider === "openrouter") refreshModels();
+      });
+
+      openrouterKeyInput.addEventListener("input", () => {
+        state.openrouterKey = String(openrouterKeyInput.value || "").trim();
+        saveJson(STORAGE_KEYS.openrouterKey, state.openrouterKey);
+        if (state.provider !== "openrouter") return;
+        if (openrouterKeyTimer) clearTimeout(openrouterKeyTimer);
+        openrouterKeyTimer = setTimeout(() => {
+          refreshModels();
+        }, 400);
+      });
+    }
+
     const btnOpenPrompts = $("#btnOpenPrompts");
     if (btnOpenPrompts) {
       btnOpenPrompts.addEventListener("click", () => openPromptsSheet());
+    }
+
+    const btnExportSystemPrompt = $("#btnExportSystemPrompt");
+    if (btnExportSystemPrompt) {
+      btnExportSystemPrompt.addEventListener("click", () => exportActiveChatSystemPrompt());
     }
 
     const btnPromptQuick = $("#btnPromptQuick");
@@ -6731,10 +7508,13 @@
         if (editId) {
           updateTempCharacter(ch.id, editId, { name, gender, intro });
         } else {
-          addTempCharacter(ch.id, { name, gender, intro });
+          const existing = findTempCharacterByRef(ch.id, { name });
+          const npc = addTempCharacter(ch.id, { name, gender, intro, source: "manual" });
+          if (npc && !existing) appendSceneEvent(ch.id, "npc_joined", npc);
         }
 
         renderNpcStrip(ch.id);
+        renderMessages();
         closeNpcModal();
       });
     }
@@ -6935,6 +7715,7 @@
   async function bootstrap() {
     ensureSeed();
     loadGroupChats();
+    bootstrapCopyModal();
     wireUI();
     fillProfileUI();
     await syncCharactersFromServer();

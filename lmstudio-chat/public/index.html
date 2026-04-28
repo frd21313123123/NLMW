@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
@@ -72,6 +72,9 @@
             <select class="model__select model__select--compact" id="modelSelect" aria-label="Модель"></select>
             <button class="iconBtn iconBtn--panel" id="btnOpenPrompts" type="button" aria-label="Сохраненные промты" title="Сохраненные промты">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg>
+            </button>
+            <button class="iconBtn iconBtn--panel" id="btnExportSystemPrompt" type="button" aria-label="Экспорт системного промпта" title="Экспорт системного промпта">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="4" width="12" height="16" rx="2"/><path d="M16 4V2H4v14h4"/><path d="M11 9h6"/><path d="M11 13h6"/><path d="M11 17h4"/></svg>
             </button>
             <button class="iconBtn iconBtn--panel" id="btnAddNpc" type="button" aria-label="Добавить персонажа в чат" title="Добавить NPC в сцену">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
@@ -240,6 +243,7 @@
                   <select class="field__input" id="providerSelect">
                     <option value="lmstudio">LM Studio (локальный)</option>
                     <option value="mistral">Mistral (официальный API)</option>
+                    <option value="openrouter">OpenRouter</option>
                   </select>
                 </label>
 
@@ -250,6 +254,16 @@
                   </label>
                   <div style="font-size: 0.78rem; color: rgba(255,255,255,0.45); margin-top: 0.25rem;">
                     Ключ обязателен для доступа к Mistral API.
+                  </div>
+                </div>
+
+                <div id="openrouterSettings" hidden>
+                  <label class="field">
+                    <span class="field__label">OpenRouter API Key</span>
+                    <input class="field__input" id="openrouterKeyInput" type="password" placeholder="sk-or-v1-..." autocomplete="off" />
+                  </label>
+                  <div style="font-size: 0.78rem; color: rgba(255,255,255,0.45); margin-top: 0.25rem;">
+                    Ключ нужен для генерации ответов через OpenRouter.
                   </div>
                 </div>
               </div>
@@ -464,6 +478,15 @@
                 </section>
 
                 <section class="charSection">
+                  <div class="charSection__title" style="margin-bottom:0.5rem">Аватар</div>
+                  <div class="row row--actions">
+                    <button class="btn btn--ghost" id="btnUploadAvatar" type="button">Загрузить фото</button>
+                    <button class="btn btn--ghost" id="btnGenAvatar" type="button">Сгенерировать</button>
+                  </div>
+                  <div class="smallNote" id="genAvatarNote">Загрузите своё изображение или сгенерируйте аватар по описанию персонажа.</div>
+                </section>
+
+                <section class="charSection">
                   <div class="charSection__title" style="margin-bottom:0.5rem">Инструменты</div>
                   <div class="row row--actions">
                     <button class="btn btn--ghost" id="btnTranslateAll" type="button">Перевести все поля</button>
@@ -489,8 +512,8 @@
         <div class="sheet__panel sheet__panel--prompts" role="dialog" aria-modal="true" aria-label="Сохраненные промты">
           <!-- Header -->
           <div class="promptsHeader">
-            <button class="iconBtn" id="btnPromptsClose" type="button" aria-label="Закрыть" data-close-prompts="1">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></svg>
+            <button class="iconBtn iconBtn--close" id="btnPromptsClose" type="button" aria-label="Закрыть" data-close-prompts="1">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </button>
             <div class="promptsHeader__title">Промты</div>
             <div class="promptsHeader__actions">
@@ -534,6 +557,7 @@
               </label>
               <div class="promptEditor__actions">
                 <button class="btn btn--accent" id="btnSavePrompt" type="button">Сохранить</button>
+                <button class="btn btn--ghost" id="btnCopyPrompt" type="button">Копировать</button>
                 <button class="btn btn--ghost" id="btnClearPromptDraft" type="button">Отмена</button>
               </div>
               <div class="smallNote" id="promptSheetNote"></div>
@@ -541,6 +565,7 @@
           </div>
         </div>
       </div>
+
       <!-- Multi-chat creation modal -->
       <div class="modal" id="multiChatModal" hidden>
         <div class="modal__overlay" data-close-multi="1"></div>
@@ -578,7 +603,29 @@
           </button>
         </div>
       </div>
-    </div>
+
+      <!-- Copy to Clipboard fallback modal -->
+      <div class="modal" id="copyModal" hidden>
+        <div class="modal__overlay" data-close-copy="1"></div>
+        <div class="modal__window modal__window--tiny">
+          <div class="modal__header">
+            <div class="modal__title">Скопировать текст</div>
+            <button class="modal__close" data-close-copy="1" type="button" aria-label="Закрыть">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
+          <div class="modal__body">
+            <div class="field__label">Скопируйте текст ниже вручную:</div>
+            <textarea class="field__input field__input--area" id="copyModalText" rows="10" readonly></textarea>
+          </div>
+          <div class="modal__footer">
+            <button class="btn btn--accent" id="btnCopyModalAction" type="button">Копировать в буфер</button>
+            <button class="btn btn--ghost" data-close-copy="1" type="button">Закрыть</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /app -->
 
     <script src="./app.js"></script>
   </body>

@@ -1,0 +1,59 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - banner:
+      - generic [ref=e125]:
+        - button "Назад" [ref=e126] [cursor=pointer]:
+          - img [ref=e127]
+        - button "Персонаж" [ref=e129] [cursor=pointer]:
+          - generic [ref=e131]: Наоми — твоя бывшая девушка.
+        - generic [ref=e132]:
+          - combobox "Модель" [disabled] [ref=e133]:
+            - option "—" [selected]
+          - button "Сохраненные промты" [ref=e134] [cursor=pointer]:
+            - img [ref=e135]
+          - button "Добавить персонажа в чат" [ref=e137] [cursor=pointer]:
+            - img [ref=e138]
+          - button "Очистить чат" [ref=e141] [cursor=pointer]:
+            - img [ref=e142]
+      - generic: LM Studio недоступна. Проверьте, что сервер запущен.
+    - main [ref=e12]:
+      - generic [ref=e147]:
+        - log [ref=e148]:
+          - generic [ref=e149]: Все ответы сгенерированы искусственным интеллектом и являются вымышленными.
+          - generic [ref=e151]:
+            - generic [ref=e152]: Не думал, что увижу тебя здесь. Ну так… чем ты последнее время занимаешься?
+            - generic [ref=e153]: 01:51
+            - generic [ref=e154]:
+              - button "R" [disabled] [ref=e155]
+              - button ">>" [disabled] [ref=e156]
+              - button "💭" [disabled] [ref=e157]
+        - generic [ref=e160]:
+          - textbox "Сообщение..." [ref=e161]
+          - button "Дополнительно" [ref=e162] [cursor=pointer]:
+            - img [ref=e163]
+          - button "Отправить" [ref=e164] [cursor=pointer]:
+            - img [ref=e165]
+  - dialog "Персонаж в чате" [ref=e169]:
+    - generic [ref=e170]:
+      - generic [ref=e171]: Добавить персонажа в чат
+      - button "Закрыть" [ref=e173] [cursor=pointer]
+    - generic [ref=e175]:
+      - generic [ref=e176]:
+        - generic [ref=e177]: Имя *
+        - textbox "Имя *" [ref=e178]:
+          - /placeholder: Имя персонажа
+          - text: Дима
+      - generic [ref=e179]:
+        - generic [ref=e180]: Пол
+        - group [ref=e181]:
+          - button "Пол Женский Мужской" [ref=e182] [cursor=pointer]: Любой
+          - button "Женский" [ref=e183] [cursor=pointer]
+          - button "Мужской" [active] [ref=e184] [cursor=pointer]
+      - generic [ref=e185]:
+        - generic [ref=e186]: Описание (управляет поведением)
+        - textbox "Описание (управляет поведением)" [ref=e187]:
+          - /placeholder: Характер, манера речи, цели персонажа…
+          - text: Старый друг Наоми, весёлый и общительный парень
+      - generic [ref=e188]:
+        - button "Отмена" [ref=e189] [cursor=pointer]
+        - button "Добавить" [ref=e190] [cursor=pointer]

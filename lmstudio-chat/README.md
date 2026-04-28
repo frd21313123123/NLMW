@@ -26,6 +26,8 @@ npm start
 
 - `LMSTUDIO_BASE_URL` (по умолчанию `http://localhost:1234/v1`)
 - `LMSTUDIO_API_KEY` (если вы включили ключ)
+- `MISTRAL_API_KEY` (опционально, серверный ключ Mistral)
+- `OPENROUTER_API_KEY` (опционально, серверный ключ OpenRouter; также можно ввести в профиле)
 
 Пример:
 
