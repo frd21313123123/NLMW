@@ -4,17 +4,10 @@ on:
   push:
     branches:
       - "**"
-    tags:
-      - "v*"
   pull_request:
     branches:
       - "**"
   workflow_dispatch:
-    inputs:
-      release_tag:
-        description: "Release tag to create or update, for example v1.0.0"
-        required: true
-        default: "v1.0.0"
 
 permissions:
   contents: write
@@ -48,15 +41,7 @@ jobs:
       - name: Resolve release tag
         id: release_tag
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "value=${{ inputs.release_tag }}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-            echo "make_latest=true" >> "$GITHUB_OUTPUT"
-          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-            echo "make_latest=true" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event_name }}" = "push" ]; then
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "value=build-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
