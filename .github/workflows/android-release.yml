@@ -7,10 +7,14 @@ on:
   pull_request:
     branches:
       - "**"
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: write
+
+concurrency:
+  group: android-release-${{ github.event_name == 'pull_request' && github.ref || 'latest' }}
+  cancel-in-progress: true
 
 env:
   FLUTTER_VERSION: "3.41.4"
@@ -38,18 +42,12 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Resolve release tag
-        id: release_tag
+      - name: Resolve build metadata
+        id: build_meta
         run: |
-          if [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "value=build-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-            echo "make_latest=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=" >> "$GITHUB_OUTPUT"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-            echo "make_latest=false" >> "$GITHUB_OUTPUT"
-          fi
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "asset_suffix=build-${GITHUB_RUN_NUMBER}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare Android SDK
         run: |
@@ -80,11 +78,11 @@ jobs:
       - name: Prepare release asset
         id: release_asset
         env:
-          RELEASE_TAG: ${{ steps.release_tag.outputs.value || format('commit-{0}', github.sha) }}
+          ASSET_SUFFIX: ${{ steps.build_meta.outputs.asset_suffix }}
         run: |
           mkdir -p release
-          cp "${PROJECT_DIR}/build/app/outputs/flutter-apk/app-release.apk" "release/nlmw-chat-${RELEASE_TAG}.apk"
-          echo "name=nlmw-chat-${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          cp "${PROJECT_DIR}/build/app/outputs/flutter-apk/app-release.apk" "release/nlmw-chat-${ASSET_SUFFIX}.apk"
+          echo "name=nlmw-chat-${ASSET_SUFFIX}" >> "$GITHUB_OUTPUT"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -94,13 +92,17 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release
-        if: steps.release_tag.outputs.value != ''
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.release_tag.outputs.value }}
-          target_commitish: ${{ github.sha }}
-          name: NLMW Chat ${{ steps.release_tag.outputs.value }}
-          files: release/*.apk
-          generate_release_notes: true
-          prerelease: ${{ steps.release_tag.outputs.prerelease }}
-          make_latest: ${{ steps.release_tag.outputs.make_latest }}
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: latest
+          RELEASE_TITLE: "NLMW Chat build #${{ github.run_number }}"
+          SHORT_SHA: ${{ steps.build_meta.outputs.short_sha }}
+        run: |
+          gh release delete "$RELEASE_TAG" --yes --cleanup-tag || true
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${RELEASE_TAG}" >/dev/null 2>&1 || true
+          gh release create "$RELEASE_TAG" release/*.apk \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TITLE" \
+            --notes "Automated APK build from ${GITHUB_REF_NAME} (${SHORT_SHA})." \
+            --latest
