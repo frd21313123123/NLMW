@@ -61,7 +61,7 @@
           <button class="iconBtn" id="btnBackToChats" type="button" aria-label="Назад">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></svg>
           </button>
-          <button class="chatTitle" id="btnOpenCharacters" type="button" aria-label="Персонаж">
+          <button class="chatTitle" id="btnOpenCharacters" type="button" aria-label="Состояние персонажа">
             <img class="avatar" id="charAvatar" alt="" />
             <span class="chatTitle__text">
               <span class="chatTitle__name" id="charName"></span>
@@ -628,6 +628,72 @@
             <svg class="ctxMenu__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
             <span>Редактировать</span>
           </button>
+        </div>
+      </div>
+
+      <!-- Speaker state modal -->
+      <div class="modal" id="speakerStateModal" hidden>
+        <div class="modal__overlay" data-close-state="1"></div>
+        <div class="modal__window modal__window--state" role="dialog" aria-modal="true" aria-labelledby="speakerStateTitle">
+          <div class="modal__header">
+            <div class="speakerState__head">
+              <img class="avatar speakerState__avatar" id="speakerStateAvatar" alt="" />
+              <div class="speakerState__headText">
+                <div class="modal__title" id="speakerStateTitle">Состояние</div>
+                <div class="speakerState__updated" id="speakerStateUpdated"></div>
+              </div>
+            </div>
+            <button class="iconBtn" data-close-state="1" type="button" aria-label="Закрыть">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
+          <div class="speakerState">
+            <div class="speakerState__empty" id="speakerStateEmpty">Состояние появится после следующего ответа персонажа.</div>
+
+            <section class="speakerState__section">
+              <div class="speakerState__label">Настроение</div>
+              <div class="speakerState__value" id="speakerStateMood"></div>
+            </section>
+
+            <section class="speakerState__section">
+              <div class="speakerState__row">
+                <div class="speakerState__label">Неуверенность</div>
+                <div class="speakerState__percent" id="speakerStateUncertaintyValue">0%</div>
+              </div>
+              <div class="speakerState__track">
+                <div class="speakerState__bar" id="speakerStateUncertaintyBar"></div>
+              </div>
+            </section>
+
+            <section class="speakerState__section">
+              <div class="speakerState__label">Эмоции</div>
+              <div class="speakerState__emotions" id="speakerStateEmotions"></div>
+            </section>
+
+            <section class="speakerState__section">
+              <div class="speakerState__label">Ощущения</div>
+              <div class="speakerState__chips" id="speakerStateSensations"></div>
+            </section>
+
+            <section class="speakerState__section">
+              <div class="speakerState__label">Отношение</div>
+              <div class="speakerState__value" id="speakerStateAttitude"></div>
+            </section>
+
+            <section class="speakerState__section">
+              <div class="speakerState__label">Намерение</div>
+              <div class="speakerState__value" id="speakerStateIntent"></div>
+            </section>
+
+            <section class="speakerState__section">
+              <div class="speakerState__label">Кратко</div>
+              <div class="speakerState__value" id="speakerStateSummary"></div>
+            </section>
+          </div>
+          <div class="speakerState__footer">
+            <button class="btn btn--ghost" id="btnSpeakerStateEdit" type="button">Редактировать</button>
+            <button class="btn btn--accent" data-close-state="1" type="button">Закрыть</button>
+          </div>
         </div>
       </div>
 

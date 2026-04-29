@@ -66,6 +66,8 @@
     polybuzzSettings: null
   };
 
+  let speakerStateModalContext = null;
+
   function safeJsonParse(text) {
     try {
       return JSON.parse(text);
@@ -820,6 +822,98 @@
     return state.characters.find((c) => c.id === state.editingCharacterId) || activeCharacter();
   }
 
+  function normalizePercentValue(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0;
+    const raw = n > 0 && n <= 1 ? n * 100 : n;
+    return Math.max(0, Math.min(100, Math.round(raw)));
+  }
+
+  function defaultSpeakerState() {
+    return {
+      mood: "",
+      uncertainty: 0,
+      emotions: [],
+      sensations: [],
+      attitude: "",
+      intent: "",
+      summary: "",
+      updatedAt: 0,
+      sourceMessageId: ""
+    };
+  }
+
+  function normalizeEmotionList(value) {
+    const src = Array.isArray(value)
+      ? value
+      : value && typeof value === "object"
+        ? Object.entries(value).map(([name, percent]) => ({ name, percent }))
+        : typeof value === "string"
+          ? value.split(/[,;\n]/).map((name) => ({ name }))
+          : [];
+
+    return src
+      .map((item) => {
+        if (typeof item === "string") return { name: cleanOneLineText(item), percent: 0 };
+        if (!item || typeof item !== "object") return null;
+        const name = cleanOneLineText(item.name || item.label || item.emotion || item.title);
+        if (!name) return null;
+        return {
+          name: clampText(name, 32),
+          percent: normalizePercentValue(item.percent ?? item.value ?? item.intensity ?? item.level)
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 6);
+  }
+
+  function normalizeSensationList(value) {
+    const src = Array.isArray(value)
+      ? value
+      : typeof value === "string"
+        ? value.split(/[,;\n]/)
+        : value && typeof value === "object"
+          ? Object.values(value)
+          : [];
+
+    return src
+      .map((item) => {
+        if (typeof item === "string") return cleanOneLineText(item);
+        if (!item || typeof item !== "object") return "";
+        return cleanOneLineText(item.name || item.label || item.text || item.sensation || item.description);
+      })
+      .filter(Boolean)
+      .map((text) => clampText(text, 64))
+      .slice(0, 6);
+  }
+
+  function normalizeSpeakerState(raw) {
+    const base = defaultSpeakerState();
+    if (!raw || typeof raw !== "object") return base;
+    return {
+      mood: clampText(cleanOneLineText(raw.mood || raw.feeling || raw.state), 48),
+      uncertainty: normalizePercentValue(raw.uncertainty ?? raw.insecurity ?? raw.doubt),
+      emotions: normalizeEmotionList(raw.emotions || raw.feelings),
+      sensations: normalizeSensationList(raw.sensations || raw.body || raw.physical_sensations),
+      attitude: clampText(cleanOneLineText(raw.attitude || raw.attitude_to_user), 120),
+      intent: clampText(cleanOneLineText(raw.intent || raw.intention || raw.next_intent), 120),
+      summary: clampText(cleanOneLineText(raw.summary || raw.note || raw.description), 220),
+      updatedAt: typeof raw.updatedAt === "number" && Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
+      sourceMessageId: typeof raw.sourceMessageId === "string" ? raw.sourceMessageId : ""
+    };
+  }
+
+  function normalizeSpeakerStatesMap(raw) {
+    const out = {};
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+    for (const [key, value] of Object.entries(raw)) {
+      const cleanKey = String(key || "").trim();
+      if (!cleanKey || !cleanKey.includes(":")) continue;
+      out[cleanKey] = normalizeSpeakerState(value);
+    }
+    return out;
+  }
+
   function defaultChatTitle(index) {
     return `Чат ${index}`;
   }
@@ -849,8 +943,9 @@
     const tempCharacters = Array.isArray(raw?.tempCharacters)
       ? raw.tempCharacters.map(normalizeTempCharacter).filter(Boolean)
       : [];
+    const speakerStates = normalizeSpeakerStatesMap(raw?.speakerStates);
 
-    return { id, title, createdAt, updatedAt, messages, tempCharacters };
+    return { id, title, createdAt, updatedAt, messages, tempCharacters, speakerStates };
   }
 
   function normalizeTempCharacter(raw) {
@@ -1482,6 +1577,63 @@
     return msg;
   }
 
+  function personalSpeakerStateKey(mainChar, speaker) {
+    if (speaker?.type === "npc") return `npc:${speaker.id || canonicalNpcName(speaker.name)}`;
+    return `main:${mainChar?.id || speaker?.id || "main"}`;
+  }
+
+  function groupSpeakerStateKey(characterId) {
+    return `character:${String(characterId || "").trim()}`;
+  }
+
+  function getPersonalSpeakerState(mainChar, speaker) {
+    if (!mainChar) return defaultSpeakerState();
+    const chat = activeChatFor(mainChar.id);
+    const states = normalizeSpeakerStatesMap(chat?.speakerStates);
+    return normalizeSpeakerState(states[personalSpeakerStateKey(mainChar, speaker)]);
+  }
+
+  function savePersonalSpeakerState(mainChar, speaker, nextState) {
+    if (!mainChar || !speaker) return;
+    const bucket = conversationBucketFor(mainChar.id);
+    const chat = activeChatFor(mainChar.id);
+    if (!chat) return;
+    chat.speakerStates = normalizeSpeakerStatesMap(chat.speakerStates);
+    chat.speakerStates[personalSpeakerStateKey(mainChar, speaker)] = normalizeSpeakerState(nextState);
+    const idx = bucket.chats.findIndex((c) => c.id === chat.id);
+    if (idx >= 0) bucket.chats[idx] = chat;
+    state.conversations[mainChar.id] = bucket;
+    saveJson(STORAGE_KEYS.conversations, state.conversations);
+  }
+
+  function getGroupSpeakerState(gc, characterId) {
+    const states = normalizeSpeakerStatesMap(gc?.speakerStates);
+    return normalizeSpeakerState(states[groupSpeakerStateKey(characterId)]);
+  }
+
+  function saveGroupSpeakerState(gc, characterId, nextState) {
+    if (!gc || !characterId) return;
+    gc.speakerStates = normalizeSpeakerStatesMap(gc.speakerStates);
+    gc.speakerStates[groupSpeakerStateKey(characterId)] = normalizeSpeakerState(nextState);
+    saveGroupChats();
+  }
+
+  function formatSpeakerStateForPrompt(stateValue, speakerName) {
+    const s = normalizeSpeakerState(stateValue);
+    if (!s.updatedAt) return "";
+    const lines = [];
+    lines.push(`\n[Текущее внутреннее состояние ${speakerName || "персонажа"}]`);
+    if (s.mood) lines.push(`Настроение: ${s.mood}.`);
+    lines.push(`Неуверенность: ${s.uncertainty}%.`);
+    if (s.emotions.length) lines.push(`Эмоции: ${s.emotions.map((e) => `${e.name} ${e.percent}%`).join(", ")}.`);
+    if (s.sensations.length) lines.push(`Ощущения: ${s.sensations.join(", ")}.`);
+    if (s.attitude) lines.push(`Отношение к собеседнику/сцене: ${s.attitude}.`);
+    if (s.intent) lines.push(`Намерение: ${s.intent}.`);
+    if (s.summary) lines.push(`Кратко: ${s.summary}.`);
+    lines.push("Используй это как скрытый контекст и не пересказывай пользователю списком.");
+    return lines.join("\n");
+  }
+
   function sceneEventText(message) {
     const name = String(message?.npcName || "Персонаж").trim();
     if (message?.type === "npc_joined") return `${name} появился в сцене.`;
@@ -1542,6 +1694,9 @@
       if (Array.isArray(mainChar.tags) && mainChar.tags.length) parts.push(`Теги: ${mainChar.tags.join(", ")}`);
       parts.push(`Стиль диалога: ${style.prompt}`);
     }
+
+    const stateText = formatSpeakerStateForPrompt(getPersonalSpeakerState(mainChar, speaker), speakerName);
+    if (stateText) parts.push(stateText);
 
     const npcs = Array.isArray(activeNpcs) ? activeNpcs : [];
     if (npcs.length > 0) {
@@ -1652,6 +1807,96 @@
     }
 
     return extractChatTextFromResponse(data) || data?.choices?.[0]?.message?.content || text || "";
+  }
+
+  function groupTranscriptLines(gc, maxMessages = 30) {
+    const items = (Array.isArray(gc?.messages) ? gc.messages : [])
+      .filter((m) => m && !m.pending && (m.role === "user" || m.role === "assistant"))
+      .slice(-maxMessages);
+
+    return items.map((m) => {
+      if (m.role === "user") return `${state.profile?.name || "Пользователь"}: ${String(m.content || "")}`;
+      const ch = state.characters.find((c) => c.id === m.characterId);
+      return `${ch?.name || "Персонаж"}: ${stripThoughtsContent(m.content)}`;
+    });
+  }
+
+  function speakerStateAnalysisMessages(payload) {
+    const system =
+      "Ты обновляешь скрытое внутреннее состояние персонажа после его последней реплики. " +
+      "Не продолжай диалог и не оценивай пользователя. Верни только валидный JSON без Markdown. " +
+      "Формат: {\"mood\":\"...\",\"uncertainty\":0,\"emotions\":[{\"name\":\"...\",\"percent\":0}],\"sensations\":[\"...\"],\"attitude\":\"...\",\"intent\":\"...\",\"summary\":\"...\"}. " +
+      "uncertainty и percent должны быть числами от 0 до 100. Пиши значения по-русски, коротко и по ситуации.";
+
+    return [
+      { role: "system", content: system },
+      { role: "user", content: JSON.stringify(payload, null, 2) }
+    ];
+  }
+
+  async function analyzeSpeakerState({ speakerName, speakerGender, previousState, recentScene, latestReply }) {
+    const text = await requestChatCompletionText(
+      speakerStateAnalysisMessages({
+        speaker: {
+          name: speakerName || "Персонаж",
+          gender: speakerGender || "unspecified"
+        },
+        previous_state: normalizeSpeakerState(previousState),
+        recent_scene: Array.isArray(recentScene) ? recentScene.slice(-24) : [],
+        latest_reply: String(latestReply || "").trim()
+      }),
+      { temperature: 0.1, maxTokens: 500 }
+    );
+    const parsed = parseLooseJsonObject(text);
+    if (!parsed) throw new Error("state_json_parse_failed");
+    return normalizeSpeakerState(parsed);
+  }
+
+  async function refreshPersonalSpeakerStateAfterReply(mainChar, speaker, message) {
+    if (!mainChar || !speaker || !message || message.role !== "assistant" || message.pending) return;
+    if (isSilentContent(message.content)) return;
+
+    try {
+      const previousState = getPersonalSpeakerState(mainChar, speaker);
+      const speakerIdentity = speaker.type === "npc" ? speaker.npc || {} : mainChar;
+      const nextState = await analyzeSpeakerState({
+        speakerName: speaker.name,
+        speakerGender: speakerIdentity.gender || "unspecified",
+        previousState,
+        recentScene: sceneTranscriptLines(mainChar, chatHistoryFor(mainChar.id), 24),
+        latestReply: String(message.content || "")
+      });
+      savePersonalSpeakerState(mainChar, speaker, {
+        ...nextState,
+        updatedAt: nowTs(),
+        sourceMessageId: message.id
+      });
+      refreshOpenSpeakerStateModal();
+    } catch (err) {
+      console.warn("[speaker state]", err);
+    }
+  }
+
+  async function refreshGroupSpeakerStateAfterReply(gc, character, message) {
+    if (!gc || !character || !message || message.role !== "assistant" || message.pending) return;
+
+    try {
+      const nextState = await analyzeSpeakerState({
+        speakerName: character.name || "Персонаж",
+        speakerGender: character.gender || "unspecified",
+        previousState: getGroupSpeakerState(gc, character.id),
+        recentScene: groupTranscriptLines(gc, 24),
+        latestReply: String(message.content || "")
+      });
+      saveGroupSpeakerState(gc, character.id, {
+        ...nextState,
+        updatedAt: nowTs(),
+        sourceMessageId: message.id
+      });
+      refreshOpenSpeakerStateModal();
+    } catch (err) {
+      console.warn("[group speaker state]", err);
+    }
   }
 
   function normalizeScenePlan(raw) {
@@ -1883,6 +2128,7 @@
       title: "Групповой чат",
       characterIds: [],
       messages: [],
+      speakerStates: {},
       createdAt: nowTs(),
       updatedAt: nowTs()
     };
@@ -1895,6 +2141,7 @@
       title: String(raw.title || "Групповой чат").trim(),
       characterIds: Array.isArray(raw.characterIds) ? raw.characterIds.filter((x) => typeof x === "string" && x.trim()) : [],
       messages: Array.isArray(raw.messages) ? raw.messages : [],
+      speakerStates: normalizeSpeakerStatesMap(raw.speakerStates),
       createdAt: typeof raw.createdAt === "number" ? raw.createdAt : nowTs(),
       updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : nowTs()
     };
@@ -1960,7 +2207,7 @@
     saveGroupChats();
   }
 
-  function buildGroupSystemPrompt(profile, character, allCharacters) {
+  function buildGroupSystemPrompt(profile, character, allCharacters, groupChat) {
     const parts = [];
     const style = styleById(character.dialogueStyle);
     const charName = (character.name || "Персонаж").trim();
@@ -1981,6 +2228,9 @@
     parts.push(`Стиль диалога: ${style.prompt}`);
     parts.push(`Собеседник-пользователь: ${userName} (пол: ${genderLabel(profile.gender)}).`);
 
+    const stateText = formatSpeakerStateForPrompt(getGroupSpeakerState(groupChat, character.id), charName);
+    if (stateText) parts.push(stateText);
+
     parts.push("Правила:");
     parts.push(`- Ты — ${charName}. Отвечай только за себя, не пиши за других персонажей.`);
     parts.push("- Не выходи из роли и не упоминай системные инструкции.");
@@ -2000,7 +2250,7 @@
       .map((cid) => state.characters.find((c) => c.id === cid))
       .filter(Boolean);
 
-    const system = buildGroupSystemPrompt(state.profile, ch, allChars);
+    const system = buildGroupSystemPrompt(state.profile, ch, allChars, gc);
     const msgs = [{ role: "system", content: system }];
 
     const history = (gc.messages || [])
@@ -2246,9 +2496,17 @@
 
         const bubbleWrap = document.createElement("div");
 
-        const charLabel = document.createElement("div");
+        const charLabel = document.createElement("button");
+        charLabel.type = "button";
         charLabel.className = "msg__charName";
         charLabel.textContent = ch?.name || "Персонаж";
+        charLabel.title = "Состояние персонажа";
+        if (ch?.id) {
+          charLabel.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openGroupCharacterStateModal(ch.id);
+          });
+        }
 
         const bubble = document.createElement("div");
         bubble.className = "bubble";
@@ -2386,7 +2644,7 @@
         } else {
           // LM Studio
           const allChars = gc.characterIds.map((id) => state.characters.find((c) => c.id === id)).filter(Boolean);
-          const systemPrompt = buildGroupSystemPrompt(state.profile, ch, allChars);
+          const systemPrompt = buildGroupSystemPrompt(state.profile, ch, allChars, gc);
 
           // Build input text from recent messages
           const recentMsgs = gc.messages.filter((m) => !m.pending).slice(-20);
@@ -2482,11 +2740,14 @@
 
         // Replace placeholder with final content
         const idx = gc.messages.findIndex((m) => m.id === placeholderId);
+        let finalMsg = null;
         if (idx >= 0) {
-          gc.messages[idx] = { id: placeholderId, role: "assistant", characterId: cid, content, ts: nowTs() };
+          finalMsg = { id: placeholderId, role: "assistant", characterId: cid, content, ts: nowTs() };
+          gc.messages[idx] = finalMsg;
         }
         gc.updatedAt = nowTs();
         saveGroupChats();
+        if (finalMsg) await refreshGroupSpeakerStateAfterReply(gc, ch, finalMsg);
         renderGroupMessages();
 
       } catch (err) {
@@ -3518,6 +3779,227 @@
     panel.appendChild(info);
   }
 
+  function stateHasVisibleData(s) {
+    const stateValue = normalizeSpeakerState(s);
+    return Boolean(
+      stateValue.updatedAt ||
+      stateValue.mood ||
+      stateValue.emotions.length ||
+      stateValue.sensations.length ||
+      stateValue.attitude ||
+      stateValue.intent ||
+      stateValue.summary
+    );
+  }
+
+  function formatStateUpdatedAt(ts) {
+    if (!ts) return "Еще не обновлялось";
+    try {
+      return new Date(ts).toLocaleString("ru-RU", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    } catch {
+      return "";
+    }
+  }
+
+  function resolveSpeakerStateContext(ctx) {
+    if (!ctx || typeof ctx !== "object") return null;
+
+    if (ctx.scope === "group") {
+      const gc = state.groupChats.find((g) => g.id === ctx.groupChatId) || activeGroupChat();
+      const ch = state.characters.find((c) => c.id === ctx.characterId);
+      if (!gc || !ch) return null;
+      return {
+        name: ch.name || "Персонаж",
+        avatar: getBestCharacterDisplayImage(ch),
+        stateValue: getGroupSpeakerState(gc, ch.id),
+        editCharacterId: ch.id
+      };
+    }
+
+    const mainChar = state.characters.find((c) => c.id === ctx.characterId) || activeCharacter();
+    if (!mainChar) return null;
+
+    if (ctx.speakerType === "npc") {
+      const npc =
+        findTempCharacterByRef(mainChar.id, { id: ctx.speakerId, name: ctx.speakerName }) ||
+        ctx.npc ||
+        { id: ctx.speakerId || "", name: ctx.speakerName || "НПС", avatar: "", gender: "unspecified" };
+      const speaker = npcSpeakerFor(npc);
+      const currentNpc = findTempCharacterByRef(mainChar.id, { id: npc.id, name: npc.name });
+      return {
+        name: speaker.name || "НПС",
+        avatar: npc.avatar || "",
+        stateValue: getPersonalSpeakerState(mainChar, speaker),
+        editNpc: currentNpc || null
+      };
+    }
+
+    return {
+      name: mainChar.name || "Персонаж",
+      avatar: getBestCharacterDisplayImage(mainChar),
+      stateValue: getPersonalSpeakerState(mainChar, mainSpeakerFor(mainChar)),
+      editCharacterId: mainChar.id
+    };
+  }
+
+  function renderStateChipList(container, items, emptyText) {
+    if (!container) return;
+    container.innerHTML = "";
+    const list = Array.isArray(items) ? items.filter(Boolean) : [];
+    if (list.length === 0) {
+      const empty = document.createElement("span");
+      empty.className = "speakerState__muted";
+      empty.textContent = emptyText;
+      container.appendChild(empty);
+      return;
+    }
+    for (const item of list) {
+      const chip = document.createElement("span");
+      chip.className = "speakerState__chip";
+      chip.textContent = item;
+      container.appendChild(chip);
+    }
+  }
+
+  function renderEmotionList(container, emotions) {
+    if (!container) return;
+    container.innerHTML = "";
+    const list = Array.isArray(emotions) ? emotions : [];
+    if (list.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "speakerState__muted";
+      empty.textContent = "Пока нет данных";
+      container.appendChild(empty);
+      return;
+    }
+
+    for (const emotion of list) {
+      const row = document.createElement("div");
+      row.className = "speakerState__emotion";
+      const head = document.createElement("div");
+      head.className = "speakerState__emotionHead";
+      const name = document.createElement("span");
+      name.textContent = emotion.name;
+      const value = document.createElement("span");
+      value.textContent = `${emotion.percent}%`;
+      head.appendChild(name);
+      head.appendChild(value);
+
+      const track = document.createElement("div");
+      track.className = "speakerState__track speakerState__track--thin";
+      const bar = document.createElement("div");
+      bar.className = "speakerState__bar";
+      bar.style.width = `${emotion.percent}%`;
+      track.appendChild(bar);
+
+      row.appendChild(head);
+      row.appendChild(track);
+      container.appendChild(row);
+    }
+  }
+
+  function renderSpeakerStateModal() {
+    const modal = $("#speakerStateModal");
+    if (!modal || modal.hidden) return;
+    const resolved = resolveSpeakerStateContext(speakerStateModalContext);
+    if (!resolved) {
+      modal.hidden = true;
+      return;
+    }
+
+    const s = normalizeSpeakerState(resolved.stateValue);
+    setImg($("#speakerStateAvatar"), resolved.avatar, resolved.name);
+    $("#speakerStateTitle").textContent = resolved.name;
+    $("#speakerStateUpdated").textContent = formatStateUpdatedAt(s.updatedAt);
+    $("#speakerStateMood").textContent = s.mood || "Пока не ясно";
+    $("#speakerStateUncertaintyValue").textContent = `${s.uncertainty}%`;
+    const uncertaintyBar = $("#speakerStateUncertaintyBar");
+    if (uncertaintyBar) uncertaintyBar.style.width = `${s.uncertainty}%`;
+    $("#speakerStateAttitude").textContent = s.attitude || "Пока нет данных";
+    $("#speakerStateIntent").textContent = s.intent || "Пока нет данных";
+    $("#speakerStateSummary").textContent = s.summary || "Состояние появится после следующей генерации ответа.";
+    const empty = $("#speakerStateEmpty");
+    if (empty) empty.hidden = stateHasVisibleData(s);
+    renderEmotionList($("#speakerStateEmotions"), s.emotions);
+    renderStateChipList($("#speakerStateSensations"), s.sensations, "Пока нет данных");
+
+    const editBtn = $("#btnSpeakerStateEdit");
+    if (editBtn) {
+      editBtn.hidden = !(resolved.editCharacterId || resolved.editNpc);
+      editBtn.onclick = () => {
+        closeSpeakerStateModal();
+        if (resolved.editCharacterId) {
+          state.editingCharacterId = resolved.editCharacterId;
+          const modalEl = $("#charactersModal");
+          if (modalEl) modalEl.hidden = false;
+          fillCharacterForm();
+          renderCharacterList();
+          modalWindow()?.classList.add("modal__window--editing");
+        } else if (resolved.editNpc) {
+          openNpcEditModal(resolved.editNpc);
+        }
+      };
+    }
+  }
+
+  function refreshOpenSpeakerStateModal() {
+    const modal = $("#speakerStateModal");
+    if (modal && !modal.hidden) renderSpeakerStateModal();
+  }
+
+  function openSpeakerStateModal(ctx) {
+    speakerStateModalContext = ctx;
+    const modal = $("#speakerStateModal");
+    if (!modal) return;
+    modal.hidden = false;
+    renderSpeakerStateModal();
+  }
+
+  function closeSpeakerStateModal() {
+    const modal = $("#speakerStateModal");
+    if (modal) modal.hidden = true;
+    speakerStateModalContext = null;
+  }
+
+  function openActiveCharacterStateModal() {
+    const ch = activeCharacter();
+    if (!ch) return;
+    openSpeakerStateModal({
+      scope: "personal",
+      characterId: ch.id,
+      speakerType: "main",
+      speakerId: ch.id,
+      speakerName: ch.name
+    });
+  }
+
+  function openNpcStateModal(mainChar, speaker) {
+    if (!mainChar || !speaker) return;
+    openSpeakerStateModal({
+      scope: "personal",
+      characterId: mainChar.id,
+      speakerType: "npc",
+      speakerId: speaker.id,
+      speakerName: speaker.name,
+      npc: speaker.npc || null
+    });
+  }
+
+  function openGroupCharacterStateModal(characterId) {
+    const gc = activeGroupChat();
+    if (!gc || !characterId) return;
+    openSpeakerStateModal({
+      scope: "group",
+      groupChatId: gc.id,
+      characterId
+    });
+  }
+
   function renderMessages() {
     const ch = activeCharacter();
     const list = $("#messages");
@@ -3597,9 +4079,15 @@
 
       // NPC name label above bubble
       if (npcObj) {
-        const npcLabel = document.createElement("div");
+        const npcLabel = document.createElement("button");
+        npcLabel.type = "button";
         npcLabel.className = "msg__npcName";
         npcLabel.textContent = displayName;
+        npcLabel.title = "Состояние персонажа";
+        npcLabel.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openNpcStateModal(ch, speaker);
+        });
         bubbleWrap.appendChild(npcLabel);
       }
 
@@ -4902,6 +5390,9 @@
     parts.push(`Стиль диалога: ${style.prompt}`);
     parts.push(`Собеседник: ${userName} (пол: ${genderLabel(profile.gender)}).`);
 
+    const stateText = formatSpeakerStateForPrompt(getPersonalSpeakerState(character, mainSpeakerFor(character)), charName);
+    if (stateText) parts.push(stateText);
+
     // ── Правила ──
     parts.push("Правила:");
     parts.push(`- Ты — ${charName}, НИКОГДА не ${userName}. Каждая твоя реплика — ответ персонажа пользователю.`);
@@ -5267,9 +5758,15 @@
     const bubbleWrap = document.createElement("div");
 
     if (npcObj) {
-      const npcLabel = document.createElement("div");
+      const npcLabel = document.createElement("button");
+      npcLabel.type = "button";
       npcLabel.className = "msg__npcName";
       npcLabel.textContent = displayName;
+      npcLabel.title = "Состояние персонажа";
+      npcLabel.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openNpcStateModal(ch, speaker);
+      });
       bubbleWrap.appendChild(npcLabel);
     }
 
@@ -6372,11 +6869,12 @@
       try {
         const historyCtx = chatHistoryFor(ch.id).filter((m) => !m.pending);
         const { content, commands } = await generateSpeakerContent(ch, speaker, placeholderId, historyCtx);
+        let finalMsg = null;
 
         if (isSilentContent(content)) {
           setChatHistory(ch.id, chatHistoryFor(ch.id).filter((m) => m.id !== placeholderId));
         } else {
-          const finalMsg = assistantMessageForSpeaker(speaker, content, { id: placeholderId, ts: nowTs() });
+          finalMsg = assistantMessageForSpeaker(speaker, content, { id: placeholderId, ts: nowTs() });
           setChatHistory(
             ch.id,
             chatHistoryFor(ch.id).map((m) => (m.id === placeholderId ? finalMsg : m))
@@ -6384,6 +6882,7 @@
         }
 
         applyLegacySceneCommands(ch, commands);
+        if (finalMsg) await refreshPersonalSpeakerStateAfterReply(ch, speaker, finalMsg);
       } catch (err) {
         console.error(`[speaker ${speaker.name}] Ошибка ответа:`, err);
         const errMsg = `⚠ ${speaker.name} не смог ответить: ${err?.message || err}`;
@@ -6838,6 +7337,7 @@
         chatHistoryFor(ch.id).map((m) => m.id === targetMsgId ? finalMsg : m)
       );
       applyLegacySceneCommands(ch, commands);
+      await refreshPersonalSpeakerStateAfterReply(ch, speaker, finalMsg);
       renderMessages();
       refreshChatsView();
       $("#composerHint").textContent = "";
@@ -6993,16 +7493,18 @@
         chatHistoryFor(ch.id).filter((m) => !m.pending),
         { baseText: base, extraMessages }
       );
+      const finalMsg = assistantMessageForSpeaker(continueSpeaker, mainContent, { id: assistantMsgId, ts: nowTs() });
 
       setChatHistory(
         ch.id,
         chatHistoryFor(ch.id).map((m) =>
           m.id === assistantMsgId
-            ? assistantMessageForSpeaker(continueSpeaker, mainContent, { id: m.id, ts: nowTs() })
+            ? finalMsg
             : m
         )
       );
       applyLegacySceneCommands(ch, commands);
+      await refreshPersonalSpeakerStateAfterReply(ch, continueSpeaker, finalMsg);
       renderMessages();
       refreshChatsView();
       $("#composerHint").textContent = "";
@@ -7047,6 +7549,15 @@
     if (!ch) return;
     setChatHistory(ch.id, []);
     saveTempCharacters(ch.id, []);
+    const bucket = conversationBucketFor(ch.id);
+    const chat = activeChatFor(ch.id);
+    if (chat) {
+      chat.speakerStates = {};
+      const idx = bucket.chats.findIndex((c) => c.id === chat.id);
+      if (idx >= 0) bucket.chats[idx] = chat;
+      state.conversations[ch.id] = bucket;
+      saveJson(STORAGE_KEYS.conversations, state.conversations);
+    }
     const chatId = activeChatIdFor(ch.id);
     if (chatId) resetLmContextFor(chatId);
     ensureInitialMessage();
@@ -7106,12 +7617,7 @@
 
     const btnOpenCharacters = $("#btnOpenCharacters");
     if (btnOpenCharacters) btnOpenCharacters.addEventListener("click", () => {
-      const modal = $("#charactersModal");
-      modal.hidden = false;
-      state.editingCharacterId = state.selectedCharacterId;
-      fillCharacterForm();
-      renderCharacterList();
-      modalWindow()?.classList.add("modal__window--editing");
+      openActiveCharacterStateModal();
     });
 
     const tabChats = $("#tabChats");
@@ -7293,6 +7799,14 @@
       if (t && t.dataset && t.dataset.close) closeModal();
     });
 
+    const speakerStateModal = $("#speakerStateModal");
+    if (speakerStateModal) {
+      speakerStateModal.addEventListener("click", (e) => {
+        const t = e.target;
+        if (t && t.dataset && t.dataset.closeState) closeSpeakerStateModal();
+      });
+    }
+
     // Paste-to-import:
     // - PolyBuzz links: works anywhere (as long as you're not pasting into an input/textarea).
     // - JSON: only auto-import when the Characters modal is open, to avoid surprises.
@@ -7331,7 +7845,9 @@
       const promptsSheet = $("#promptsSheet");
       const charModal = $("#charactersModal");
       const multiModal = $("#multiChatModal");
+      const stateModal = $("#speakerStateModal");
       if (ctxMenu && !ctxMenu.hidden) closeMsgActions();
+      else if (stateModal && !stateModal.hidden) closeSpeakerStateModal();
       else if (multiModal && !multiModal.hidden) closeMultiChatModal();
       else if (promptsSheet && !promptsSheet.hidden) closePromptsSheet();
       else if (charModal && !charModal.hidden) closeModal();
@@ -8067,6 +8583,7 @@
         const gc = activeGroupChat();
         if (!gc) return;
         gc.messages = [];
+        gc.speakerStates = {};
         gc.updatedAt = nowTs();
         saveGroupChats();
         // Re-add initial greetings
