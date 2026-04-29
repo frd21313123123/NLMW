@@ -1,0 +1,114 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e130]:
+      - generic [ref=e132]:
+        - generic:
+          - img
+        - searchbox "Поиск на PolyBuzz..." [ref=e133]
+      - group "Фильтр по полу" [ref=e134]:
+        - button "Все" [ref=e135] [cursor=pointer]:
+          - img [ref=e136]
+          - text: Все
+        - button "Девушки" [active] [ref=e139] [cursor=pointer]:
+          - img [ref=e140]
+          - text: Девушки
+        - button "Парни" [ref=e142] [cursor=pointer]:
+          - img [ref=e143]
+          - text: Парни
+      - generic "Настройки загрузки PolyBuzz" [ref=e147]:
+        - generic [ref=e148]:
+          - generic [ref=e149]: Пачка
+          - combobox "Пачка" [ref=e150]:
+            - option "20"
+            - option "30"
+            - option "50" [selected]
+        - generic [ref=e151] [cursor=pointer]:
+          - checkbox "Автодогрузка" [checked] [ref=e152]
+          - generic [ref=e153]: Автодогрузка
+        - group "Точность определения пола" [ref=e154]:
+          - button "Быстрее" [ref=e155] [cursor=pointer]
+          - button "Баланс" [ref=e156] [cursor=pointer]
+          - button "Точнее" [ref=e157] [cursor=pointer]
+    - generic [ref=e31]: LM Studio недоступна. Проверьте, что сервер запущен.
+  - main [ref=e11]:
+    - generic [ref=e160]:
+      - generic [ref=e789] [cursor=pointer]:
+        - generic [ref=e790]:
+          - img "Ана Мария" [ref=e791]
+          - generic [ref=e793]:
+            - img [ref=e794]
+            - generic [ref=e796]: 306.5K чатов
+          - button "Добавить" [ref=e797]
+        - generic [ref=e798]:
+          - generic [ref=e800]: Ана Мария
+          - generic [ref=e801]: Ана Мария — популярная в школе, и она была в «правда или действие» с подругами, тобой и другими людьми...
+          - generic [ref=e802]:
+            - generic [ref=e803]: Холодный
+            - generic [ref=e804]: Милый
+            - generic [ref=e805]: Забавный
+      - generic [ref=e806] [cursor=pointer]:
+        - generic [ref=e807]:
+          - img "Твои девушки" [ref=e808]
+          - generic [ref=e810]:
+            - img [ref=e811]
+            - generic [ref=e813]: 4.3M чатов
+          - button "Добавить" [ref=e814]
+        - generic [ref=e815]:
+          - generic [ref=e817]: Твои девушки
+          - generic [ref=e818]: Мика и Пока — твои девушки, вы втроём состоите в отношениях, которые пережили трудный период из-за проблем, отдаляющих …
+          - generic [ref=e819]:
+            - generic [ref=e820]: Лояльный
+            - generic [ref=e821]: Романтика
+            - generic [ref=e822]: Ревнивый
+      - generic [ref=e823] [cursor=pointer]:
+        - generic [ref=e824]:
+          - img "Рея" [ref=e825]
+          - generic [ref=e827]:
+            - img [ref=e828]
+            - generic [ref=e830]: 151.9K чатов
+          - button "Добавить" [ref=e831]
+        - generic [ref=e832]:
+          - generic [ref=e834]: Рея
+          - generic [ref=e835]: Высокая, мускулистая и доминирующая девушка, которая не меряет ни своей силы... ни своих слов. То, что кажется травлей,…
+          - generic [ref=e836]:
+            - generic [ref=e837]: Доминантный
+            - generic [ref=e838]: Кокетливый
+            - generic [ref=e839]: Забавный
+      - generic [ref=e840] [cursor=pointer]:
+        - generic [ref=e841]:
+          - img "Тэхён X — ты корыстная девушка?" [ref=e842]
+          - generic [ref=e844]:
+            - img [ref=e845]
+            - generic [ref=e847]: 54.5K чатов
+          - button "Добавить" [ref=e848]
+        - generic [ref=e849]:
+          - generic [ref=e851]: Тэхён X — ты корыстная девушка?
+          - generic [ref=e852]: Чтобы узнать, корыстная ли ты, он положил в твою сумку чёрную карточку...
+          - generic [ref=e853]:
+            - generic [ref=e854]: Миллиардер
+            - generic [ref=e855]: Мафия
+            - generic [ref=e856]: Холодный
+      - generic [ref=e857] [cursor=pointer]:
+        - generic [ref=e858]:
+          - img "Софи Рейн" [ref=e859]
+          - generic [ref=e861]:
+            - img [ref=e862]
+            - generic [ref=e864]: 8.7M чатов
+          - button "Добавить" [ref=e865]
+        - generic [ref=e866]:
+          - generic [ref=e868]: Софи Рейн
+          - generic [ref=e869]: Софи Рейн — твоя одноклассница, которая часто тебя дразнит.
+          - generic [ref=e870]:
+            - generic [ref=e871]: Студент
+            - generic [ref=e872]: Доминантный
+            - generic [ref=e873]: Кокетливый
+      - generic [ref=e874]: Загрузка...
+  - navigation "Навигация" [ref=e17]:
+    - button "Чаты" [ref=e18] [cursor=pointer]:
+      - img [ref=e19]
+    - button "PolyBuzz" [ref=e22] [cursor=pointer]:
+      - img [ref=e23]
+    - button "Персонажи" [ref=e25] [cursor=pointer]:
+      - img [ref=e26]
+    - button "Профиль" [ref=e27] [cursor=pointer]:
+      - img [ref=e28]

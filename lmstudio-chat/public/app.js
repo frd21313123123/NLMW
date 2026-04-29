@@ -15,7 +15,8 @@
     savedPrompts: "nlmw.savedPrompts",
     promptFolders: "nlmw.promptFolders",
     groupChats: "nlmw.groupChats",
-    activeGroupChatId: "nlmw.activeGroupChatId"
+    activeGroupChatId: "nlmw.activeGroupChatId",
+    polybuzzSettings: "nlmw.polybuzzSettings"
   };
 
   const DIALOGUE_STYLES = [
@@ -61,7 +62,8 @@
     discoverCategory: "all",
     groupChats: [],
     activeGroupChatId: "",
-    chatsSubTab: "personal"
+    chatsSubTab: "personal",
+    polybuzzSettings: null
   };
 
   function safeJsonParse(text) {
@@ -81,6 +83,32 @@
 
   function saveJson(key, value) {
     localStorage.setItem(key, JSON.stringify(value));
+  }
+
+  function defaultPolybuzzSettings() {
+    return {
+      pageSize: 50,
+      autoload: true,
+      genderAccuracy: "balanced"
+    };
+  }
+
+  function normalizePolybuzzSettings(raw) {
+    const base = defaultPolybuzzSettings();
+    const src = raw && typeof raw === "object" ? raw : {};
+    const pageSize = Number(src.pageSize);
+    const genderAccuracy = String(src.genderAccuracy || base.genderAccuracy);
+
+    return {
+      pageSize: [20, 30, 50].includes(pageSize) ? pageSize : base.pageSize,
+      autoload: typeof src.autoload === "boolean" ? src.autoload : base.autoload,
+      genderAccuracy: ["fast", "balanced", "precise"].includes(genderAccuracy) ? genderAccuracy : base.genderAccuracy
+    };
+  }
+
+  function savePolybuzzSettings() {
+    state.polybuzzSettings = normalizePolybuzzSettings(state.polybuzzSettings);
+    saveJson(STORAGE_KEYS.polybuzzSettings, state.polybuzzSettings);
   }
 
   function uuid() {
@@ -239,12 +267,14 @@
     state.openrouterKey = String(loadJson(STORAGE_KEYS.openrouterKey, ""));
     state.savedPrompts = loadJson(STORAGE_KEYS.savedPrompts, []);
     state.promptFolders = loadJson(STORAGE_KEYS.promptFolders, []);
+    state.polybuzzSettings = normalizePolybuzzSettings(loadJson(STORAGE_KEYS.polybuzzSettings, defaultPolybuzzSettings()));
 
     if (!["lmstudio", "mistral", "openrouter"].includes(state.provider)) {
       state.provider = "lmstudio";
     }
 
     saveJson(STORAGE_KEYS.profile, state.profile);
+    saveJson(STORAGE_KEYS.polybuzzSettings, state.polybuzzSettings);
 
     if (Array.isArray(state.characters)) {
       state.characters = state.characters.filter((x) => x && typeof x === "object").map(normalizeCharacterRecord);
@@ -3994,9 +4024,11 @@
   function fillCharacterForm() {
     const c = editingCharacter();
     if (!c) return;
+    const dialogueStyle = normalizeDialogueStyleId(c.dialogueStyle, "");
 
     $("#charNameInput").value = c.name || "";
     $("#charGenderInput").value = c.gender || "unspecified";
+    $("#charStyleInput").value = dialogueStyle;
     $("#charIntroInput").value = c.intro || "";
     $("#charBackstoryInput").value = c.backstory || "";
     $("#charInitialMessageInput").value = c.initialMessage || "";
@@ -4008,8 +4040,9 @@
     setImg($("#charAvatarPreview"), c.avatar, c.name);
     $("#charFormNote").textContent = "";
     setSegmentedValue($("#charGenderSegment"), c.gender || "unspecified");
+    setSegmentedValue($("#charStyleSegment"), dialogueStyle);
     syncCharacterCounters();
-    renderCharacterHeroPreview(c);
+    renderCharacterHeroPreview({ ...c, dialogueStyle });
     renderChatSelectInSettings(c);
 
     renderCharacterList();
@@ -4038,6 +4071,7 @@
     const titleEl = $("#charHeroName");
     const metaEl = $("#charHeroMeta");
     const genderTag = $("#charHeroGenderTag");
+    const styleTag = $("#charHeroStyleTag");
 
     if (titleEl) titleEl.textContent = c.name || "(без имени)";
     if (metaEl) {
@@ -4045,6 +4079,7 @@
       metaEl.textContent = desc ? desc.slice(0, 140) : "Заполните карточку персонажа";
     }
     if (genderTag) genderTag.textContent = `Пол: ${genderLabel(c.gender)}`;
+    if (styleTag) styleTag.textContent = `Стиль: ${styleById(c.dialogueStyle).label}`;
 
     if (hero) {
       hero.style.backgroundImage = c.background
@@ -4379,6 +4414,405 @@
     if (!polybuzzCatalogLoading) {
       loadPolybuzzCatalog();
     }
+  }
+
+  // PolyBuzz v2: settings-aware loading + cached gender enrichment.
+  let polybuzzGenderRequestSeq = 0;
+
+  function polybuzzSettings() {
+    state.polybuzzSettings = normalizePolybuzzSettings(state.polybuzzSettings);
+    return state.polybuzzSettings;
+  }
+
+  function syncPolybuzzSettingsControls() {
+    const settings = polybuzzSettings();
+    const pageSize = $("#polybuzzPageSize");
+    const autoload = $("#polybuzzAutoload");
+    if (pageSize && pageSize.value !== String(settings.pageSize)) pageSize.value = String(settings.pageSize);
+    if (autoload) autoload.checked = settings.autoload;
+
+    document.querySelectorAll(".pbAccuracyBtn").forEach((btn) => {
+      btn.classList.toggle("pbAccuracyBtn--active", btn.dataset.accuracy === settings.genderAccuracy);
+    });
+  }
+
+  function mergePolybuzzItems(target, incoming) {
+    const byId = new Map(target.map((item) => [item.secretSceneId, item]));
+    for (const raw of Array.isArray(incoming) ? incoming : []) {
+      if (!raw || !raw.secretSceneId) continue;
+      const existing = byId.get(raw.secretSceneId);
+      if (!existing) {
+        target.push(raw);
+        byId.set(raw.secretSceneId, raw);
+        continue;
+      }
+
+      const prevGender = existing.gender;
+      const prevGenderStatus = existing.genderStatus;
+      Object.assign(existing, raw);
+      if (raw.gender === undefined && prevGender !== undefined) existing.gender = prevGender;
+      if (!raw.genderStatus && prevGenderStatus) existing.genderStatus = prevGenderStatus;
+    }
+  }
+
+  function applyPolybuzzGenderUpdates(items, genders) {
+    const updates = new Map((Array.isArray(genders) ? genders : []).map((x) => [x.secretSceneId, x]));
+    let changed = false;
+    for (const item of Array.isArray(items) ? items : []) {
+      const update = updates.get(item.secretSceneId);
+      if (!update) continue;
+      if (update.gender !== undefined && item.gender !== update.gender) {
+        item.gender = update.gender;
+        changed = true;
+      }
+      if (update.status && item.genderStatus !== update.status) {
+        item.genderStatus = update.status;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function polybuzzCurrentItems() {
+    return polybuzzSearchQuery.length > 0 ? polybuzzSearchItems : polybuzzCatalogItems;
+  }
+
+  function polybuzzGenderResolveOptions(forceResolve = false) {
+    const accuracy = polybuzzSettings().genderAccuracy;
+    return {
+      resolve: forceResolve || accuracy !== "fast",
+      maxIds: accuracy === "precise" ? 100 : accuracy === "balanced" ? 70 : 50
+    };
+  }
+
+  async function requestPolybuzzGenders(items, { forceResolve = false } = {}) {
+    const source = Array.isArray(items) && items.length ? items : polybuzzCurrentItems();
+    const { resolve, maxIds } = polybuzzGenderResolveOptions(forceResolve);
+    const ids = [];
+    const seen = new Set();
+
+    for (const item of source) {
+      const id = item && item.secretSceneId;
+      if (!id || seen.has(id)) continue;
+      if (["resolved", "unknown", "pending"].includes(item.genderStatus || "")) continue;
+      if (!resolve && item.genderStatus) continue;
+      seen.add(id);
+      ids.push(id);
+      if (ids.length >= maxIds) break;
+    }
+
+    if (!ids.length) return;
+
+    const seq = ++polybuzzGenderRequestSeq;
+    try {
+      const res = await fetch("/api/polybuzz/genders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, resolve })
+      });
+      const data = await res.json();
+      if (!data.ok || !Array.isArray(data.genders)) return;
+
+      const changedCatalog = applyPolybuzzGenderUpdates(polybuzzCatalogItems, data.genders);
+      const changedSearch = applyPolybuzzGenderUpdates(polybuzzSearchItems, data.genders);
+      if ((changedCatalog || changedSearch || seq === polybuzzGenderRequestSeq) && state.view === "polybuzz") {
+        renderPolybuzzGrid();
+      }
+    } catch {
+      // Gender enrichment is best-effort; cards should still remain usable.
+    }
+  }
+
+  async function loadPolybuzzCatalog(nextPage) {
+    if (polybuzzCatalogLoading) return;
+    const page = nextPage || 1;
+    polybuzzCatalogLoading = true;
+    const status = $("#polybuzzStatus");
+    if (page === 1 && status) status.textContent = "Загрузка каталога PolyBuzz...";
+    else renderPolybuzzGrid();
+
+    try {
+      const pageSize = polybuzzSettings().pageSize;
+      const res = await fetch(`/api/polybuzz/catalog?page=${page}&pageSize=${pageSize}`);
+      const data = await res.json();
+      if (data.ok && Array.isArray(data.items)) {
+        if (page === 1) polybuzzCatalogItems = [];
+        mergePolybuzzItems(polybuzzCatalogItems, data.items);
+        polybuzzCatalogLoaded = true;
+        polybuzzCatalogPage = page;
+        polybuzzCatalogHasMore = data.hasMore !== false;
+        if (status) status.textContent = "";
+        requestPolybuzzGenders(data.items);
+      } else if (page === 1 && status) {
+        status.textContent = data.error || "Не удалось загрузить каталог";
+      }
+    } catch {
+      if (page === 1 && status) status.textContent = "Ошибка загрузки каталога PolyBuzz";
+    } finally {
+      polybuzzCatalogLoading = false;
+      renderPolybuzzGrid();
+    }
+  }
+
+  async function searchPolybuzz(query, page) {
+    const q = String(query || "").trim();
+    polybuzzSearchQuery = q;
+    if (!q) {
+      polybuzzSearchItems = [];
+      polybuzzSearchLoading = false;
+      polybuzzSearchPage = 1;
+      polybuzzSearchHasMore = true;
+      renderPolybuzzGrid();
+      return;
+    }
+
+    const p = page || 1;
+    polybuzzSearchLoading = true;
+    if (p === 1) {
+      polybuzzSearchItems = [];
+      polybuzzSearchPage = 1;
+      polybuzzSearchHasMore = true;
+    }
+    renderPolybuzzGrid();
+
+    try {
+      const pageSize = polybuzzSettings().pageSize;
+      const res = await fetch("/api/polybuzz/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q, page: p, pageSize })
+      });
+      const data = await res.json();
+      if (polybuzzSearchQuery !== q) return;
+
+      const newItems = data.ok && Array.isArray(data.items) ? data.items : [];
+      mergePolybuzzItems(polybuzzSearchItems, newItems);
+      polybuzzSearchPage = p;
+      polybuzzSearchHasMore = data.hasMore !== false && newItems.length > 0;
+      requestPolybuzzGenders(newItems);
+    } catch {
+      if (polybuzzSearchQuery === q && p === 1) polybuzzSearchItems = [];
+    } finally {
+      polybuzzSearchLoading = false;
+      renderPolybuzzGrid();
+    }
+  }
+
+  function appendPolybuzzLoadMore(grid, shouldShow) {
+    if (!grid || !shouldShow) return;
+    const isSearch = polybuzzSearchQuery.length > 0;
+    const hasMore = isSearch ? polybuzzSearchHasMore : polybuzzCatalogHasMore;
+    const loading = isSearch ? polybuzzSearchLoading : polybuzzCatalogLoading;
+    if (!hasMore) return;
+
+    if (polybuzzSettings().autoload) {
+      const sentinel = document.createElement("div");
+      sentinel.className = "polybuzzCatalog__sentinel";
+      sentinel.textContent = loading ? "Загрузка..." : "Загрузка...";
+      grid.appendChild(sentinel);
+      if (!loading) observePolybuzzSentinel(sentinel);
+      return;
+    }
+
+    const btn = document.createElement("button");
+    btn.className = "polybuzzCatalog__loadMore";
+    btn.type = "button";
+    btn.disabled = loading;
+    btn.textContent = loading ? "Загрузка..." : "Загрузить ещё";
+    btn.addEventListener("click", () => loadMorePolybuzz());
+    grid.appendChild(btn);
+  }
+
+  function renderPolybuzzGrid() {
+    const grid = $("#polybuzzGrid");
+    const status = $("#polybuzzStatus");
+    if (!grid) return;
+    grid.innerHTML = "";
+    syncPolybuzzSettingsControls();
+
+    const isSearch = polybuzzSearchQuery.length > 0;
+    const sourceItems = isSearch ? polybuzzSearchItems : polybuzzCatalogItems;
+    const isLoading = isSearch ? polybuzzSearchLoading : polybuzzCatalogLoading;
+    let items = sourceItems;
+
+    if (isSearch && polybuzzSearchLoading && polybuzzSearchItems.length === 0) {
+      if (status) status.textContent = "Поиск...";
+      return;
+    }
+
+    if (!isSearch && !polybuzzCatalogLoaded && polybuzzCatalogLoading) return;
+
+    let unresolvedGenderCount = 0;
+    if (polybuzzGenderFilter !== "all") {
+      const filtered = [];
+      for (const item of sourceItems) {
+        if (item.gender === polybuzzGenderFilter) filtered.push(item);
+        else if (!["resolved", "unknown", "failed"].includes(item.genderStatus || "")) unresolvedGenderCount++;
+      }
+      items = filtered;
+      if (unresolvedGenderCount > 0) requestPolybuzzGenders(sourceItems, { forceResolve: true });
+    }
+
+    document.querySelectorAll(".pbGenderBtn").forEach((btn) => {
+      btn.classList.toggle("pbGenderBtn--active", btn.dataset.gender === polybuzzGenderFilter);
+    });
+
+    if (items.length === 0) {
+      if (status) {
+        if (unresolvedGenderCount > 0) status.textContent = "Уточняю пол персонажей...";
+        else if (isLoading) status.textContent = "Загрузка...";
+        else status.textContent = isSearch ? "Ничего не найдено" : (polybuzzGenderFilter !== "all" ? "Нет персонажей с таким полом" : "Каталог пуст");
+      }
+      appendPolybuzzLoadMore(grid, sourceItems.length > 0);
+      return;
+    }
+
+    if (status) status.textContent = unresolvedGenderCount > 0 ? "Уточняю пол персонажей..." : "";
+
+    for (const item of items) {
+      const card = document.createElement("div");
+      card.className = "discoverCard";
+
+      const media = document.createElement("div");
+      media.className = "discoverCard__media";
+      media.style.position = "relative";
+
+      const image = document.createElement("img");
+      image.className = "discoverCard__image";
+      const imgSrc = item.cover || item.avatar || "";
+      if (imgSrc) {
+        image.src = proxiedImageUrl(imgSrc);
+        image.alt = item.name;
+        image.loading = "lazy";
+        image.decoding = "async";
+      }
+      image.onerror = function () { this.style.display = "none"; };
+
+      const overlay = document.createElement("div");
+      overlay.className = "discoverCard__overlay";
+
+      const metric = document.createElement("div");
+      metric.className = "discoverCard__metric";
+      metric.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8A8.5 8.5 0 0 1 12.5 20a8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.8-7.6A8.38 8.38 0 0 1 12.5 3a8.5 8.5 0 0 1 8.5 8.5Z"/></svg>';
+      const metricText = document.createElement("span");
+      metricText.textContent = formatChatCount(item.totalChats);
+      metric.appendChild(metricText);
+      overlay.appendChild(metric);
+
+      const importBtn = document.createElement("button");
+      importBtn.className = "polybuzzCard__importBtn";
+      const alreadyDone = isAlreadyImported(item.secretSceneId);
+      importBtn.textContent = alreadyDone ? "Добавлено" : "Добавить";
+      importBtn.disabled = alreadyDone;
+      importBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (importBtn.disabled) return;
+        importBtn.disabled = true;
+        importBtn.textContent = "Импорт...";
+        try {
+          const character = await importFromPolybuzzUrl(item.url);
+          applyImportedCharactersResult(importCharactersFromJsonPayload(character));
+          importBtn.textContent = "Добавлено";
+          flashStatus(`${item.name} импортирован`, true);
+        } catch (err) {
+          importBtn.textContent = "Ошибка";
+          importBtn.disabled = false;
+          flashStatus(String(err?.message || "Ошибка импорта"), false);
+          setTimeout(() => {
+            if (importBtn.textContent === "Ошибка") importBtn.textContent = "Добавить";
+          }, 2000);
+        }
+      });
+
+      media.appendChild(image);
+      media.appendChild(overlay);
+      media.appendChild(importBtn);
+
+      const body = document.createElement("div");
+      body.className = "discoverCard__body";
+
+      const titleRow = document.createElement("div");
+      titleRow.className = "discoverCard__titleRow";
+      const title = document.createElement("div");
+      title.className = "discoverCard__title";
+      title.textContent = item.name || item.oriName || "(без имени)";
+      titleRow.appendChild(title);
+
+      const desc = document.createElement("div");
+      desc.className = "discoverCard__desc";
+      desc.textContent = item.brief ? clampText(item.brief, 120) : "";
+
+      const tagsWrap = document.createElement("div");
+      tagsWrap.className = "discoverCard__tags";
+      const visibleTags = (item.tags || []).slice(0, 3);
+      for (let idx = 0; idx < visibleTags.length; idx++) {
+        const pill = document.createElement("span");
+        pill.className = "discoverCard__tag" + (idx === 0 ? " discoverCard__tag--accent" : "");
+        pill.textContent = visibleTags[idx];
+        tagsWrap.appendChild(pill);
+      }
+
+      body.appendChild(titleRow);
+      body.appendChild(desc);
+      body.appendChild(tagsWrap);
+
+      card.appendChild(media);
+      card.appendChild(body);
+      grid.appendChild(card);
+    }
+
+    appendPolybuzzLoadMore(grid, true);
+  }
+
+  function observePolybuzzSentinel(sentinel) {
+    if (polybuzzScrollObserver) polybuzzScrollObserver.disconnect();
+    polybuzzScrollObserver = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        polybuzzScrollObserver.disconnect();
+        loadMorePolybuzz();
+      }
+    }, { root: $("#polybuzzCatalog") || null, rootMargin: "500px 0px" });
+    polybuzzScrollObserver.observe(sentinel);
+  }
+
+  function loadMorePolybuzz() {
+    const isSearch = polybuzzSearchQuery.length > 0;
+    if (isSearch) {
+      if (!polybuzzSearchLoading && polybuzzSearchHasMore) {
+        searchPolybuzz(polybuzzSearchQuery, polybuzzSearchPage + 1);
+      }
+    } else if (!polybuzzCatalogLoading && polybuzzCatalogHasMore) {
+      loadPolybuzzCatalog(polybuzzCatalogPage + 1);
+    }
+  }
+
+  function openPolybuzzView() {
+    setView("polybuzz");
+    syncPolybuzzSettingsControls();
+    renderPolybuzzGrid();
+    if (!polybuzzCatalogLoaded && !polybuzzCatalogLoading) loadPolybuzzCatalog();
+    else requestPolybuzzGenders(polybuzzCurrentItems());
+  }
+
+  function resetPolybuzzCatalog() {
+    if (polybuzzScrollObserver) polybuzzScrollObserver.disconnect();
+    polybuzzCatalogLoaded = false;
+    polybuzzCatalogPage = 1;
+    polybuzzCatalogHasMore = true;
+    polybuzzCatalogItems = [];
+    polybuzzCatalogLoading = false;
+  }
+
+  function reloadPolybuzzForSettingsChange() {
+    resetPolybuzzCatalog();
+    if (polybuzzSearchQuery) {
+      polybuzzSearchItems = [];
+      polybuzzSearchPage = 1;
+      polybuzzSearchHasMore = true;
+      searchPolybuzz(polybuzzSearchQuery, 1);
+    }
+    if (state.view === "polybuzz") loadPolybuzzCatalog(1);
+    else renderPolybuzzGrid();
   }
 
   // ===== End PolyBuzz Catalog =====
@@ -6621,14 +7055,16 @@
   }
 
   function wireUI() {
-    const styleSel = $("#charStyleInput");
-    if (styleSel) {
-      styleSel.innerHTML = "";
+    const styleSegment = $("#charStyleSegment");
+    if (styleSegment) {
+      styleSegment.innerHTML = "";
       for (const s of DIALOGUE_STYLES) {
-        const opt = document.createElement("option");
-        opt.value = s.id;
-        opt.textContent = s.label;
-        styleSel.appendChild(opt);
+        const btn = document.createElement("button");
+        btn.className = "segmented__item";
+        btn.dataset.value = s.id;
+        btn.type = "button";
+        btn.textContent = s.label;
+        styleSegment.appendChild(btn);
       }
     }
 
@@ -6651,6 +7087,18 @@
         ...editingCharacter(),
         name: String($("#charNameInput")?.value || "").trim(),
         gender: String($("#charGenderInput")?.value || "unspecified"),
+        dialogueStyle: String($("#charStyleInput")?.value || "natural"),
+        intro: String($("#charIntroInput")?.value || ""),
+        backstory: String($("#charBackstoryInput")?.value || "")
+      });
+    });
+
+    bindSegmented("#charStyleSegment", "#charStyleInput", () => {
+      renderCharacterHeroPreview({
+        ...editingCharacter(),
+        name: String($("#charNameInput")?.value || "").trim(),
+        gender: String($("#charGenderInput")?.value || "unspecified"),
+        dialogueStyle: String($("#charStyleInput")?.value || "natural"),
         intro: String($("#charIntroInput")?.value || ""),
         backstory: String($("#charBackstoryInput")?.value || "")
       });
@@ -6756,6 +7204,44 @@
     document.querySelectorAll(".pbGenderBtn").forEach((btn) => {
       btn.addEventListener("click", () => {
         polybuzzGenderFilter = btn.dataset.gender || "all";
+        renderPolybuzzGrid();
+        if (polybuzzGenderFilter !== "all") requestPolybuzzGenders(polybuzzCurrentItems(), { forceResolve: true });
+      });
+    });
+
+    const polybuzzPageSize = $("#polybuzzPageSize");
+    if (polybuzzPageSize) {
+      polybuzzPageSize.addEventListener("change", () => {
+        state.polybuzzSettings = {
+          ...polybuzzSettings(),
+          pageSize: Number(polybuzzPageSize.value) || 50
+        };
+        savePolybuzzSettings();
+        reloadPolybuzzForSettingsChange();
+      });
+    }
+
+    const polybuzzAutoload = $("#polybuzzAutoload");
+    if (polybuzzAutoload) {
+      polybuzzAutoload.addEventListener("change", () => {
+        state.polybuzzSettings = {
+          ...polybuzzSettings(),
+          autoload: polybuzzAutoload.checked
+        };
+        savePolybuzzSettings();
+        renderPolybuzzGrid();
+      });
+    }
+
+    document.querySelectorAll(".pbAccuracyBtn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.polybuzzSettings = {
+          ...polybuzzSettings(),
+          genderAccuracy: btn.dataset.accuracy || "balanced"
+        };
+        savePolybuzzSettings();
+        syncPolybuzzSettingsControls();
+        requestPolybuzzGenders(polybuzzCurrentItems(), { forceResolve: polybuzzSettings().genderAccuracy !== "fast" });
         renderPolybuzzGrid();
       });
     });
@@ -7161,6 +7647,7 @@
       const next = { ...c };
       next.name = String($("#charNameInput").value || "").trim() || "(без имени)";
       next.gender = $("#charGenderInput").value || "unspecified";
+      next.dialogueStyle = normalizeDialogueStyleId($("#charStyleInput")?.value || c.dialogueStyle, "");
       next.intro = String($("#charIntroInput").value || "").trim();
       next.backstory = String($("#charBackstoryInput").value || "");
       next.initialMessage = String($("#charInitialMessageInput").value || "");
@@ -7201,6 +7688,7 @@
         ...c,
         name: String($("#charNameInput")?.value || "").trim() || c.name,
         gender: String($("#charGenderInput")?.value || c.gender || "unspecified"),
+        dialogueStyle: String($("#charStyleInput")?.value || c.dialogueStyle || "natural"),
         intro: String($("#charIntroInput")?.value || ""),
         backstory: String($("#charBackstoryInput")?.value || "")
       });

@@ -752,6 +752,10 @@ function polybuzzGenderToLocal(g) {
   return "unspecified";
 }
 
+function parsePolybuzzPageSize(value, fallback = 50) {
+  return Math.min(50, Math.max(1, Number(value) || fallback));
+}
+
 function extractFirstAssistantLine(speechText, sceneName) {
   const text = String(speechText || "");
   const name = String(sceneName || "").trim();
@@ -1070,11 +1074,131 @@ function extractScenesFromPayload(payload) {
 
 let polybuzzCatalogCache = { items: [], fetchedAt: 0 };
 const POLYBUZZ_CATALOG_TTL = 10 * 60 * 1000; // 10 minutes
+const POLYBUZZ_GENDER_TTL = 30 * 60 * 1000; // 30 minutes
+const POLYBUZZ_GENDER_FAIL_TTL = 60 * 1000; // Retry temporary failures soon.
+const polybuzzGenderCache = new Map(); // secretSceneId -> { gender, status, fetchedAt }
+const polybuzzGenderPending = new Map(); // secretSceneId -> Promise<entry>
+
+function normalizePolybuzzGenderEntry(secretSceneId, sceneGender) {
+  const gender = polybuzzGenderToLocal(sceneGender);
+  return {
+    secretSceneId: String(secretSceneId || ""),
+    gender,
+    status: gender === "male" || gender === "female" ? "resolved" : "unknown",
+    fetchedAt: Date.now()
+  };
+}
+
+function getCachedPolybuzzGender(secretSceneId) {
+  const id = String(secretSceneId || "").trim();
+  if (!id) return null;
+
+  const entry = polybuzzGenderCache.get(id);
+  if (!entry) return null;
+
+  const age = Date.now() - (Number(entry.fetchedAt) || 0);
+  const ttl = entry.status === "failed" ? POLYBUZZ_GENDER_FAIL_TTL : POLYBUZZ_GENDER_TTL;
+  if (age > ttl) {
+    polybuzzGenderCache.delete(id);
+    return null;
+  }
+
+  return entry;
+}
+
+function applyPolybuzzGenderCache(item) {
+  if (!item || typeof item !== "object") return item;
+  const cached = getCachedPolybuzzGender(item.secretSceneId);
+  if (!cached) return item;
+
+  return {
+    ...item,
+    gender: cached.gender,
+    genderStatus: cached.status
+  };
+}
+
+function applyPolybuzzGenderCacheToItems(items) {
+  return (Array.isArray(items) ? items : []).map(applyPolybuzzGenderCache);
+}
+
+function uniquePolybuzzSceneIds(ids) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of Array.isArray(ids) ? ids : []) {
+    const id = String(raw || "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+async function resolvePolybuzzGender(secretSceneId, cuid) {
+  const id = String(secretSceneId || "").trim();
+  if (!id) return null;
+
+  const cached = getCachedPolybuzzGender(id);
+  if (cached) return cached;
+
+  if (polybuzzGenderPending.has(id)) return await polybuzzGenderPending.get(id);
+
+  const task = (async () => {
+    try {
+      const profile = await polybuzzSceneProfileGuest(id, cuid);
+      const entry = normalizePolybuzzGenderEntry(id, profile.sceneGender);
+      polybuzzGenderCache.set(id, entry);
+      return entry;
+    } catch (err) {
+      const entry = {
+        secretSceneId: id,
+        gender: undefined,
+        status: "failed",
+        fetchedAt: Date.now()
+      };
+      polybuzzGenderCache.set(id, entry);
+      return entry;
+    } finally {
+      polybuzzGenderPending.delete(id);
+    }
+  })();
+
+  polybuzzGenderPending.set(id, task);
+  return await task;
+}
+
+async function resolvePolybuzzGenders(ids, { concurrency = 6 } = {}) {
+  const sceneIds = uniquePolybuzzSceneIds(ids);
+  if (!sceneIds.length) return [];
+
+  const cuid = await polybuzzGetCuid();
+  const limit = Math.min(12, Math.max(1, Number(concurrency) || 6));
+  const out = [];
+
+  for (let i = 0; i < sceneIds.length; i += limit) {
+    const batch = sceneIds.slice(i, i + limit);
+    const entries = await Promise.all(batch.map((id) => resolvePolybuzzGender(id, cuid)));
+    out.push(...entries.filter(Boolean));
+  }
+
+  return out;
+}
+
+function startPolybuzzGenderEnrichment(items, { concurrency = 6 } = {}) {
+  const ids = (Array.isArray(items) ? items : [])
+    .map((item) => item && item.secretSceneId)
+    .filter((id) => id && !getCachedPolybuzzGender(id));
+  if (!ids.length) return;
+
+  resolvePolybuzzGenders(ids, { concurrency }).catch((e) => {
+    console.warn("[polybuzz gender enrich]", e);
+  });
+}
 
 async function scrapePolybuzzCatalog() {
   const now = Date.now();
   if (polybuzzCatalogCache.items.length > 0 && now - polybuzzCatalogCache.fetchedAt < POLYBUZZ_CATALOG_TTL) {
-    return polybuzzCatalogCache.items;
+    return applyPolybuzzGenderCacheToItems(polybuzzCatalogCache.items);
   }
 
   const headers = {
@@ -1101,34 +1225,27 @@ async function scrapePolybuzzCatalog() {
 
   const characters = extractScenesFromPayload(payload).filter((c) => !hasCJK(c.name));
 
-  // Fetch genders in background (parallel, max 6 concurrent) and store in cache
   polybuzzCatalogCache = { items: characters, fetchedAt: now };
 
   // Fire-and-forget gender enrichment (don't block the first response)
-  enrichCatalogGenders(characters).catch((e) => console.warn("[polybuzz gender enrich]", e));
+  startPolybuzzGenderEnrichment(characters);
 
-  return characters;
+  return applyPolybuzzGenderCacheToItems(characters);
 }
 
 async function enrichCatalogGenders(items) {
   if (!items.length) return;
   try {
-    const cuid = await polybuzzGetCuid();
-    const CONCURRENCY = 6;
-
-    for (let i = 0; i < items.length; i += CONCURRENCY) {
-      const batch = items.slice(i, i + CONCURRENCY);
-      await Promise.all(
-        batch.map(async (item) => {
-          if (item.gender !== undefined) return; // already have it
-          try {
-            const profile = await polybuzzSceneProfileGuest(item.secretSceneId, cuid);
-            item.gender = polybuzzGenderToLocal(profile.sceneGender);
-          } catch {
-            item.gender = "unspecified";
-          }
-        })
-      );
+    const entries = await resolvePolybuzzGenders(
+      items.map((item) => item && item.secretSceneId),
+      { concurrency: 6 }
+    );
+    const byId = new Map(entries.map((entry) => [entry.secretSceneId, entry]));
+    for (const item of items) {
+      const entry = item && byId.get(item.secretSceneId);
+      if (!entry) continue;
+      item.gender = entry.gender;
+      item.genderStatus = entry.status;
     }
   } catch (e) {
     console.warn("[enrichCatalogGenders]", e);
@@ -1159,7 +1276,7 @@ async function fetchPolybuzzCatalogPage(page) {
   // Return cached items if available (so gender enrichment persists)
   const cached = polybuzzPageCache.get(page);
   if (cached && Date.now() - cached.fetchedAt < POLYBUZZ_CATALOG_TTL) {
-    return cached.items;
+    return applyPolybuzzGenderCacheToItems(cached.items);
   }
 
   const localeIdx = page - 1;
@@ -1185,7 +1302,7 @@ async function fetchPolybuzzCatalogPage(page) {
 
     const items = extractScenesFromPayload(payload).filter((c) => !hasCJK(c.name));
     polybuzzPageCache.set(page, { items, fetchedAt: Date.now() });
-    return items;
+    return applyPolybuzzGenderCacheToItems(items);
   } catch {
     return [];
   }
@@ -1197,20 +1314,20 @@ const POLYBUZZ_BROWSE_SEEDS = "eaisontrlcdupmhgbfywkvxzjq".split("");
 const POLYBUZZ_BROWSE_PAGES_PER_SEED = 10; // 10 search pages per seed letter
 const polybuzzBrowseCache = new Map(); // "letter:page" -> { items, fetchedAt }
 
-async function fetchPolybuzzCatalogViaSearch(browsePage) {
+async function fetchPolybuzzCatalogViaSearch(browsePage, pageSize = 50) {
   const seedIdx = Math.floor((browsePage - 1) / POLYBUZZ_BROWSE_PAGES_PER_SEED);
   const searchPage = ((browsePage - 1) % POLYBUZZ_BROWSE_PAGES_PER_SEED) + 1;
 
   if (seedIdx >= POLYBUZZ_BROWSE_SEEDS.length) return { items: [], hasMore: false };
 
   const query = POLYBUZZ_BROWSE_SEEDS[seedIdx];
-  const cacheKey = `${query}:${searchPage}`;
+  const size = parsePolybuzzPageSize(pageSize);
+  const cacheKey = `${query}:${searchPage}:${size}`;
   const cached = polybuzzBrowseCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < POLYBUZZ_CATALOG_TTL) {
-    return { items: cached.items, hasMore: cached.hasMore };
+    return { items: applyPolybuzzGenderCacheToItems(cached.items), hasMore: cached.hasMore };
   }
 
-  const pageSize = 30;
   const cuid = await polybuzzGetCuid();
   const headers = { ...polybuzzBaseHeaders(), cuid, "Content-Type": "application/json" };
 
@@ -1219,7 +1336,7 @@ async function fetchPolybuzzCatalogViaSearch(browsePage) {
     {
       method: "POST",
       headers,
-      body: JSON.stringify({ query, pageNo: searchPage, pageSize })
+      body: JSON.stringify({ query, pageNo: searchPage, pageSize: size })
     },
     "polybuzz catalog-browse"
   );
@@ -1230,38 +1347,74 @@ async function fetchPolybuzzCatalogViaSearch(browsePage) {
   const list = Array.isArray(respBody.data?.list) ? respBody.data.list : [];
   const items = list.map(mapPolybuzzSceneToItem).filter((c) => !hasCJK(c.name));
   // hasMore if this seed still has results, or there are more seeds to try
-  const seedHasMore = list.length >= pageSize;
+  const seedHasMore = list.length >= size;
   const moreSeedsAvail = seedIdx < POLYBUZZ_BROWSE_SEEDS.length - 1;
   const hasMore = seedHasMore || moreSeedsAvail;
 
   polybuzzBrowseCache.set(cacheKey, { items, hasMore, fetchedAt: Date.now() });
-  return { items, hasMore };
+  return { items: applyPolybuzzGenderCacheToItems(items), hasMore };
 }
 
 app.get("/api/polybuzz/catalog", async (req, res) => {
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = parsePolybuzzPageSize(req.query.pageSize, 50);
+    const sendItems = (rawItems, hasMore) => {
+      const items = applyPolybuzzGenderCacheToItems(rawItems).slice(0, pageSize);
+      startPolybuzzGenderEnrichment(items);
+      res.json({ ok: true, items, hasMore });
+    };
     if (page === 1) {
       // First page: use scraped HTML catalog (richer data)
       const items = await scrapePolybuzzCatalog();
-      res.json({ ok: true, items, hasMore: true });
+      sendItems(items, true);
     } else if (page <= POLYBUZZ_LOCALE_PAGES.length) {
       // Locale pages 2-6: scrape other locale versions
       const items = await fetchPolybuzzCatalogPage(page);
-      // Fire-and-forget gender enrichment for new items
-      enrichCatalogGenders(items).catch(() => {});
       // Always hasMore — search API continues after locales
-      res.json({ ok: true, items, hasMore: true });
+      sendItems(items, true);
     } else {
       // Pages beyond locales: browse via search API
       const browsePage = page - POLYBUZZ_LOCALE_PAGES.length;
-      const { items, hasMore } = await fetchPolybuzzCatalogViaSearch(browsePage);
-      enrichCatalogGenders(items).catch(() => {});
-      res.json({ ok: true, items, hasMore });
+      const { items, hasMore } = await fetchPolybuzzCatalogViaSearch(browsePage, pageSize);
+      sendItems(items, hasMore);
     }
   } catch (err) {
     console.error("[polybuzz catalog]", err);
     res.status(502).json({ ok: false, error: String(err?.message || err), items: [], hasMore: false });
+  }
+});
+
+app.post("/api/polybuzz/genders", async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const ids = uniquePolybuzzSceneIds(body.ids).slice(0, 100);
+    const shouldResolve = body.resolve === true;
+
+    if (shouldResolve) {
+      await resolvePolybuzzGenders(ids, { concurrency: 8 });
+    }
+
+    const genders = ids.map((id) => {
+      const cached = getCachedPolybuzzGender(id);
+      if (!cached) {
+        return {
+          secretSceneId: id,
+          status: polybuzzGenderPending.has(id) ? "pending" : "missing"
+        };
+      }
+
+      return {
+        secretSceneId: id,
+        gender: cached.gender,
+        status: cached.status
+      };
+    });
+
+    res.json({ ok: true, genders });
+  } catch (err) {
+    console.error("[polybuzz genders]", err);
+    res.status(502).json({ ok: false, error: String(err?.message || err), genders: [] });
   }
 });
 
@@ -1270,7 +1423,7 @@ app.post("/api/polybuzz/search", async (req, res) => {
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const query = String(body.query || "").trim();
     const page = Math.max(1, Number(body.page) || 1);
-    const pageSize = Math.min(50, Math.max(1, Number(body.pageSize) || 20));
+    const pageSize = parsePolybuzzPageSize(body.pageSize, 50);
 
     if (!query) {
       res.status(400).json({ ok: false, error: "query обязателен", items: [] });
@@ -1296,8 +1449,9 @@ app.post("/api/polybuzz/search", async (req, res) => {
     }
 
     const list = Array.isArray(respBody.data?.list) ? respBody.data.list : [];
-    const items = list.map(mapPolybuzzSceneToItem).filter((c) => !hasCJK(c.name));
+    const items = applyPolybuzzGenderCacheToItems(list.map(mapPolybuzzSceneToItem).filter((c) => !hasCJK(c.name)));
     const hasMore = list.length >= pageSize;
+    startPolybuzzGenderEnrichment(items);
 
     res.json({ ok: true, items, hasMore });
   } catch (err) {

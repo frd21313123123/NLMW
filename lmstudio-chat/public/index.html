@@ -109,6 +109,25 @@
               Парни
             </button>
           </div>
+          <div class="pbSettingsBar" id="pbSettingsBar" aria-label="Настройки загрузки PolyBuzz">
+            <label class="pbSetting">
+              <span>Пачка</span>
+              <select class="pbSetting__select" id="polybuzzPageSize">
+                <option value="20">20</option>
+                <option value="30">30</option>
+                <option value="50" selected>50</option>
+              </select>
+            </label>
+            <label class="pbSetting pbSetting--toggle">
+              <input id="polybuzzAutoload" type="checkbox" checked />
+              <span>Автодогрузка</span>
+            </label>
+            <div class="pbAccuracy" role="group" aria-label="Точность определения пола">
+              <button class="pbAccuracyBtn" data-accuracy="fast" type="button">Быстрее</button>
+              <button class="pbAccuracyBtn pbAccuracyBtn--active" data-accuracy="balanced" type="button">Баланс</button>
+              <button class="pbAccuracyBtn" data-accuracy="precise" type="button">Точнее</button>
+            </div>
+          </div>
         </div>
 
         <!-- Group chat appbar -->
@@ -402,6 +421,7 @@
                     </div>
                     <div class="charCreator__chips">
                       <span class="chip" id="charHeroGenderTag">Пол</span>
+                      <span class="chip" id="charHeroStyleTag">Стиль</span>
                     </div>
                   </div>
                 </div>
@@ -417,6 +437,7 @@
                 </div>
 
                 <input id="charGenderInput" type="hidden" value="unspecified" />
+                <input id="charStyleInput" type="hidden" value="roleplay" />
                 <input id="charAvatarFile" type="file" accept="image/*" hidden />
                 <input id="charBgFile" type="file" accept="image/*" hidden />
 
@@ -437,6 +458,12 @@
                     <button class="segmented__item" data-value="other" type="button">Небинарный</button>
                     <button class="segmented__item" data-value="unspecified" type="button">Любой</button>
                   </div>
+                </section>
+
+                <section class="charSection">
+                  <div class="charSection__title">Стиль общения</div>
+                  <div class="segmented segmented--style" id="charStyleSegment" role="group" aria-label="Стиль общения персонажа"></div>
+                  <div class="smallNote" id="charStyleNote">Этот стиль будет добавлен в системный промт персонажа.</div>
                 </section>
 
                 <section class="charSection">

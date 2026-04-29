@@ -1,0 +1,21 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - generic:
+          - img
+        - searchbox "Поиск персонажей" [ref=e8]
+      - button "Профиль" [ref=e10] [cursor=pointer]
+  - main [ref=e11]:
+    - generic [ref=e13]:
+      - button "Личные" [ref=e14] [cursor=pointer]
+      - button "Мульти" [ref=e15] [cursor=pointer]
+  - navigation "Навигация" [ref=e17]:
+    - button "Чаты" [ref=e18] [cursor=pointer]:
+      - img [ref=e19]
+    - button "PolyBuzz" [ref=e22] [cursor=pointer]:
+      - img [ref=e23]
+    - button "Персонажи" [ref=e25] [cursor=pointer]:
+      - img [ref=e26]
+    - button "Профиль" [ref=e27] [cursor=pointer]:
+      - img [ref=e28]

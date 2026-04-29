@@ -1819,6 +1819,10 @@ body {
   gap: 12px;
 }
 
+.segmented--style .segmented__item {
+  flex: 1 1 132px;
+}
+
 .segmented__item {
   min-height: 42px;
   padding: 0 16px;
@@ -2567,6 +2571,36 @@ body {
   .appbar__row--chats {
     gap: 14px;
     padding-top: 8px;
+  }
+
+  .appbar__row--polybuzz {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 7px;
+    min-height: auto;
+    padding: 4px 2px 6px;
+  }
+
+  .appbar__row--polybuzz .discoverTopbar {
+    width: 100%;
+  }
+
+  .appbar__row--polybuzz .search--discoverTop {
+    width: 100%;
+    max-width: none;
+  }
+
+  .appbar__row--polybuzz .pbGenderBar,
+  .appbar__row--polybuzz .pbSettingsBar {
+    width: 100%;
+    padding-inline: 0;
+  }
+
+  .appbar__row--polybuzz .pbSettingsBar {
+    padding-bottom: 0;
+    flex-wrap: wrap;
+    overflow-x: visible;
+    row-gap: 6px;
   }
 
   .discoverTabs {
@@ -4040,6 +4074,84 @@ body {
   background: rgba(80, 150, 255, 0.15);
   border-color: rgba(80, 150, 255, 0.4);
   color: #80b3ff;
+}
+
+.pbSettingsBar {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0 1rem 0.65rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.pbSettingsBar::-webkit-scrollbar { display: none; }
+
+.pbSetting,
+.pbAccuracy {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.pbSetting {
+  gap: 0.4rem;
+  padding: 0.25rem 0.45rem 0.25rem 0.65rem;
+}
+
+.pbSetting--toggle {
+  gap: 0.45rem;
+  padding-right: 0.7rem;
+  cursor: pointer;
+}
+
+.pbSetting--toggle input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+}
+
+.pbSetting__select {
+  min-width: 56px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text);
+  font: inherit;
+  padding: 0.22rem 1.35rem 0.22rem 0.45rem;
+}
+
+.pbAccuracy {
+  gap: 0.15rem;
+  padding: 0.18rem;
+}
+
+.pbAccuracyBtn {
+  min-height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  padding: 0.25rem 0.55rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pbAccuracyBtn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.pbAccuracyBtn--active {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 /* ===== POLYBUZZ CATALOG ===== */
