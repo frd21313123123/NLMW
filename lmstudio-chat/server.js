@@ -50,6 +50,44 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
+app.get("/api/video/preview", async (req, res) => {
+  try {
+    const rawUrl = String(req.query.url || "").trim();
+    if (!rawUrl) {
+      res.status(400).json({ error: "Missing url query param" });
+      return;
+    }
+    let videoUrl;
+    try {
+      videoUrl = new URL(rawUrl);
+    } catch (_err) {
+      res.status(400).json({ error: "Invalid url" });
+      return;
+    }
+
+    const endpoint = `https://noembed.com/embed?url=${encodeURIComponent(videoUrl.toString())}`;
+    const upstream = await fetch(endpoint, { method: "GET" });
+    const data = await upstream.json();
+    if (!upstream.ok || data.error) {
+      res.status(404).json({ error: data.error || "Preview unavailable" });
+      return;
+    }
+    res.json({
+      url: videoUrl.toString(),
+      type: data.type || "",
+      provider_name: data.provider_name || "",
+      author_name: data.author_name || "",
+      title: data.title || "",
+      thumbnail_url: data.thumbnail_url || "",
+      width: Number(data.width) || null,
+      height: Number(data.height) || null,
+      duration: Number(data.duration) || null
+    });
+  } catch (err) {
+    res.status(502).json({ error: "Failed to load video preview", details: String(err) });
+  }
+});
+
 function upstreamHeaders() {
   const headers = {
     "Content-Type": "application/json"
@@ -1768,7 +1806,8 @@ app.get("*", (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
-const server = app.listen(PORT, "0.0.0.0", () => {
+function startServer() {
+  const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Web UI: http://localhost:${PORT}`);
   const nets = require("os").networkInterfaces();
   for (const ifaces of Object.values(nets)) {
@@ -1781,12 +1820,27 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`LM Studio base: ${LMSTUDIO_BASE_URL}`);
 });
 
-server.on("error", (err) => {
+  server.on("error", (err) => {
   if (err && err.code === "EADDRINUSE") {
     console.error(`Port ${PORT} is already in use. If the app is already running, open http://localhost:${PORT}`);
     process.exit(1);
   }
 
-  console.error("Failed to start server:", err);
-  process.exit(1);
-});
+    console.error("Failed to start server:", err);
+    process.exit(1);
+  });
+
+  return server;
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  app,
+  startServer,
+  stripSlashes,
+  deriveRestBaseUrl,
+  deriveOpenAiBaseUrl
+};

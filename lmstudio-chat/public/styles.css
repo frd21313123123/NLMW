@@ -1541,6 +1541,36 @@ body {
   color: var(--muted);
 }
 
+.importPanel__preview {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.importPanel__previewMediaWrap {
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0f1220;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.importPanel__previewMedia {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.importPanel__previewInfo {
+  font-size: 12px;
+  color: var(--text);
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
 .charList {
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
