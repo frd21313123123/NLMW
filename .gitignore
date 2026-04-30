@@ -7,16 +7,25 @@ jspm_packages/
 .npm/
 lmstudio-chat/node_modules/
 lmstudio-chat/.npm-cache/
+lmstudio-chat/.npm/
+lmstudio-chat/.yarn/
 
 # Production
 build/
 dist/
+coverage/
 
 # Shared data (characters)
 lmstudio-chat/data/
+lmstudio-chat/temp/
 
 # Misc
 .DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+Thumbs.db
+ehthumbs.db
 .env
 .env.local
 .env.development.local
@@ -33,6 +42,16 @@ lerna-debug.log*
 lmstudio-chat/server.out.log
 lmstudio-chat/server.err.log
 
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+
 # Editor directories and files
 .idea
 .vscode
@@ -41,3 +60,9 @@ lmstudio-chat/server.err.log
 *.njsproj
 *.sln
 *.sw?
+
+# Local data and cache
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
