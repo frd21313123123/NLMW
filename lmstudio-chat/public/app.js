@@ -7927,6 +7927,64 @@
     const btnImportApply = $("#btnImportApply");
     const btnImportPaste = $("#btnImportPaste");
     const btnImportFilePick = $("#btnImportFilePick");
+    const importVideoPreview = $("#importVideoPreview");
+    const importVideoPreviewImage = $("#importVideoPreviewImage");
+    const importVideoPreviewInfo = $("#importVideoPreviewInfo");
+    let importPreviewReqId = 0;
+
+    const hideImportVideoPreview = () => {
+      if (importVideoPreview) importVideoPreview.hidden = true;
+      if (importVideoPreviewImage) importVideoPreviewImage.removeAttribute("src");
+      if (importVideoPreviewInfo) importVideoPreviewInfo.textContent = "";
+    };
+
+    const renderImportVideoPreview = (meta) => {
+      if (!importVideoPreview || !importVideoPreviewImage || !importVideoPreviewInfo || !meta) return;
+      const fields = [
+        ["Название", meta.title || "—"],
+        ["Автор", meta.author_name || "—"],
+        ["Провайдер", meta.provider_name || "—"],
+        ["Тип", meta.type || "—"],
+        ["Длительность", Number.isFinite(meta.duration) ? `${meta.duration} сек.` : "—"],
+        ["Размер", meta.width && meta.height ? `${meta.width}×${meta.height}` : "—"],
+        ["Ссылка", meta.url || "—"]
+      ];
+      importVideoPreviewInfo.textContent = fields.map(([k, v]) => `${k}: ${v}`).join("\n");
+      if (meta.thumbnail_url) {
+        importVideoPreviewImage.src = meta.thumbnail_url;
+        importVideoPreviewImage.alt = meta.title ? `Превью: ${meta.title}` : "Превью видео";
+      }
+      importVideoPreview.hidden = !meta.thumbnail_url;
+    };
+
+    const updateImportVideoPreview = async (raw) => {
+      const value = String(raw || "").trim();
+      if (!value || value.startsWith("{") || value.startsWith("[")) {
+        hideImportVideoPreview();
+        return;
+      }
+      let parsed;
+      try {
+        parsed = new URL(value);
+      } catch (_err) {
+        hideImportVideoPreview();
+        return;
+      }
+      const reqId = ++importPreviewReqId;
+      try {
+        const resp = await fetch(`/api/video/preview?url=${encodeURIComponent(parsed.toString())}`);
+        if (!resp.ok) {
+          hideImportVideoPreview();
+          return;
+        }
+        const payload = await resp.json();
+        if (reqId !== importPreviewReqId) return;
+        renderImportVideoPreview(payload);
+      } catch (_err) {
+        if (reqId !== importPreviewReqId) return;
+        hideImportVideoPreview();
+      }
+    };
 
     if (btnImport) {
       btnImport.addEventListener("click", () => {
@@ -7950,7 +8008,14 @@
         if (ok) {
           if (importPanelNote) importPanelNote.textContent = "Импорт завершен.";
           if (importTextInput) importTextInput.value = "";
+          hideImportVideoPreview();
         }
+      });
+    }
+
+    if (importTextInput) {
+      importTextInput.addEventListener("input", () => {
+        updateImportVideoPreview(importTextInput.value);
       });
     }
 
