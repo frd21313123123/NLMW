@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const https = require("https");
+const crypto = require("crypto");
 const { Readable } = require("stream");
 const express = require("express");
 
@@ -17,6 +18,19 @@ const MISTRAL_BASE_URL = String(process.env.MISTRAL_BASE_URL || "https://api.mis
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY ? String(process.env.OPENROUTER_API_KEY) : "";
 const OPENROUTER_BASE_URL = String(process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
 const POLYBUZZ_COOKIE = process.env.POLYBUZZ_COOKIE ? String(process.env.POLYBUZZ_COOKIE) : "";
+const DATA_DIR = path.resolve(process.env.APP_DATA_DIR || path.join(__dirname, "data"));
+const AUTH_FILE = path.join(DATA_DIR, "auth.json");
+const SESSION_COOKIE_NAME = "nlmw_session";
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const SESSION_SECRET = String(process.env.SESSION_SECRET || "");
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const COOKIE_SECURE = String(process.env.COOKIE_SECURE || "").toLowerCase() === "true";
+
+if (IS_PRODUCTION && !SESSION_SECRET) {
+  throw new Error("SESSION_SECRET is required when NODE_ENV=production");
+}
+
+const AUTH_SECRET = SESSION_SECRET || "dev-only-insecure-session-secret";
 
 function stripSlashes(u) {
   return String(u || "").replace(/\/+$/, "");
@@ -39,6 +53,195 @@ const LMSTUDIO_OPENAI_BASE_URL = deriveOpenAiBaseUrl(LMSTUDIO_BASE_URL);
 
 app.use(express.json({ limit: "10mb" }));
 
+function ensureDataDir() {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function readJsonFile(file, fallback) {
+  ensureDataDir();
+  try {
+    const raw = fs.readFileSync(file, "utf8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : fallback;
+  } catch (err) {
+    if (err && err.code !== "ENOENT") console.error(`[data] failed to read ${path.basename(file)}`, err);
+    return fallback;
+  }
+}
+
+function writeJsonFile(file, value) {
+  ensureDataDir();
+  const tmpFile = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmpFile, JSON.stringify(value, null, 2), "utf8");
+  fs.renameSync(tmpFile, file);
+}
+
+function defaultAuthStore() {
+  return {
+    users: [],
+    sessions: [],
+    settings: {
+      registrationEnabled: true
+    }
+  };
+}
+
+function normalizeLogin(login) {
+  return String(login || "").trim().toLowerCase();
+}
+
+function publicUser(user) {
+  if (!user) return null;
+  const role = user.role === "admin" ? "admin" : "user";
+  return {
+    id: user.id,
+    login: user.login,
+    name: user.name || user.login,
+    role,
+    isAdmin: role === "admin",
+    createdAt: user.createdAt
+  };
+}
+
+function loadAuthStore() {
+  const fallback = defaultAuthStore();
+  const store = readJsonFile(AUTH_FILE, fallback);
+  let changed = false;
+  store.users = Array.isArray(store.users) ? store.users.filter((x) => x && typeof x === "object") : [];
+  store.sessions = Array.isArray(store.sessions) ? store.sessions.filter((x) => x && typeof x === "object") : [];
+  store.settings = store.settings && typeof store.settings === "object" ? store.settings : {};
+  if (typeof store.settings.registrationEnabled !== "boolean") {
+    store.settings.registrationEnabled = true;
+    changed = true;
+  }
+
+  let hasAdmin = false;
+  store.users.forEach((user, index) => {
+    if (user.role === "admin") hasAdmin = true;
+    if (user.role !== "admin" && user.role !== "user") {
+      user.role = index === 0 ? "admin" : "user";
+      changed = true;
+      if (user.role === "admin") hasAdmin = true;
+    }
+  });
+  if (store.users.length > 0 && !hasAdmin) {
+    store.users[0].role = "admin";
+    changed = true;
+  }
+
+  if (changed) saveAuthStore(store);
+  return store;
+}
+
+function saveAuthStore(store) {
+  writeJsonFile(AUTH_FILE, {
+    users: Array.isArray(store.users) ? store.users : [],
+    sessions: Array.isArray(store.sessions) ? store.sessions : [],
+    settings: {
+      registrationEnabled: store.settings?.registrationEnabled !== false
+    }
+  });
+}
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
+  const hash = crypto.scryptSync(String(password), salt, 64).toString("hex");
+  return { salt, hash };
+}
+
+function verifyPassword(password, user) {
+  if (!user || typeof user.passwordHash !== "string" || typeof user.passwordSalt !== "string") return false;
+  const next = hashPassword(password, user.passwordSalt).hash;
+  const a = Buffer.from(next, "hex");
+  const b = Buffer.from(user.passwordHash, "hex");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function hashSessionToken(token) {
+  return crypto.createHmac("sha256", AUTH_SECRET).update(String(token)).digest("hex");
+}
+
+function parseCookies(header) {
+  const out = {};
+  for (const part of String(header || "").split(";")) {
+    const idx = part.indexOf("=");
+    if (idx === -1) continue;
+    const key = part.slice(0, idx).trim();
+    const value = part.slice(idx + 1).trim();
+    if (key) out[key] = decodeURIComponent(value);
+  }
+  return out;
+}
+
+function sessionCookie(token, maxAgeSeconds = Math.floor(SESSION_TTL_MS / 1000)) {
+  const parts = [
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${maxAgeSeconds}`
+  ];
+  if (COOKIE_SECURE) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function clearSessionCookie() {
+  return `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${COOKIE_SECURE ? "; Secure" : ""}`;
+}
+
+function getSessionFromRequest(req) {
+  const token = parseCookies(req.headers.cookie || "")[SESSION_COOKIE_NAME];
+  if (!token) return { store: null, user: null, session: null, tokenHash: "" };
+
+  const store = loadAuthStore();
+  const now = Date.now();
+  const tokenHash = hashSessionToken(token);
+  let changed = false;
+  const sessions = [];
+  let matched = null;
+
+  for (const session of store.sessions) {
+    const expiresAt = Number(session.expiresAt) || 0;
+    if (!session.tokenHash || expiresAt <= now) {
+      changed = true;
+      continue;
+    }
+    if (session.tokenHash === tokenHash) {
+      matched = session;
+      session.lastSeenAt = now;
+      changed = true;
+    }
+    sessions.push(session);
+  }
+
+  store.sessions = sessions;
+  if (changed) saveAuthStore(store);
+
+  if (!matched) return { store, user: null, session: null, tokenHash };
+  const user = store.users.find((x) => x.id === matched.userId) || null;
+  return { store, user, session: matched, tokenHash };
+}
+
+function requireAuth(req, res, next) {
+  const current = getSessionFromRequest(req);
+  if (!current.user) {
+    res.status(401).json({ error: "Требуется вход" });
+    return;
+  }
+  req.user = publicUser(current.user);
+  req.session = current.session;
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  requireAuth(req, res, () => {
+    if (!req.user?.isAdmin) {
+      res.status(403).json({ error: "Требуются права администратора" });
+      return;
+    }
+    next();
+  });
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
@@ -48,6 +251,171 @@ app.get("/api/health", (_req, res) => {
     mistralBaseUrl: MISTRAL_BASE_URL,
     openrouterBaseUrl: OPENROUTER_BASE_URL
   });
+});
+
+app.post("/api/auth/register", (req, res) => {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const login = normalizeLogin(body.login || body.email);
+  const name = String(body.name || "").trim();
+  const password = String(body.password || "");
+  const store = loadAuthStore();
+  const isFirstUser = store.users.length === 0;
+
+  if (!isFirstUser && store.settings.registrationEnabled === false) {
+    res.status(403).json({ error: "Регистрация временно закрыта" });
+    return;
+  }
+
+  if (!login || login.length < 3 || login.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$|^[a-z0-9._-]{3,120}$/.test(login)) {
+    res.status(400).json({ error: "Введите корректный логин или email" });
+    return;
+  }
+
+  if (password.length < 6 || password.length > 256) {
+    res.status(400).json({ error: "Пароль должен быть не короче 6 символов" });
+    return;
+  }
+
+  if (store.users.some((x) => normalizeLogin(x.login) === login)) {
+    res.status(409).json({ error: "Пользователь уже существует" });
+    return;
+  }
+
+  const { salt, hash } = hashPassword(password);
+  const now = Date.now();
+  const user = {
+    id: crypto.randomUUID(),
+    login,
+    name: name || login,
+    role: isFirstUser ? "admin" : "user",
+    passwordSalt: salt,
+    passwordHash: hash,
+    createdAt: now,
+    updatedAt: now
+  };
+  const token = crypto.randomBytes(32).toString("base64url");
+  const session = {
+    id: crypto.randomUUID(),
+    userId: user.id,
+    tokenHash: hashSessionToken(token),
+    createdAt: now,
+    lastSeenAt: now,
+    expiresAt: now + SESSION_TTL_MS
+  };
+
+  store.users.push(user);
+  store.sessions.push(session);
+  saveAuthStore(store);
+  res.setHeader("Set-Cookie", sessionCookie(token));
+  res.status(201).json({
+    ok: true,
+    user: publicUser(user),
+    settings: {
+      registrationEnabled: store.settings.registrationEnabled !== false
+    }
+  });
+});
+
+app.post("/api/auth/login", (req, res) => {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const login = normalizeLogin(body.login || body.email);
+  const password = String(body.password || "");
+  const store = loadAuthStore();
+  const user = store.users.find((x) => normalizeLogin(x.login) === login);
+
+  if (!user || !verifyPassword(password, user)) {
+    res.status(401).json({ error: "Неверный логин или пароль" });
+    return;
+  }
+
+  const now = Date.now();
+  const token = crypto.randomBytes(32).toString("base64url");
+  const session = {
+    id: crypto.randomUUID(),
+    userId: user.id,
+    tokenHash: hashSessionToken(token),
+    createdAt: now,
+    lastSeenAt: now,
+    expiresAt: now + SESSION_TTL_MS
+  };
+
+  store.sessions = store.sessions.filter((x) => Number(x.expiresAt) > now);
+  store.sessions.push(session);
+  saveAuthStore(store);
+  res.setHeader("Set-Cookie", sessionCookie(token));
+  res.json({
+    ok: true,
+    user: publicUser(user),
+    settings: {
+      registrationEnabled: store.settings.registrationEnabled !== false
+    }
+  });
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  const current = getSessionFromRequest(req);
+  if (current.store && current.tokenHash) {
+    current.store.sessions = current.store.sessions.filter((x) => x.tokenHash !== current.tokenHash);
+    saveAuthStore(current.store);
+  }
+  res.setHeader("Set-Cookie", clearSessionCookie());
+  res.json({ ok: true });
+});
+
+app.get("/api/auth/settings", (_req, res) => {
+  const store = loadAuthStore();
+  res.json({
+    ok: true,
+    settings: {
+      registrationEnabled: store.settings.registrationEnabled !== false
+    }
+  });
+});
+
+app.get("/api/auth/me", (req, res) => {
+  const current = getSessionFromRequest(req);
+  if (!current.user) {
+    res.status(401).json({ error: "Требуется вход" });
+    return;
+  }
+  res.json({
+    ok: true,
+    user: publicUser(current.user),
+    settings: {
+      registrationEnabled: current.store?.settings?.registrationEnabled !== false
+    }
+  });
+});
+
+app.get("/api/admin/settings", requireAdmin, (_req, res) => {
+  const store = loadAuthStore();
+  res.json({
+    ok: true,
+    settings: {
+      registrationEnabled: store.settings.registrationEnabled !== false
+    }
+  });
+});
+
+app.post("/api/admin/settings", requireAdmin, (req, res) => {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const store = loadAuthStore();
+  store.settings.registrationEnabled = body.registrationEnabled !== false;
+  saveAuthStore(store);
+  res.json({
+    ok: true,
+    settings: {
+      registrationEnabled: store.settings.registrationEnabled
+    }
+  });
+});
+
+app.use("/api", (req, res, next) => {
+  if (req.path === "/health" || req.path.startsWith("/auth/")) {
+    next();
+    return;
+  }
+  requireAuth(req, res, next);
 });
 
 app.get("/api/video/preview", async (req, res) => {
@@ -1594,7 +1962,6 @@ app.get("/api/media", async (req, res) => {
 
 // ===== Shared characters storage =====
 
-const DATA_DIR = path.join(__dirname, "data");
 const CHARACTERS_FILE = path.join(DATA_DIR, "characters.json");
 const CHARACTERS_BACKUP_PREFIX = "characters.pre-migration";
 
@@ -1621,10 +1988,6 @@ const LEGACY_CHARACTER_KEYS = [
   "setting",
   "dialogueStyle"
 ];
-
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-}
 
 function isPlainObject(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -1766,13 +2129,17 @@ app.post("/api/characters", (req, res) => {
   res.json({ ok: true });
 });
 
-// POST bulk upsert (for migration / import)
+// POST bulk upsert or replace (for migration / import)
 app.post("/api/characters/bulk", (req, res) => {
-  const items = req.body;
+  const items = Array.isArray(req.body) ? req.body : req.body?.characters;
   if (!Array.isArray(items)) {
     return res.status(400).json({ error: "Expected array" });
   }
-  const chars = loadCharacters();
+  const replace =
+    req.query.replace === "1" ||
+    req.query.mode === "replace" ||
+    (req.body && !Array.isArray(req.body) && req.body.replace === true);
+  const chars = replace ? [] : loadCharacters();
   const existingIds = new Set(chars.map((c) => c.id));
   for (const ch of items) {
     const migrated = migrateCharacterRecord(ch);

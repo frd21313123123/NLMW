@@ -1,7 +1,45 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nlmw-chat-test-'));
+process.env.APP_DATA_DIR = testDataDir;
+process.env.SESSION_SECRET = 'test-session-secret';
 
 const { app, stripSlashes, deriveRestBaseUrl, deriveOpenAiBaseUrl } = require('../server');
+const authFile = path.join(testDataDir, 'auth.json');
+
+test.after(() => {
+  fs.rmSync(testDataDir, { recursive: true, force: true });
+});
+
+function startTestServer() {
+  const server = app.listen(0);
+  const { port } = server.address();
+  return { server, baseUrl: `http://127.0.0.1:${port}` };
+}
+
+async function closeTestServer(server) {
+  await new Promise((resolve) => server.close(resolve));
+}
+
+async function createSessionCookie(baseUrl, login = `user-${Date.now()}-${Math.random().toString(16).slice(2)}`) {
+  const res = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login, name: 'Test User', password: 'secret123' })
+  });
+  assert.equal(res.status, 201);
+  const cookie = res.headers.get('set-cookie');
+  assert.match(cookie, /nlmw_session=/);
+  return cookie.split(';')[0];
+}
+
+function resetAuthStore() {
+  fs.rmSync(authFile, { force: true });
+}
 
 test('stripSlashes removes trailing slashes', () => {
   assert.equal(stripSlashes('http://localhost:1234/v1///'), 'http://localhost:1234/v1');
@@ -19,29 +57,178 @@ test('deriveOpenAiBaseUrl always points to /v1', () => {
 });
 
 test('GET /api/video/preview validates missing url', async () => {
-  const server = app.listen(0);
-  const { port } = server.address();
+  const { server, baseUrl } = startTestServer();
 
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/video/preview`);
+    const cookie = await createSessionCookie(baseUrl);
+    const res = await fetch(`${baseUrl}/api/video/preview`, { headers: { Cookie: cookie } });
     assert.equal(res.status, 400);
     const body = await res.json();
     assert.equal(body.error, 'Missing url query param');
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    await closeTestServer(server);
   }
 });
 
 test('GET /api/video/preview validates invalid url format', async () => {
-  const server = app.listen(0);
-  const { port } = server.address();
+  const { server, baseUrl } = startTestServer();
 
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/video/preview?url=not-a-url`);
+    const cookie = await createSessionCookie(baseUrl);
+    const res = await fetch(`${baseUrl}/api/video/preview?url=not-a-url`, { headers: { Cookie: cookie } });
     assert.equal(res.status, 400);
     const body = await res.json();
     assert.equal(body.error, 'Invalid url');
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    await closeTestServer(server);
+  }
+});
+
+test('auth registration, duplicate rejection, login, and /me session lookup', async () => {
+  const { server, baseUrl } = startTestServer();
+  const login = `auth-${Date.now()}@example.com`;
+
+  try {
+    const registerRes = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login, name: 'Auth User', password: 'secret123' })
+    });
+    assert.equal(registerRes.status, 201);
+    const registerBody = await registerRes.json();
+    assert.equal(registerBody.user.login, login);
+
+    const duplicateRes = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login, name: 'Auth User', password: 'secret123' })
+    });
+    assert.equal(duplicateRes.status, 409);
+
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login, password: 'secret123' })
+    });
+    assert.equal(loginRes.status, 200);
+    const cookie = loginRes.headers.get('set-cookie').split(';')[0];
+
+    const meRes = await fetch(`${baseUrl}/api/auth/me`, { headers: { Cookie: cookie } });
+    assert.equal(meRes.status, 200);
+    const meBody = await meRes.json();
+    assert.equal(meBody.user.login, login);
+    assert.equal(typeof meBody.user.isAdmin, 'boolean');
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test('first registered user is admin and can toggle registration', async () => {
+  resetAuthStore();
+  const { server, baseUrl } = startTestServer();
+
+  try {
+    const adminRes = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login: 'admin@example.com', name: 'Admin', password: 'secret123' })
+    });
+    assert.equal(adminRes.status, 201);
+    const adminBody = await adminRes.json();
+    assert.equal(adminBody.user.role, 'admin');
+    assert.equal(adminBody.user.isAdmin, true);
+    const adminCookie = adminRes.headers.get('set-cookie').split(';')[0];
+
+    const closeRes = await fetch(`${baseUrl}/api/admin/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ registrationEnabled: false })
+    });
+    assert.equal(closeRes.status, 200);
+    const closeBody = await closeRes.json();
+    assert.equal(closeBody.settings.registrationEnabled, false);
+
+    const blockedRes = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login: 'blocked@example.com', name: 'Blocked', password: 'secret123' })
+    });
+    assert.equal(blockedRes.status, 403);
+
+    const openRes = await fetch(`${baseUrl}/api/admin/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ registrationEnabled: true })
+    });
+    assert.equal(openRes.status, 200);
+
+    const userRes = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login: 'regular@example.com', name: 'Regular', password: 'secret123' })
+    });
+    assert.equal(userRes.status, 201);
+    const userBody = await userRes.json();
+    assert.equal(userBody.user.role, 'user');
+    assert.equal(userBody.user.isAdmin, false);
+    const userCookie = userRes.headers.get('set-cookie').split(';')[0];
+
+    const forbiddenRes = await fetch(`${baseUrl}/api/admin/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: userCookie },
+      body: JSON.stringify({ registrationEnabled: false })
+    });
+    assert.equal(forbiddenRes.status, 403);
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test('POST /api/characters/bulk replace overwrites server character storage', async () => {
+  const { server, baseUrl } = startTestServer();
+
+  try {
+    const cookie = await createSessionCookie(baseUrl);
+    const firstRes = await fetch(`${baseUrl}/api/characters/bulk?replace=1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify([
+        { id: 'replace-old', name: 'Old Character', gender: 'female', updatedAt: 1 }
+      ])
+    });
+    assert.equal(firstRes.status, 200);
+
+    const replaceRes = await fetch(`${baseUrl}/api/characters/bulk?replace=1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        replace: true,
+        characters: [{ id: 'replace-new', name: 'New Character', gender: 'male', updatedAt: 2 }]
+      })
+    });
+    assert.equal(replaceRes.status, 200);
+    const replaceBody = await replaceRes.json();
+    assert.equal(replaceBody.count, 1);
+
+    const getRes = await fetch(`${baseUrl}/api/characters`, { headers: { Cookie: cookie } });
+    assert.equal(getRes.status, 200);
+    const chars = await getRes.json();
+    assert.deepEqual(chars.map((c) => c.id), ['replace-new']);
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test('GET /api/auth/me and protected APIs reject anonymous requests', async () => {
+  const { server, baseUrl } = startTestServer();
+
+  try {
+    const meRes = await fetch(`${baseUrl}/api/auth/me`);
+    assert.equal(meRes.status, 401);
+
+    const charsRes = await fetch(`${baseUrl}/api/characters`);
+    assert.equal(charsRes.status, 401);
+  } finally {
+    await closeTestServer(server);
   }
 });

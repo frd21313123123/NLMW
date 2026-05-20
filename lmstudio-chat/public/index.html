@@ -6,10 +6,47 @@
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#0a0a0a" />
     <title>Chat Studio</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260521-image-compress" />
   </head>
   <body>
-    <div class="app" id="app">
+    <section class="authScreen" id="authScreen" aria-label="Вход в Chat Studio">
+      <div class="authScreen__panel">
+        <div class="authScreen__brand">
+          <svg class="authScreen__logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <div>
+            <div class="authScreen__title">Chat Studio</div>
+            <div class="authScreen__subtitle">Общее пространство персонажей</div>
+          </div>
+        </div>
+
+        <div class="authTabs" role="tablist" aria-label="Авторизация">
+          <button class="authTabs__item authTabs__item--active" id="authLoginTab" type="button">Вход</button>
+          <button class="authTabs__item" id="authRegisterTab" type="button">Регистрация</button>
+        </div>
+
+        <form class="authForm" id="authForm" autocomplete="on">
+          <label class="field authForm__nameField" id="authNameField" hidden>
+            <span class="field__label">Имя</span>
+            <input class="field__input" id="authName" type="text" autocomplete="name" placeholder="Как вас называть" />
+          </label>
+
+          <label class="field">
+            <span class="field__label">Логин или email</span>
+            <input class="field__input" id="authLogin" type="text" autocomplete="username" placeholder="user@example.com" required />
+          </label>
+
+          <label class="field">
+            <span class="field__label">Пароль</span>
+            <input class="field__input" id="authPassword" type="password" autocomplete="current-password" placeholder="Минимум 6 символов" required />
+          </label>
+
+          <button class="btn btn--accent authForm__submit" id="authSubmit" type="submit">Войти</button>
+          <div class="smallNote authForm__note" id="authNote" aria-live="polite"></div>
+        </form>
+      </div>
+    </section>
+
+    <div class="app" id="app" hidden>
       <!-- Desktop sidebar -->
       <aside class="sidebar" id="sidebar">
         <div class="sidebar__logo">
@@ -32,6 +69,10 @@
           <button class="sidebar__item" id="sideProfile" type="button">
             <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             <span>Профиль</span>
+          </button>
+          <button class="sidebar__item" id="sideAdmin" type="button" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6l-8-3z"/><path d="m9 12 2 2 4-5"/></svg>
+            <span>Админ</span>
           </button>
         </nav>
       </aside>
@@ -158,6 +199,11 @@
           </div>
         </div>
 
+        <!-- Admin view appbar -->
+        <div class="appbar__row" id="appbarAdmin" hidden>
+          <div class="appbar__title">Админ</div>
+        </div>
+
         <div class="appbar__status" id="lmStatus" aria-live="polite"></div>
       </header>
 
@@ -225,6 +271,14 @@
         <section class="view" id="viewProfile">
           <div class="panel panel--flat">
             <div class="panel__body">
+              <div class="profile__card profile__card--account">
+                <div>
+                  <div class="profile__sectionTitle">Аккаунт</div>
+                  <div class="smallNote" id="accountSummary">Вход выполнен.</div>
+                </div>
+                <button class="btn btn--ghost" id="btnLogout" type="button">Выйти</button>
+              </div>
+
               <div class="profile__card">
                 <div class="profile__avatarRow">
                   <img class="avatar avatar--xl" id="userAvatarPreview" alt="" />
@@ -299,6 +353,31 @@
             </div>
           </div>
         </section>
+
+        <!-- Admin -->
+        <section class="view" id="viewAdmin">
+          <div class="panel panel--flat">
+            <div class="panel__body">
+              <div class="adminPanel__header">
+                <div>
+                  <div class="adminPanel__title">Администрирование</div>
+                  <div class="smallNote" id="adminAccountSummary">Настройки общего рабочего пространства.</div>
+                </div>
+              </div>
+
+              <div class="adminPanel__card" id="adminSettingsCard" hidden>
+                <div class="profile__sectionTitle">Регистрация пользователей</div>
+                <label class="toggleRow">
+                  <input id="registrationEnabledToggle" type="checkbox" />
+                  <span>
+                    <span class="toggleRow__title">Разрешить регистрацию</span>
+                    <span class="smallNote" id="registrationEnabledNote">Новые пользователи смогут создавать аккаунты.</span>
+                  </span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </section>
       </main>
 
       <!-- Tab bar — 4 tabs -->
@@ -314,6 +393,9 @@
         </button>
         <button class="tab" id="tabProfile" type="button" aria-label="Профиль">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </button>
+        <button class="tab" id="tabAdmin" type="button" aria-label="Админ" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6l-8-3z"/><path d="m9 12 2 2 4-5"/></svg>
         </button>
       </nav>
 
@@ -444,8 +526,8 @@
 
                 <input id="charGenderInput" type="hidden" value="unspecified" />
                 <input id="charStyleInput" type="hidden" value="roleplay" />
-                <input id="charAvatarFile" type="file" accept="image/*" hidden />
-                <input id="charBgFile" type="file" accept="image/*" hidden />
+                <input class="fileInput" id="charAvatarFile" type="file" accept="image/*" />
+                <input class="fileInput" id="charBgFile" type="file" accept="image/*" />
 
                 <section class="charSection">
                   <div class="field__labelRow">
@@ -513,7 +595,7 @@
                 <section class="charSection">
                   <div class="charSection__title" style="margin-bottom:0.5rem">Аватар</div>
                   <div class="row row--actions">
-                    <button class="btn btn--ghost" id="btnUploadAvatar" type="button">Загрузить фото</button>
+                    <label class="btn btn--ghost fileTriggerBtn" id="btnUploadAvatar" for="charAvatarFile" role="button" tabindex="0">Загрузить фото</label>
                     <button class="btn btn--ghost" id="btnGenAvatar" type="button">Сгенерировать</button>
                   </div>
                   <div class="smallNote" id="genAvatarNote">Загрузите своё изображение или сгенерируйте аватар по описанию персонажа.</div>
@@ -726,6 +808,6 @@
 
     </div><!-- /app -->
 
-    <script src="./app.js"></script>
+    <script src="./app.js?v=20260521-image-compress"></script>
   </body>
 </html>

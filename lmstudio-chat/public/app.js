@@ -63,10 +63,15 @@
     groupChats: [],
     activeGroupChatId: "",
     chatsSubTab: "personal",
-    polybuzzSettings: null
+    polybuzzSettings: null,
+    currentUser: null,
+    authMode: "login",
+    registrationEnabled: true
   };
 
   let speakerStateModalContext = null;
+  let appBootstrapped = false;
+  let syncCharactersTimer = null;
 
   function safeJsonParse(text) {
     try {
@@ -85,6 +90,195 @@
 
   function saveJson(key, value) {
     localStorage.setItem(key, JSON.stringify(value));
+  }
+
+  async function fetchJson(url, options = {}) {
+    const resp = await fetch(url, {
+      credentials: "same-origin",
+      ...options,
+      headers: {
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(options.headers || {})
+      }
+    });
+    let payload = null;
+    try {
+      payload = await resp.json();
+    } catch {
+      payload = null;
+    }
+    if (!resp.ok) {
+      const msg = payload && typeof payload.error === "string" ? payload.error : `HTTP ${resp.status}`;
+      throw new Error(msg);
+    }
+    return payload;
+  }
+
+  function setAuthMode(mode) {
+    state.authMode = mode === "register" ? "register" : "login";
+    if (state.authMode === "register" && state.registrationEnabled === false) state.authMode = "login";
+    const isRegister = state.authMode === "register";
+    const loginTab = $("#authLoginTab");
+    const registerTab = $("#authRegisterTab");
+    const nameField = $("#authNameField");
+    const submit = $("#authSubmit");
+    const password = $("#authPassword");
+    const note = $("#authNote");
+
+    const canRegister = state.registrationEnabled !== false;
+    if (loginTab) loginTab.classList.toggle("authTabs__item--active", !isRegister);
+    if (registerTab) {
+      registerTab.classList.toggle("authTabs__item--active", isRegister);
+      registerTab.disabled = !canRegister;
+      registerTab.title = canRegister ? "" : "Регистрация закрыта администратором";
+    }
+    if (nameField) nameField.hidden = !isRegister;
+    if (submit) submit.textContent = isRegister ? "Зарегистрироваться" : "Войти";
+    if (password) password.autocomplete = isRegister ? "new-password" : "current-password";
+    if (note) note.textContent = canRegister ? "" : "Регистрация новых пользователей сейчас закрыта.";
+  }
+
+  function showAuthScreen() {
+    const auth = $("#authScreen");
+    const app = $("#app");
+    if (auth) auth.hidden = false;
+    if (app) app.hidden = true;
+    setAuthMode(state.authMode);
+  }
+
+  function showAppShell() {
+    const auth = $("#authScreen");
+    const app = $("#app");
+    if (auth) auth.hidden = true;
+    if (app) app.hidden = false;
+  }
+
+  function renderAccountSummary() {
+    const el = $("#accountSummary");
+    if (!el) return;
+    const user = state.currentUser;
+    const role = user?.isAdmin ? "админ" : "пользователь";
+    el.textContent = user ? `${user.name || user.login} (${user.login}) - ${role}` : "Вход выполнен.";
+    renderAdminSettings();
+  }
+
+  function renderAdminSettings() {
+    const card = $("#adminSettingsCard");
+    const toggle = $("#registrationEnabledToggle");
+    const note = $("#registrationEnabledNote");
+    const summary = $("#adminAccountSummary");
+    const isAdmin = state.currentUser?.isAdmin === true;
+    if (card) card.hidden = !isAdmin;
+    if (summary && isAdmin) {
+      const user = state.currentUser;
+      summary.textContent = `${user.name || user.login} (${user.login}) - администратор`;
+    }
+    updateAdminNavigation();
+    if (toggle) toggle.checked = state.registrationEnabled !== false;
+    if (note) {
+      note.textContent =
+        state.registrationEnabled === false
+          ? "Новые пользователи не смогут создавать аккаунты."
+          : "Новые пользователи смогут создавать аккаунты.";
+    }
+  }
+
+  function updateAdminNavigation() {
+    const isAdmin = state.currentUser?.isAdmin === true;
+    const sideAdmin = $("#sideAdmin");
+    const tabAdmin = $("#tabAdmin");
+    if (sideAdmin) sideAdmin.hidden = !isAdmin;
+    if (tabAdmin) tabAdmin.hidden = !isAdmin;
+  }
+
+  function openProfile() {
+    setView("profile");
+  }
+
+  function openAdminSettings() {
+    if (state.currentUser?.isAdmin !== true) return;
+    setView("admin");
+    renderAdminSettings();
+  }
+
+  async function submitAuthForm() {
+    const note = $("#authNote");
+    const submit = $("#authSubmit");
+    const login = String($("#authLogin")?.value || "").trim();
+    const password = String($("#authPassword")?.value || "");
+    const name = String($("#authName")?.value || "").trim();
+    const isRegister = state.authMode === "register";
+
+    if (note) note.textContent = "";
+    if (submit) submit.disabled = true;
+
+    try {
+      const payload = await fetchJson(isRegister ? "/api/auth/register" : "/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ login, password, name })
+      });
+      state.currentUser = payload.user || null;
+      if (payload.settings) state.registrationEnabled = payload.settings.registrationEnabled !== false;
+      await startAuthenticatedApp();
+    } catch (err) {
+      if (note) note.textContent = String(err?.message || err || "Ошибка входа");
+    } finally {
+      if (submit) submit.disabled = false;
+    }
+  }
+
+  function wireAuthUI() {
+    const loginTab = $("#authLoginTab");
+    const registerTab = $("#authRegisterTab");
+    const form = $("#authForm");
+    if (loginTab) loginTab.addEventListener("click", () => setAuthMode("login"));
+    if (registerTab) registerTab.addEventListener("click", () => setAuthMode("register"));
+    if (form) {
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        submitAuthForm();
+      });
+    }
+  }
+
+  async function refreshPublicAuthSettings() {
+    try {
+      const payload = await fetchJson("/api/auth/settings");
+      state.registrationEnabled = payload.settings?.registrationEnabled !== false;
+    } catch (_err) {
+      state.registrationEnabled = true;
+    }
+    setAuthMode(state.authMode);
+  }
+
+  async function saveRegistrationEnabled(enabled) {
+    const toggle = $("#registrationEnabledToggle");
+    const note = $("#registrationEnabledNote");
+    if (toggle) toggle.disabled = true;
+    try {
+      const payload = await fetchJson("/api/admin/settings", {
+        method: "POST",
+        body: JSON.stringify({ registrationEnabled: enabled })
+      });
+      state.registrationEnabled = payload.settings?.registrationEnabled !== false;
+      renderAdminSettings();
+      flashStatus("Настройки регистрации сохранены", true);
+    } catch (err) {
+      renderAdminSettings();
+      if (note) note.textContent = String(err?.message || err || "Не удалось сохранить настройку");
+      flashStatus("Не удалось сохранить настройку регистрации", false);
+    } finally {
+      if (toggle) toggle.disabled = false;
+    }
+  }
+
+  async function logout() {
+    try {
+      await fetchJson("/api/auth/logout", { method: "POST" });
+    } catch (_err) {
+      // The next load will still verify the session with the server.
+    }
+    window.location.reload();
   }
 
   function defaultPolybuzzSettings() {
@@ -511,26 +705,111 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function cloneForExport(value, fallback) {
+    try {
+      return JSON.parse(JSON.stringify(value ?? fallback));
+    } catch {
+      return fallback;
+    }
+  }
+
+  function exportFilename() {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    return `nlmw-characters-${stamp}.json`;
+  }
+
+  function responseDataForCharacter(characterId, conversations) {
+    const bucket = normalizeConversationBucket(characterId, conversations?.[characterId]);
+    const responseIds = {};
+    const responseIdChains = {};
+
+    for (const chat of bucket.chats || []) {
+      if (!chat?.id) continue;
+      const id = typeof state.responseIds?.[chat.id] === "string" ? state.responseIds[chat.id].trim() : "";
+      const chain = Array.isArray(state.responseIdChains?.[chat.id])
+        ? state.responseIdChains[chat.id].filter((x) => typeof x === "string" && x.trim())
+        : [];
+
+      if (id) responseIds[chat.id] = id;
+      if (chain.length > 0) responseIdChains[chat.id] = chain;
+    }
+
+    return { responseIds, responseIdChains };
+  }
+
   function buildFullExportPayload() {
+    const characters = Array.isArray(state.characters)
+      ? state.characters.map((c) => normalizeCharacterRecord(c))
+      : [];
+    const characterIds = new Set(characters.map((c) => c.id));
+    const conversations = {};
+    const responseIds = {};
+    const responseIdChains = {};
+    const characterExports = [];
+
+    for (const character of characters) {
+      const conversation = normalizeConversationBucket(character.id, state.conversations?.[character.id]);
+      conversations[character.id] = cloneForExport(conversation, { activeChatId: "", chats: [] });
+
+      const scopedResponses = responseDataForCharacter(character.id, conversations);
+      Object.assign(responseIds, scopedResponses.responseIds);
+      Object.assign(responseIdChains, scopedResponses.responseIdChains);
+
+      characterExports.push({
+        characterId: character.id,
+        name: character.name,
+        settings: cloneForExport(character, {}),
+        conversations: conversations[character.id],
+        responseIds: scopedResponses.responseIds,
+        responseIdChains: scopedResponses.responseIdChains
+      });
+    }
+
+    const groupChats = Array.isArray(state.groupChats)
+      ? state.groupChats
+          .map((g) => normalizeGroupChat(g))
+          .filter((g) => g.characterIds.some((id) => characterIds.has(id)))
+      : [];
+    const activeGroupChatId = groupChats.some((g) => g.id === state.activeGroupChatId) ? state.activeGroupChatId : "";
+
     return {
-      format: "nlmw-backup",
-      version: 1,
+      format: "nlmw-character-account-export",
+      version: 2,
       exportedAt: new Date().toISOString(),
       data: {
-        profile: state.profile,
-        characters: state.characters,
-        selectedCharacterId: state.selectedCharacterId,
-        conversations: state.conversations,
-        responseIds: state.responseIds,
-        responseIdChains: state.responseIdChains,
-        modelId: state.modelId,
-        provider: state.provider,
-        mistralKey: state.mistralKey,
-        openrouterKey: state.openrouterKey,
-        savedPrompts: state.savedPrompts,
-        promptFolders: state.promptFolders
+        profile: cloneForExport(state.profile, defaultProfile()),
+        selectedCharacterId: characterIds.has(state.selectedCharacterId) ? state.selectedCharacterId : characters[0]?.id || "",
+        characters: cloneForExport(characters, []),
+        conversations,
+        responseIds,
+        responseIdChains,
+        groupChats: cloneForExport(groupChats, []),
+        activeGroupChatId,
+        characterExports
       }
     };
+  }
+
+  async function replaceServerCharacters(characters) {
+    const resp = await fetch("/api/characters/bulk?replace=1", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(characters)
+    });
+
+    let payload = null;
+    try {
+      payload = await resp.json();
+    } catch {
+      payload = null;
+    }
+
+    if (!resp.ok) {
+      const msg = payload && typeof payload.error === "string" ? payload.error : `HTTP ${resp.status}`;
+      throw new Error(`Локально импортировано, но серверный список персонажей не обновился: ${msg}`);
+    }
+
+    return payload || { ok: true, count: characters.length };
   }
 
   async function applyImportedAppData(payload) {
@@ -543,8 +822,10 @@
       throw new Error("В файле нет данных чатов (conversations).");
     }
 
+    const importedCharacters = src.characters.filter((x) => x && typeof x === "object").map(normalizeCharacterRecord);
+
     saveJson(STORAGE_KEYS.profile, normalizeProfileRecord(src.profile));
-    saveJson(STORAGE_KEYS.characters, src.characters);
+    saveJson(STORAGE_KEYS.characters, importedCharacters);
     saveJson(STORAGE_KEYS.selectedCharacterId, String(src.selectedCharacterId || ""));
     saveJson(STORAGE_KEYS.conversations, src.conversations);
     saveJson(STORAGE_KEYS.responseIds, src.responseIds && typeof src.responseIds === "object" && !Array.isArray(src.responseIds) ? src.responseIds : {});
@@ -552,14 +833,19 @@
       STORAGE_KEYS.responseIdChains,
       src.responseIdChains && typeof src.responseIdChains === "object" && !Array.isArray(src.responseIdChains) ? src.responseIdChains : {}
     );
-    saveJson(STORAGE_KEYS.modelId, String(src.modelId || ""));
-    saveJson(STORAGE_KEYS.provider, ["lmstudio", "mistral", "openrouter"].includes(src.provider) ? src.provider : "lmstudio");
-    saveJson(STORAGE_KEYS.mistralKey, String(src.mistralKey || ""));
-    saveJson(STORAGE_KEYS.openrouterKey, String(src.openrouterKey || ""));
-    saveJson(STORAGE_KEYS.savedPrompts, Array.isArray(src.savedPrompts) ? src.savedPrompts : []);
-    saveJson(STORAGE_KEYS.promptFolders, Array.isArray(src.promptFolders) ? src.promptFolders : []);
+    if (Object.hasOwn(src, "modelId")) saveJson(STORAGE_KEYS.modelId, String(src.modelId || ""));
+    if (Object.hasOwn(src, "provider")) {
+      saveJson(STORAGE_KEYS.provider, ["lmstudio", "mistral", "openrouter"].includes(src.provider) ? src.provider : "lmstudio");
+    }
+    if (Object.hasOwn(src, "mistralKey")) saveJson(STORAGE_KEYS.mistralKey, String(src.mistralKey || ""));
+    if (Object.hasOwn(src, "openrouterKey")) saveJson(STORAGE_KEYS.openrouterKey, String(src.openrouterKey || ""));
+    if (Object.hasOwn(src, "savedPrompts")) saveJson(STORAGE_KEYS.savedPrompts, Array.isArray(src.savedPrompts) ? src.savedPrompts : []);
+    if (Object.hasOwn(src, "promptFolders")) saveJson(STORAGE_KEYS.promptFolders, Array.isArray(src.promptFolders) ? src.promptFolders : []);
+    saveJson(STORAGE_KEYS.groupChats, Array.isArray(src.groupChats) ? src.groupChats.map(normalizeGroupChat) : []);
+    saveJson(STORAGE_KEYS.activeGroupChatId, String(src.activeGroupChatId || ""));
 
     ensureSeed();
+    loadGroupChats();
     if (!state.characters.some((c) => c.id === state.editingCharacterId)) {
       state.editingCharacterId = state.selectedCharacterId || state.characters[0]?.id || "";
     }
@@ -576,11 +862,7 @@
       fillCharacterForm();
     }
 
-    await fetch("/api/characters/bulk", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(state.characters)
-    }).catch(() => {});
+    return replaceServerCharacters(state.characters);
   }
 
   function parsePngTextChunks(arrayBuffer) {
@@ -2863,7 +3145,11 @@
   }
 
   function setView(next) {
-    const v = next === "chat" || next === "profile" || next === "polybuzz" || next === "groupchat" ? next : "chats";
+    const v =
+      next === "chat" || next === "profile" || next === "admin" || next === "polybuzz" || next === "groupchat"
+        ? next
+        : "chats";
+    if (v === "admin" && state.currentUser?.isAdmin !== true) return;
     state.view = v;
 
     const views = {
@@ -2871,7 +3157,8 @@
       chat: $("#viewChat"),
       groupchat: $("#viewGroupChat"),
       polybuzz: $("#viewPolybuzz"),
-      profile: $("#viewProfile")
+      profile: $("#viewProfile"),
+      admin: $("#viewAdmin")
     };
 
     for (const k of Object.keys(views)) {
@@ -2885,27 +3172,33 @@
     const appbarGroupChat = $("#appbarGroupChat");
     const appbarPolybuzz = $("#appbarPolybuzz");
     const appbarProfile = $("#appbarProfile");
+    const appbarAdmin = $("#appbarAdmin");
     if (appbarChats) appbarChats.hidden = v !== "chats";
     if (appbarChat) appbarChat.hidden = v !== "chat";
     if (appbarGroupChat) appbarGroupChat.hidden = v !== "groupchat";
     if (appbarPolybuzz) appbarPolybuzz.hidden = v !== "polybuzz";
     if (appbarProfile) appbarProfile.hidden = v !== "profile";
+    if (appbarAdmin) appbarAdmin.hidden = v !== "admin";
 
     const tChats = $("#tabChats");
     const tPolybuzz = $("#tabPolybuzz");
     const tProfile = $("#tabProfile");
+    const tAdmin = $("#tabAdmin");
     if (tChats) tChats.classList.toggle("tab--active", v === "chats" || v === "chat" || v === "groupchat");
     if (tPolybuzz) tPolybuzz.classList.toggle("tab--active", v === "polybuzz");
     if (tProfile) tProfile.classList.toggle("tab--active", v === "profile");
+    if (tAdmin) tAdmin.classList.toggle("tab--active", v === "admin");
 
     // Sidebar active state
     const sChats = $("#sideChats");
     const sPolybuzz = $("#sidePolybuzz");
     const sProfile = $("#sideProfile");
+    const sAdmin = $("#sideAdmin");
     const sPlus = $("#sidePlus");
     if (sChats) sChats.classList.toggle("sidebar__item--active", v === "chats" || v === "chat" || v === "groupchat");
     if (sPolybuzz) sPolybuzz.classList.toggle("sidebar__item--active", v === "polybuzz");
     if (sProfile) sProfile.classList.toggle("sidebar__item--active", v === "profile");
+    if (sAdmin) sAdmin.classList.toggle("sidebar__item--active", v === "admin");
     if (sPlus) sPlus.classList.toggle("sidebar__item--active", false);
 
     const app = $("#app");
@@ -4580,15 +4873,80 @@
 
   async function fileToDataUrl(file) {
     if (!file) return "";
-    const maxBytes = 1_200_000;
-    if (file.size > maxBytes) throw new Error("Файл слишком большой. Выберите картинку до ~1.2MB");
+    if (!String(file.type || "").startsWith("image/")) {
+      throw new Error("Выберите файл изображения.");
+    }
 
+    const maxDataUrlChars = 1_200_000;
+    const original = await readFileAsDataUrl(file);
+    if (original.length <= maxDataUrlChars) return original;
+
+    return compressImageFileToDataUrl(file, {
+      maxDataUrlChars,
+      maxSide: 1280,
+      minSide: 480,
+      startQuality: 0.86,
+      minQuality: 0.58
+    });
+  }
+
+  async function readFileAsDataUrl(file) {
     return await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
       reader.onload = () => resolve(String(reader.result || ""));
       reader.readAsDataURL(file);
     });
+  }
+
+  async function compressImageFileToDataUrl(file, opts) {
+    const image = await loadImageFromFile(file);
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Браузер не смог подготовить изображение.");
+
+    const sourceW = image.naturalWidth || image.width;
+    const sourceH = image.naturalHeight || image.height;
+    if (!sourceW || !sourceH) throw new Error("Не удалось прочитать размеры изображения.");
+
+    let maxSide = opts.maxSide;
+    let quality = opts.startQuality;
+
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const scale = Math.min(1, maxSide / Math.max(sourceW, sourceH));
+      canvas.width = Math.max(1, Math.round(sourceW * scale));
+      canvas.height = Math.max(1, Math.round(sourceH * scale));
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+      const dataUrl = canvas.toDataURL("image/jpeg", quality);
+      if (dataUrl.length <= opts.maxDataUrlChars) return dataUrl;
+
+      if (quality > opts.minQuality) {
+        quality = Math.max(opts.minQuality, quality - 0.08);
+      } else if (maxSide > opts.minSide) {
+        maxSide = Math.max(opts.minSide, Math.round(maxSide * 0.82));
+        quality = opts.startQuality;
+      } else {
+        break;
+      }
+    }
+
+    throw new Error("Фото слишком большое. Не удалось автоматически уменьшить его для сохранения.");
+  }
+
+  async function loadImageFromFile(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      return await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("Не удалось открыть изображение."));
+        img.src = url;
+      });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   }
 
   // ===== PolyBuzz Catalog =====
@@ -5347,6 +5705,7 @@
   }
 
   function fillProfileUI() {
+    renderAccountSummary();
     $("#userName").value = state.profile?.name || "";
     $("#userGender").value = state.profile?.gender || "unspecified";
     setImg($("#userAvatarPreview"), state.profile?.avatar, state.profile?.name);
@@ -7623,6 +7982,7 @@
     const tabChats = $("#tabChats");
     const tabPlus = $("#tabPlus");
     const tabProfile = $("#tabProfile");
+    const tabAdmin = $("#tabAdmin");
     const btnFollowingTab = $("#btnFollowingTab");
     const btnExploreTab = $("#btnExploreTab");
     const btnForYouTab = $("#btnForYouTab");
@@ -7640,8 +8000,9 @@
     const tabPolybuzz = $("#tabPolybuzz");
     if (tabPolybuzz) tabPolybuzz.addEventListener("click", () => openPolybuzzView());
     if (tabPlus) tabPlus.addEventListener("click", () => openModal());
-    if (tabProfile) tabProfile.addEventListener("click", () => setView("profile"));
-    if (btnOpenProfileFromChats) btnOpenProfileFromChats.addEventListener("click", () => setView("profile"));
+    if (tabProfile) tabProfile.addEventListener("click", () => openProfile());
+    if (tabAdmin) tabAdmin.addEventListener("click", () => openAdminSettings());
+    if (btnOpenProfileFromChats) btnOpenProfileFromChats.addEventListener("click", () => openProfile());
     if (btnFollowingTab) {
       btnFollowingTab.addEventListener("click", () => {
         state.discoverTab = "following";
@@ -7678,6 +8039,7 @@
     const sideChats = $("#sideChats");
     const sidePlus = $("#sidePlus");
     const sideProfile = $("#sideProfile");
+    const sideAdmin = $("#sideAdmin");
 
     if (sideChats) {
       sideChats.addEventListener("click", () => {
@@ -7689,7 +8051,8 @@
     const sidePolybuzz = $("#sidePolybuzz");
     if (sidePolybuzz) sidePolybuzz.addEventListener("click", () => openPolybuzzView());
     if (sidePlus) sidePlus.addEventListener("click", () => openModal());
-    if (sideProfile) sideProfile.addEventListener("click", () => setView("profile"));
+    if (sideProfile) sideProfile.addEventListener("click", () => openProfile());
+    if (sideAdmin) sideAdmin.addEventListener("click", () => openAdminSettings());
 
     const btnBack = $("#btnBackToChats");
     if (btnBack) {
@@ -8097,15 +8460,28 @@
       setView("chat");
     });
 
-    const btnUploadAvatar = $("#btnUploadAvatar");
-    if (btnUploadAvatar) {
-      btnUploadAvatar.addEventListener("click", () => $("#charAvatarFile")?.click());
-    }
+    const bindFileTrigger = (triggerSelector, inputSelector) => {
+      const trigger = $(triggerSelector);
+      const input = $(inputSelector);
+      if (!trigger || !input) return;
 
-    const btnUploadBackground = $("#btnUploadBackground");
-    if (btnUploadBackground) {
-      btnUploadBackground.addEventListener("click", () => $("#charBgFile")?.click());
-    }
+      const isNativeLabel =
+        trigger.tagName === "LABEL" && trigger.getAttribute("for") === input.id;
+
+      if (!isNativeLabel) {
+        trigger.addEventListener("click", () => input.click());
+        return;
+      }
+
+      trigger.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        input.click();
+      });
+    };
+
+    bindFileTrigger("#btnUploadAvatar", "#charAvatarFile");
+    bindFileTrigger("#btnUploadBackground", "#charBgFile");
 
     const btnAddTag = $("#btnAddTag");
     const tagInput = $("#charTagInput");
@@ -8339,15 +8715,36 @@
     });
 
     $("#btnSaveProfile").addEventListener("click", () => saveProfileFromUI());
+    const btnLogout = $("#btnLogout");
+    if (btnLogout) btnLogout.addEventListener("click", () => logout());
+    const registrationToggle = $("#registrationEnabledToggle");
+    if (registrationToggle) {
+      registrationToggle.addEventListener("change", () => {
+        saveRegistrationEnabled(registrationToggle.checked);
+      });
+    }
 
     const profileDataNote = $("#profileDataNote");
     const importAllDataFile = $("#importAllDataFile");
     const btnExportAllData = $("#btnExportAllData");
     if (btnExportAllData) {
-      btnExportAllData.addEventListener("click", async () => {
+      btnExportAllData.addEventListener("click", () => {
         const payload = buildFullExportPayload();
         const json = JSON.stringify(payload, null, 2);
-        await copyToClipboard(json, "Экспорт данных завершен");
+        const filename = exportFilename();
+        downloadText(filename, json);
+
+        const charactersCount = payload.data.characters.length;
+        const chatsCount = Object.values(payload.data.conversations).reduce(
+          (sum, bucket) => sum + (Array.isArray(bucket?.chats) ? bucket.chats.length : 0),
+          0
+        );
+        const groupChatsCount = payload.data.groupChats.length;
+        if (profileDataNote) {
+          profileDataNote.textContent =
+            `Экспортирован файл ${filename}: персонажей ${charactersCount}, личных чатов ${chatsCount}, групповых чатов ${groupChatsCount}.`;
+        }
+        flashStatus("Экспорт данных скачан файлом", true);
       });
     }
 
@@ -8379,8 +8776,11 @@
           const ok = window.confirm("Импорт заменит текущие локальные данные (профиль, персонажей и чаты). Продолжить?");
           if (!ok) return;
 
-          await applyImportedAppData(payload);
-          if (profileDataNote) profileDataNote.textContent = "Импорт завершен.";
+          const result = await applyImportedAppData(payload);
+          if (profileDataNote) {
+            const count = typeof result?.count === "number" ? result.count : state.characters.length;
+            profileDataNote.textContent = `Импорт завершен. Сервер обновлен: персонажей ${count}.`;
+          }
           flashStatus("Импорт данных завершен", true);
         } catch (err) {
           const msg = String(err?.message || err || "Ошибка импорта");
@@ -8796,10 +9196,33 @@
     refreshChatsView();
     refreshModels();
 
-    setInterval(syncCharactersFromServer, 15000);
+    if (!syncCharactersTimer) syncCharactersTimer = setInterval(syncCharactersFromServer, 15000);
   }
 
-  bootstrap().catch((err) => {
+  async function startAuthenticatedApp() {
+    showAppShell();
+    renderAccountSummary();
+    if (appBootstrapped) return;
+    appBootstrapped = true;
+    await bootstrap();
+  }
+
+  async function bootWithAuth() {
+    wireAuthUI();
+    showAuthScreen();
+    await refreshPublicAuthSettings();
+    try {
+      const payload = await fetchJson("/api/auth/me");
+      state.currentUser = payload.user || null;
+      if (payload.settings) state.registrationEnabled = payload.settings.registrationEnabled !== false;
+      await startAuthenticatedApp();
+    } catch (_err) {
+      showAuthScreen();
+    }
+  }
+
+  bootWithAuth().catch((err) => {
     console.error("[bootstrap]", err);
+    showAuthScreen();
   });
 })();
