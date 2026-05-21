@@ -244,6 +244,7 @@ test('user data is stored on server and isolated per account', async () => {
       },
       responseIds: { 'chat-1': 'resp-1' },
       responseIdChains: { 'chat-1': ['resp-1'] },
+      cloudDialogsPushedAt: 12345,
       groupChats: [],
       activeGroupChatId: ''
     };
@@ -261,6 +262,7 @@ test('user data is stored on server and isolated per account', async () => {
     assert.equal(bodyA.empty, false);
     assert.equal(bodyA.data.conversations['char-1'].chats[0].messages[0].content, 'hello from desktop');
     assert.equal(bodyA.data.responseIdChains['chat-1'][0], 'resp-1');
+    assert.equal(bodyA.data.cloudDialogsPushedAt, 12345);
 
     const loadB = await fetch(`${baseUrl}/api/user-data`, { headers: { Cookie: cookieB } });
     assert.equal(loadB.status, 200);

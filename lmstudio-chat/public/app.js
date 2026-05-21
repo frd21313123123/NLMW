@@ -9,6 +9,7 @@
     modelId: "nlmw.lmstudioModelId",
     responseIds: "nlmw.lmstudioResponseIds",
     responseIdChains: "nlmw.lmstudioResponseIdChains",
+    cloudDialogsPushedAt: "nlmw.cloudDialogsPushedAt",
     provider: "nlmw.provider",
     mistralKey: "nlmw.mistralKey",
     openrouterKey: "nlmw.openrouterKey",
@@ -25,6 +26,7 @@
     STORAGE_KEYS.conversations,
     STORAGE_KEYS.responseIds,
     STORAGE_KEYS.responseIdChains,
+    STORAGE_KEYS.cloudDialogsPushedAt,
     STORAGE_KEYS.groupChats,
     STORAGE_KEYS.activeGroupChatId
   ]);
@@ -55,6 +57,7 @@
     conversations: {},
     responseIds: {},
     responseIdChains: {},
+    cloudDialogsPushedAt: 0,
     modelId: "",
     provider: "lmstudio",
     mistralKey: "",
@@ -85,6 +88,7 @@
   let userDataSyncReady = false;
   let userDataSyncTimer = null;
   let userDataSyncInFlight = null;
+  let userDataPullTimer = null;
 
   function safeJsonParse(text) {
     try {
@@ -471,6 +475,7 @@
     state.conversations = loadJson(STORAGE_KEYS.conversations, {});
     state.responseIds = loadJson(STORAGE_KEYS.responseIds, {});
     state.responseIdChains = loadJson(STORAGE_KEYS.responseIdChains, {});
+    state.cloudDialogsPushedAt = Number(loadJson(STORAGE_KEYS.cloudDialogsPushedAt, 0)) || 0;
     state.modelId = String(loadJson(STORAGE_KEYS.modelId, ""));
     state.provider = String(loadJson(STORAGE_KEYS.provider, "lmstudio"));
     state.mistralKey = String(loadJson(STORAGE_KEYS.mistralKey, ""));
@@ -567,6 +572,7 @@
     state.responseIds = nextIds;
     saveJson(STORAGE_KEYS.responseIdChains, state.responseIdChains);
     saveJson(STORAGE_KEYS.responseIds, state.responseIds);
+    saveJson(STORAGE_KEYS.cloudDialogsPushedAt, state.cloudDialogsPushedAt);
 
     state.savedPrompts = state.savedPrompts
       .filter((x) => x && typeof x === "object")
@@ -891,6 +897,7 @@
         state.responseIdChains && typeof state.responseIdChains === "object" ? state.responseIdChains : {},
         {}
       ),
+      cloudDialogsPushedAt: Number(state.cloudDialogsPushedAt) || 0,
       groupChats: cloneForExport(Array.isArray(state.groupChats) ? state.groupChats.map(normalizeGroupChat) : [], []),
       activeGroupChatId: String(state.activeGroupChatId || ""),
       updatedAt: nowTs()
@@ -913,6 +920,7 @@
       responseIdChains: src.responseIdChains && typeof src.responseIdChains === "object" && !Array.isArray(src.responseIdChains)
         ? src.responseIdChains
         : {},
+      cloudDialogsPushedAt: Number(src.cloudDialogsPushedAt) || 0,
       groupChats: Array.isArray(src.groupChats) ? src.groupChats.map(normalizeGroupChat) : [],
       activeGroupChatId: String(src.activeGroupChatId || ""),
       updatedAt: typeof src.updatedAt === "number" && Number.isFinite(src.updatedAt) ? src.updatedAt : 0
@@ -999,6 +1007,7 @@
       conversations: mergeConversationMaps(local.conversations, server.conversations),
       responseIds: { ...local.responseIds, ...server.responseIds },
       responseIdChains: { ...local.responseIdChains, ...server.responseIdChains },
+      cloudDialogsPushedAt: Math.max(local.cloudDialogsPushedAt || 0, server.cloudDialogsPushedAt || 0),
       groupChats,
       activeGroupChatId,
       updatedAt: Math.max(local.updatedAt || 0, server.updatedAt || 0, nowTs())
@@ -1017,6 +1026,7 @@
     state.conversations = normalized.conversations;
     state.responseIds = normalized.responseIds;
     state.responseIdChains = normalized.responseIdChains;
+    state.cloudDialogsPushedAt = normalized.cloudDialogsPushedAt || 0;
     state.groupChats = normalized.groupChats;
     state.activeGroupChatId = normalized.activeGroupChatId;
 
@@ -1024,6 +1034,7 @@
     saveJson(STORAGE_KEYS.conversations, state.conversations);
     saveJson(STORAGE_KEYS.responseIds, state.responseIds);
     saveJson(STORAGE_KEYS.responseIdChains, state.responseIdChains);
+    saveJson(STORAGE_KEYS.cloudDialogsPushedAt, state.cloudDialogsPushedAt);
     saveJson(STORAGE_KEYS.groupChats, state.groupChats);
     saveJson(STORAGE_KEYS.activeGroupChatId, state.activeGroupChatId);
 
@@ -1047,6 +1058,19 @@
     }, 500);
   }
 
+  function renderAfterUserDataSync() {
+    fillProfileUI();
+    renderHeader();
+    refreshChatsView();
+    if (state.view === "chat") renderMessages();
+    if (state.view === "groupchat") {
+      renderGroupChatHeader();
+      renderGroupMessages();
+    }
+    const current = editingCharacter();
+    if (current) renderChatSelectInSettings(current);
+  }
+
   async function pushUserDataToServer(opts = {}) {
     if (!opts.immediate && !userDataSyncReady) return null;
     if (userDataSyncInFlight) {
@@ -1066,7 +1090,8 @@
     }
   }
 
-  async function syncUserDataFromServer() {
+  async function syncUserDataFromServer(opts = {}) {
+    if (opts.periodic && state.generating) return null;
     try {
       const payload = await fetchJson("/api/user-data");
       const localData = collectUserDataForSync();
@@ -1078,13 +1103,86 @@
 
       const serverData = normalizeServerUserData(payload?.data);
       const merged = mergeUserData(localData, serverData);
-      applyUserDataToState(merged);
+      const beforeJson = JSON.stringify(localData);
+      const mergedJson = JSON.stringify(merged);
+      if (mergedJson !== beforeJson) {
+        applyUserDataToState(merged);
+        if (opts.render !== false) renderAfterUserDataSync();
+      }
 
       if (JSON.stringify(merged) !== JSON.stringify(serverData)) {
         await saveUserDataToServer(merged);
       }
+      return merged;
     } catch (err) {
       console.warn("[user-data load]", err);
+      return null;
+    }
+  }
+
+  function startUserDataPulling() {
+    if (userDataPullTimer) return;
+    userDataPullTimer = setInterval(() => {
+      syncUserDataFromServer({ periodic: true }).catch((err) => console.warn("[user-data pull]", err));
+    }, 5000);
+  }
+
+  function countDialogCloudPayload(data) {
+    const src = normalizeServerUserData(data || collectUserDataForSync());
+    let chats = 0;
+    let messages = 0;
+    for (const bucket of Object.values(src.conversations || {})) {
+      for (const chat of (Array.isArray(bucket?.chats) ? bucket.chats : [])) {
+        chats++;
+        for (const msg of (Array.isArray(chat.messages) ? chat.messages : [])) {
+          if (msg && !msg.pending && (msg.role === "user" || msg.role === "assistant")) messages++;
+        }
+      }
+    }
+    const groupChats = src.groupChats.length;
+    return { chats, messages, groupChats };
+  }
+
+  function syncCloudDialogsButton() {
+    const btn = $("#btnPushDialogsCloud");
+    if (!btn) return;
+    btn.hidden = Boolean(state.cloudDialogsPushedAt);
+  }
+
+  async function pushAllDialogsToCloud() {
+    const btn = $("#btnPushDialogsCloud");
+    const note = $("#profileDataNote");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Синхронизация...";
+    }
+    if (note) note.textContent = "Выгружаю диалоги в облако...";
+
+    try {
+      const payload = await fetchJson("/api/user-data");
+      const localData = collectUserDataForSync();
+      const merged = payload?.empty ? localData : mergeUserData(localData, payload?.data);
+      merged.cloudDialogsPushedAt = nowTs();
+      applyUserDataToState(merged);
+      await saveUserDataToServer(merged);
+      userDataSyncReady = true;
+      syncCloudDialogsButton();
+      renderAfterUserDataSync();
+
+      const counts = countDialogCloudPayload(merged);
+      if (note) {
+        note.textContent =
+          `Диалоги выгружены в облако: личных чатов ${counts.chats}, сообщений ${counts.messages}, групповых чатов ${counts.groupChats}.`;
+      }
+      flashStatus("Диалоги синхронизированы с облаком", true);
+    } catch (err) {
+      const msg = String(err?.message || err || "Ошибка синхронизации");
+      if (note) note.textContent = msg;
+      flashStatus(msg, false);
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Диалоги в облако";
+      }
     }
   }
 
@@ -5947,6 +6045,7 @@
 
     const openrouterSection = $("#openrouterSettings");
     if (openrouterSection) openrouterSection.hidden = state.provider !== "openrouter";
+    syncCloudDialogsButton();
   }
 
   function buildSystemPrompt(profile, character, tempCharacters) {
@@ -8949,6 +9048,13 @@
 
     const profileDataNote = $("#profileDataNote");
     const importAllDataFile = $("#importAllDataFile");
+    const btnPushDialogsCloud = $("#btnPushDialogsCloud");
+    if (btnPushDialogsCloud) {
+      btnPushDialogsCloud.addEventListener("click", () => {
+        pushAllDialogsToCloud();
+      });
+    }
+
     const btnExportAllData = $("#btnExportAllData");
     if (btnExportAllData) {
       btnExportAllData.addEventListener("click", () => {
@@ -9414,6 +9520,7 @@
     await syncCharactersFromServer();
     await syncUserDataFromServer();
     userDataSyncReady = true;
+    startUserDataPulling();
     ensureInitialMessage();
     renderHeader();
     renderMessages();

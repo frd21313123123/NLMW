@@ -265,6 +265,7 @@ function defaultUserData() {
     conversations: {},
     responseIds: {},
     responseIdChains: {},
+    cloudDialogsPushedAt: 0,
     groupChats: [],
     activeGroupChatId: "",
     updatedAt: 0
@@ -283,6 +284,7 @@ function normalizeUserDataRecord(raw) {
   out.conversations = normalizePlainObject(src.conversations);
   out.responseIds = normalizePlainObject(src.responseIds);
   out.responseIdChains = normalizePlainObject(src.responseIdChains);
+  out.cloudDialogsPushedAt = Number(src.cloudDialogsPushedAt) || 0;
   out.groupChats = Array.isArray(src.groupChats) ? src.groupChats.filter((x) => x && typeof x === "object") : [];
   out.activeGroupChatId = normalizeString(src.activeGroupChatId).trim();
   out.updatedAt = Number(src.updatedAt) || Date.now();
