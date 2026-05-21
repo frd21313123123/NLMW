@@ -89,6 +89,9 @@
   let userDataSyncTimer = null;
   let userDataSyncInFlight = null;
   let userDataPullTimer = null;
+  let userDataChangeRevision = 0;
+  let applyingServerUserData = false;
+  let mobileStatePanelOpen = false;
 
   function safeJsonParse(text) {
     try {
@@ -107,7 +110,9 @@
 
   function saveJson(key, value) {
     localStorage.setItem(key, JSON.stringify(value));
-    if (SERVER_USER_DATA_KEYS.has(key)) scheduleUserDataSync();
+    if (!SERVER_USER_DATA_KEYS.has(key) || applyingServerUserData) return;
+    userDataChangeRevision++;
+    scheduleUserDataSync();
   }
 
   async function fetchJson(url, options = {}) {
@@ -1019,7 +1024,6 @@
 
     if (normalized.profile) {
       state.profile = normalized.profile;
-      saveJson(STORAGE_KEYS.profile, state.profile);
     }
 
     state.selectedCharacterId = normalized.selectedCharacterId || state.selectedCharacterId;
@@ -1030,13 +1034,19 @@
     state.groupChats = normalized.groupChats;
     state.activeGroupChatId = normalized.activeGroupChatId;
 
-    saveJson(STORAGE_KEYS.selectedCharacterId, state.selectedCharacterId);
-    saveJson(STORAGE_KEYS.conversations, state.conversations);
-    saveJson(STORAGE_KEYS.responseIds, state.responseIds);
-    saveJson(STORAGE_KEYS.responseIdChains, state.responseIdChains);
-    saveJson(STORAGE_KEYS.cloudDialogsPushedAt, state.cloudDialogsPushedAt);
-    saveJson(STORAGE_KEYS.groupChats, state.groupChats);
-    saveJson(STORAGE_KEYS.activeGroupChatId, state.activeGroupChatId);
+    applyingServerUserData = true;
+    try {
+      if (normalized.profile) saveJson(STORAGE_KEYS.profile, state.profile);
+      saveJson(STORAGE_KEYS.selectedCharacterId, state.selectedCharacterId);
+      saveJson(STORAGE_KEYS.conversations, state.conversations);
+      saveJson(STORAGE_KEYS.responseIds, state.responseIds);
+      saveJson(STORAGE_KEYS.responseIdChains, state.responseIdChains);
+      saveJson(STORAGE_KEYS.cloudDialogsPushedAt, state.cloudDialogsPushedAt);
+      saveJson(STORAGE_KEYS.groupChats, state.groupChats);
+      saveJson(STORAGE_KEYS.activeGroupChatId, state.activeGroupChatId);
+    } finally {
+      applyingServerUserData = false;
+    }
 
     ensureSeed();
     loadGroupChats();
@@ -1073,6 +1083,10 @@
 
   async function pushUserDataToServer(opts = {}) {
     if (!opts.immediate && !userDataSyncReady) return null;
+    if (opts.immediate && userDataSyncTimer) {
+      clearTimeout(userDataSyncTimer);
+      userDataSyncTimer = null;
+    }
     if (userDataSyncInFlight) {
       try {
         await userDataSyncInFlight;
@@ -1092,8 +1106,18 @@
 
   async function syncUserDataFromServer(opts = {}) {
     if (opts.periodic && state.generating) return null;
+    if (opts.periodic && (userDataSyncTimer || userDataSyncInFlight)) {
+      await pushUserDataToServer({ immediate: true });
+      return null;
+    }
+    const startedRevision = userDataChangeRevision;
     try {
       const payload = await fetchJson("/api/user-data");
+      if (userDataChangeRevision !== startedRevision) {
+        await pushUserDataToServer({ immediate: true });
+        return null;
+      }
+
       const localData = collectUserDataForSync();
 
       if (payload?.empty) {
@@ -2475,6 +2499,7 @@
         sourceMessageId: message.id
       });
       refreshOpenSpeakerStateModal();
+      refreshChatStatePanel();
     } catch (err) {
       console.warn("[speaker state]", err);
     }
@@ -2497,6 +2522,7 @@
         sourceMessageId: message.id
       });
       refreshOpenSpeakerStateModal();
+      refreshChatStatePanel();
     } catch (err) {
       console.warn("[group speaker state]", err);
     }
@@ -3524,6 +3550,7 @@
 
     const app = $("#app");
     if (app) app.dataset.view = v;
+    if (v !== "chat") setMobileStatePanelOpen(false);
   }
 
   function formatTime(ts) {
@@ -4338,6 +4365,7 @@
 
     updateChatActionButtons();
     renderChatRightPanel(ch);
+    renderChatStatePanel(ch);
   }
 
   function renderChatRightPanel(ch) {
@@ -4566,6 +4594,187 @@
     if (modal && !modal.hidden) renderSpeakerStateModal();
   }
 
+  function makeSpeakerStateSection(label, content) {
+    const section = document.createElement("section");
+    section.className = "speakerState__section";
+
+    const labelEl = document.createElement("div");
+    labelEl.className = "speakerState__label";
+    labelEl.textContent = label;
+    section.appendChild(labelEl);
+
+    if (content instanceof Node) {
+      section.appendChild(content);
+    } else {
+      const valueEl = document.createElement("div");
+      valueEl.className = "speakerState__value";
+      valueEl.textContent = String(content || "");
+      section.appendChild(valueEl);
+    }
+
+    return section;
+  }
+
+  function renderChatStatePanelInto(panel, ch, opts = {}) {
+    if (!panel) return;
+    panel.innerHTML = "";
+    panel.hidden = Boolean(opts.mobile && !mobileStatePanelOpen);
+    if (!ch) {
+      if (opts.mobile) updateMobileStateToggleButton();
+      return;
+    }
+
+    const resolved = resolveSpeakerStateContext({
+      scope: "personal",
+      characterId: ch.id,
+      speakerType: "main",
+      speakerId: ch.id,
+      speakerName: ch.name
+    });
+    if (!resolved) {
+      if (opts.mobile) updateMobileStateToggleButton();
+      return;
+    }
+
+    const s = normalizeSpeakerState(resolved.stateValue);
+
+    const header = document.createElement("div");
+    header.className = "chatStatePanel__header";
+
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "speakerState__head chatStatePanel__head";
+    head.title = "Открыть состояние персонажа";
+    head.addEventListener("click", openActiveCharacterStateModal);
+
+    const avatar = document.createElement("img");
+    avatar.className = "avatar speakerState__avatar";
+    setImg(avatar, resolved.avatar, resolved.name);
+    head.appendChild(avatar);
+
+    const headText = document.createElement("div");
+    headText.className = "speakerState__headText";
+    const title = document.createElement("div");
+    title.className = "chatStatePanel__title";
+    title.textContent = resolved.name;
+    const updated = document.createElement("div");
+    updated.className = "speakerState__updated";
+    updated.textContent = formatStateUpdatedAt(s.updatedAt);
+    headText.appendChild(title);
+    headText.appendChild(updated);
+    head.appendChild(headText);
+    header.appendChild(head);
+    panel.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "speakerState speakerState--embedded";
+
+    const empty = document.createElement("div");
+    empty.className = "speakerState__empty";
+    empty.textContent = "Состояние появится после следующего ответа персонажа.";
+    empty.hidden = stateHasVisibleData(s);
+    body.appendChild(empty);
+
+    body.appendChild(makeSpeakerStateSection("Настроение", s.mood || "Пока не ясно"));
+
+    const uncertainty = document.createElement("div");
+    const uncertaintyRow = document.createElement("div");
+    uncertaintyRow.className = "speakerState__row";
+    const uncertaintyLabel = document.createElement("div");
+    uncertaintyLabel.className = "speakerState__label";
+    uncertaintyLabel.textContent = "Неуверенность";
+    const uncertaintyValue = document.createElement("div");
+    uncertaintyValue.className = "speakerState__percent";
+    uncertaintyValue.textContent = `${s.uncertainty}%`;
+    uncertaintyRow.appendChild(uncertaintyLabel);
+    uncertaintyRow.appendChild(uncertaintyValue);
+    const uncertaintyTrack = document.createElement("div");
+    uncertaintyTrack.className = "speakerState__track";
+    const uncertaintyBar = document.createElement("div");
+    uncertaintyBar.className = "speakerState__bar";
+    uncertaintyBar.style.width = `${s.uncertainty}%`;
+    uncertaintyTrack.appendChild(uncertaintyBar);
+    uncertainty.appendChild(uncertaintyRow);
+    uncertainty.appendChild(uncertaintyTrack);
+    const uncertaintySection = document.createElement("section");
+    uncertaintySection.className = "speakerState__section";
+    uncertaintySection.appendChild(uncertainty);
+    body.appendChild(uncertaintySection);
+
+    const emotions = document.createElement("div");
+    emotions.className = "speakerState__emotions";
+    renderEmotionList(emotions, s.emotions);
+    body.appendChild(makeSpeakerStateSection("Эмоции", emotions));
+
+    const sensations = document.createElement("div");
+    sensations.className = "speakerState__chips";
+    renderStateChipList(sensations, s.sensations, "Пока нет данных");
+    body.appendChild(makeSpeakerStateSection("Ощущения", sensations));
+
+    body.appendChild(makeSpeakerStateSection("Отношение", s.attitude || "Пока нет данных"));
+    body.appendChild(makeSpeakerStateSection("Намерение", s.intent || "Пока нет данных"));
+    body.appendChild(makeSpeakerStateSection("Кратко", s.summary || "Состояние появится после следующей генерации ответа."));
+    panel.appendChild(body);
+
+    const footer = document.createElement("div");
+    footer.className = "chatStatePanel__footer";
+    const editBtn = document.createElement("button");
+    editBtn.className = "btn btn--ghost";
+    editBtn.type = "button";
+    editBtn.textContent = "Редактировать";
+    editBtn.addEventListener("click", () => {
+      state.editingCharacterId = ch.id;
+      openModal();
+      fillCharacterForm();
+      renderCharacterList();
+      modalWindow()?.classList.add("modal__window--editing");
+    });
+    footer.appendChild(editBtn);
+
+    if (opts.mobile) {
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "btn btn--accent";
+      closeBtn.type = "button";
+      closeBtn.textContent = "Скрыть";
+      closeBtn.addEventListener("click", () => setMobileStatePanelOpen(false));
+      footer.appendChild(closeBtn);
+    }
+
+    panel.appendChild(footer);
+    if (opts.mobile) updateMobileStateToggleButton();
+  }
+
+  function renderChatStatePanel(ch) {
+    renderChatStatePanelInto($("#chatStatePanel"), ch);
+    renderChatStatePanelInto($("#chatMobileStatePanel"), ch, { mobile: true });
+  }
+
+  function refreshChatStatePanel() {
+    if (state.view === "chat") renderChatStatePanel(activeCharacter());
+  }
+
+  function updateMobileStateToggleButton() {
+    const btn = $("#btnToggleMobileState");
+    if (!btn) return;
+    btn.classList.toggle("composer__stateToggle--active", mobileStatePanelOpen);
+    btn.setAttribute("aria-expanded", mobileStatePanelOpen ? "true" : "false");
+    btn.title = mobileStatePanelOpen ? "Скрыть состояние персонажа" : "Показать состояние персонажа";
+  }
+
+  function setMobileStatePanelOpen(open) {
+    mobileStatePanelOpen = Boolean(open);
+    const app = $("#app");
+    if (app) app.classList.toggle("app--mobileStateOpen", mobileStatePanelOpen);
+    const panel = $("#chatMobileStatePanel");
+    if (panel) panel.hidden = !mobileStatePanelOpen;
+    updateMobileStateToggleButton();
+    if (mobileStatePanelOpen) renderChatStatePanel(activeCharacter());
+  }
+
+  function toggleMobileStatePanel() {
+    setMobileStatePanelOpen(!mobileStatePanelOpen);
+  }
+
   function openSpeakerStateModal(ctx) {
     speakerStateModalContext = ctx;
     const modal = $("#speakerStateModal");
@@ -4619,6 +4828,7 @@
     const list = $("#messages");
     if (!list) return;
 
+    renderChatStatePanel(ch);
     renderNpcStrip(ch.id);
 
     const history = chatHistoryFor(ch.id);
@@ -8300,6 +8510,12 @@
     if (btnOpenCharacters) btnOpenCharacters.addEventListener("click", () => {
       openActiveCharacterStateModal();
     });
+
+    const btnToggleMobileState = $("#btnToggleMobileState");
+    if (btnToggleMobileState) {
+      btnToggleMobileState.addEventListener("click", toggleMobileStatePanel);
+      updateMobileStateToggleButton();
+    }
 
     const tabChats = $("#tabChats");
     const tabPlus = $("#tabPlus");

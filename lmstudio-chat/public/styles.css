@@ -2732,6 +2732,80 @@ body {
 
 /* ===== CHAT RIGHT PANEL (desktop only) ===== */
 
+.chat__statePanel {
+  display: none;
+}
+
+.chat__mobileStatePanel {
+  display: none;
+}
+
+.chat__mobileStatePanel[hidden] {
+  display: none !important;
+}
+
+.composer__stateToggle {
+  display: none;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: var(--surface2);
+  cursor: pointer;
+}
+
+.composer__stateToggle svg {
+  width: 18px;
+  height: 18px;
+}
+
+.chatStatePanel__header {
+  flex: 0 0 auto;
+  padding: 16px 14px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chatStatePanel__head {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chatStatePanel__title {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.speakerState--embedded {
+  padding: 12px 14px 4px;
+}
+
+.chatStatePanel__footer {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.chatStatePanel__footer .btn {
+  min-height: 38px;
+  padding-inline: 14px;
+}
+
 .chat__rightPanel {
   display: none;
 }
@@ -3477,6 +3551,38 @@ body {
     color: #d7d0ff;
   }
 
+  #viewChat .chat__statePanel {
+    display: none;
+  }
+
+  @media (min-width: 1280px) {
+    #viewChat .chat {
+      grid-template-columns: 304px minmax(0, 1fr) 316px;
+    }
+
+    #viewChat .chat__statePanel {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      border-right: 1px solid rgba(255, 255, 255, 0.06);
+      background: #151517;
+    }
+
+    #viewChat .chat__statePanel .speakerState__section {
+      padding: 11px 0;
+    }
+
+    #viewChat .chat__statePanel .speakerState__label {
+      font-size: 12px;
+    }
+
+    #viewChat .chat__statePanel .speakerState__value {
+      font-size: 14px;
+    }
+  }
+
   .chatDisclaimer {
     margin-top: 0;
     margin-bottom: 28px;
@@ -3916,6 +4022,45 @@ body {
     padding: calc(82px + env(safe-area-inset-top)) 14px 138px;
   }
 
+  #app[data-view="chat"].app--mobileStateOpen .chat__messages {
+    padding-bottom: 14px;
+  }
+
+  #app[data-view="chat"] .chat__mobileStatePanel:not([hidden]) {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    max-height: min(42vh, 360px);
+    margin: 0 10px calc(76px + max(10px, env(safe-area-inset-bottom)));
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    background: rgba(18, 18, 20, 0.92);
+    box-shadow: 0 -16px 38px rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(16px);
+  }
+
+  #app[data-view="chat"] .chat__mobileStatePanel .chatStatePanel__header {
+    padding: 12px 12px 10px;
+  }
+
+  #app[data-view="chat"] .chat__mobileStatePanel .speakerState--embedded {
+    padding: 10px 12px 2px;
+  }
+
+  #app[data-view="chat"] .chat__mobileStatePanel .speakerState__section {
+    padding: 9px 0;
+  }
+
+  #app[data-view="chat"] .chat__mobileStatePanel .speakerState__empty {
+    margin-bottom: 8px;
+    padding: 9px 10px;
+  }
+
+  #app[data-view="chat"] .chat__mobileStatePanel .chatStatePanel__footer {
+    padding: 10px 12px 12px;
+  }
+
   #app[data-view="chat"] .chatTitle {
     gap: 8px;
   }
@@ -4031,13 +4176,28 @@ body {
   }
 
   #app[data-view="chat"] .composer__row {
-    grid-template-columns: 1fr 38px 44px;
+    grid-template-columns: 38px 1fr 38px 44px;
     align-items: center;
     gap: 8px;
     padding: 8px;
     border-radius: 16px;
     background: rgba(127, 103, 84, 0.55);
     backdrop-filter: blur(14px);
+  }
+
+  #app[data-view="chat"] .composer__stateToggle {
+    display: flex;
+    width: 38px;
+    height: 38px;
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(35, 26, 17, 0.68);
+    color: rgba(255, 255, 255, 0.72);
+  }
+
+  #app[data-view="chat"] .composer__stateToggle--active {
+    border-color: rgba(246, 176, 30, 0.38);
+    background: rgba(246, 176, 30, 0.22);
+    color: #fff;
   }
 
   #app[data-view="chat"] .composer__input {

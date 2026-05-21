@@ -220,12 +220,19 @@
         <!-- Active chat -->
         <section class="view" id="viewChat">
           <div class="chat" id="chatPanel">
+            <aside class="chat__statePanel" id="chatStatePanel" aria-label="Состояние персонажа"></aside>
             <div class="chat__center">
               <div class="chat__messages" id="messages" role="log" aria-live="polite"></div>
+              <section class="chat__mobileStatePanel" id="chatMobileStatePanel" aria-label="Состояние персонажа" hidden></section>
 
               <div class="npcStrip" id="npcStrip" hidden></div>
               <form class="chat__composer" id="composerForm" autocomplete="off">
                 <div class="composer__row">
+                  <button class="composer__stateToggle" id="btnToggleMobileState" type="button" aria-label="Состояние персонажа" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/>
+                    </svg>
+                  </button>
                   <textarea class="composer__input" id="userInput" rows="1" placeholder="Сообщение..."></textarea>
                   <button class="composer__utility" id="btnPromptQuick" type="button" aria-label="Дополнительно">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
