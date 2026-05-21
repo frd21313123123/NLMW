@@ -20,6 +20,7 @@ const OPENROUTER_BASE_URL = String(process.env.OPENROUTER_BASE_URL || "https://o
 const POLYBUZZ_COOKIE = process.env.POLYBUZZ_COOKIE ? String(process.env.POLYBUZZ_COOKIE) : "";
 const DATA_DIR = path.resolve(process.env.APP_DATA_DIR || path.join(__dirname, "data"));
 const AUTH_FILE = path.join(DATA_DIR, "auth.json");
+const USER_DATA_DIR = path.join(DATA_DIR, "users");
 const SESSION_COOKIE_NAME = "nlmw_session";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_SECRET = String(process.env.SESSION_SECRET || "");
@@ -242,6 +243,67 @@ function requireAdmin(req, res, next) {
   });
 }
 
+function ensureUserDataDir() {
+  ensureDataDir();
+  if (!fs.existsSync(USER_DATA_DIR)) fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+}
+
+function safeUserDataId(userId) {
+  return String(userId || "").replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
+function userDataFileFor(userId) {
+  const safeId = safeUserDataId(userId);
+  if (!safeId) throw new Error("Missing user id");
+  return path.join(USER_DATA_DIR, `${safeId}.json`);
+}
+
+function defaultUserData() {
+  return {
+    profile: null,
+    selectedCharacterId: "",
+    conversations: {},
+    responseIds: {},
+    responseIdChains: {},
+    groupChats: [],
+    activeGroupChatId: "",
+    updatedAt: 0
+  };
+}
+
+function normalizePlainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function normalizeUserDataRecord(raw) {
+  const src = normalizePlainObject(raw);
+  const out = defaultUserData();
+  out.profile = src.profile && typeof src.profile === "object" && !Array.isArray(src.profile) ? src.profile : null;
+  out.selectedCharacterId = normalizeString(src.selectedCharacterId).trim();
+  out.conversations = normalizePlainObject(src.conversations);
+  out.responseIds = normalizePlainObject(src.responseIds);
+  out.responseIdChains = normalizePlainObject(src.responseIdChains);
+  out.groupChats = Array.isArray(src.groupChats) ? src.groupChats.filter((x) => x && typeof x === "object") : [];
+  out.activeGroupChatId = normalizeString(src.activeGroupChatId).trim();
+  out.updatedAt = Number(src.updatedAt) || Date.now();
+  return out;
+}
+
+function readUserData(userId) {
+  ensureUserDataDir();
+  const file = userDataFileFor(userId);
+  if (!fs.existsSync(file)) return { empty: true, data: defaultUserData() };
+  const data = normalizeUserDataRecord(readJsonFile(file, defaultUserData()));
+  return { empty: false, data };
+}
+
+function writeUserData(userId, data) {
+  ensureUserDataDir();
+  const normalized = normalizeUserDataRecord({ ...data, updatedAt: Date.now() });
+  writeJsonFile(userDataFileFor(userId), normalized);
+  return normalized;
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
@@ -416,6 +478,28 @@ app.use("/api", (req, res, next) => {
     return;
   }
   requireAuth(req, res, next);
+});
+
+app.get("/api/user-data", (req, res) => {
+  try {
+    const result = readUserData(req.user.id);
+    res.json({ ok: true, empty: result.empty, data: result.data });
+  } catch (err) {
+    console.error("[user-data get]", err);
+    res.status(500).json({ error: "Не удалось загрузить данные пользователя" });
+  }
+});
+
+app.post("/api/user-data", (req, res) => {
+  try {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const data = body.data && typeof body.data === "object" ? body.data : body;
+    const saved = writeUserData(req.user.id, data);
+    res.json({ ok: true, data: saved });
+  } catch (err) {
+    console.error("[user-data save]", err);
+    res.status(500).json({ error: "Не удалось сохранить данные пользователя" });
+  }
 });
 
 app.get("/api/video/preview", async (req, res) => {

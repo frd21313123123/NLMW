@@ -19,6 +19,16 @@
     polybuzzSettings: "nlmw.polybuzzSettings"
   };
 
+  const SERVER_USER_DATA_KEYS = new Set([
+    STORAGE_KEYS.profile,
+    STORAGE_KEYS.selectedCharacterId,
+    STORAGE_KEYS.conversations,
+    STORAGE_KEYS.responseIds,
+    STORAGE_KEYS.responseIdChains,
+    STORAGE_KEYS.groupChats,
+    STORAGE_KEYS.activeGroupChatId
+  ]);
+
   const DIALOGUE_STYLES = [
     { id: "natural", label: "Естественно", prompt: "Говори живо и естественно. Без канцелярита." },
     { id: "friendly", label: "Дружелюбно", prompt: "Дружелюбный тон, поддерживай и уточняй мягко." },
@@ -72,6 +82,9 @@
   let speakerStateModalContext = null;
   let appBootstrapped = false;
   let syncCharactersTimer = null;
+  let userDataSyncReady = false;
+  let userDataSyncTimer = null;
+  let userDataSyncInFlight = null;
 
   function safeJsonParse(text) {
     try {
@@ -90,6 +103,7 @@
 
   function saveJson(key, value) {
     localStorage.setItem(key, JSON.stringify(value));
+    if (SERVER_USER_DATA_KEYS.has(key)) scheduleUserDataSync();
   }
 
   async function fetchJson(url, options = {}) {
@@ -862,7 +876,216 @@
       fillCharacterForm();
     }
 
-    return replaceServerCharacters(state.characters);
+    const result = await replaceServerCharacters(state.characters);
+    await pushUserDataToServer({ immediate: true });
+    return result;
+  }
+
+  function collectUserDataForSync() {
+    return {
+      profile: cloneForExport(normalizeProfileRecord(state.profile), defaultProfile()),
+      selectedCharacterId: String(state.selectedCharacterId || ""),
+      conversations: cloneForExport(state.conversations && typeof state.conversations === "object" ? state.conversations : {}, {}),
+      responseIds: cloneForExport(state.responseIds && typeof state.responseIds === "object" ? state.responseIds : {}, {}),
+      responseIdChains: cloneForExport(
+        state.responseIdChains && typeof state.responseIdChains === "object" ? state.responseIdChains : {},
+        {}
+      ),
+      groupChats: cloneForExport(Array.isArray(state.groupChats) ? state.groupChats.map(normalizeGroupChat) : [], []),
+      activeGroupChatId: String(state.activeGroupChatId || ""),
+      updatedAt: nowTs()
+    };
+  }
+
+  function normalizeServerUserData(raw) {
+    const src = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    return {
+      profile: src.profile && typeof src.profile === "object" && !Array.isArray(src.profile)
+        ? normalizeProfileRecord(src.profile)
+        : null,
+      selectedCharacterId: String(src.selectedCharacterId || ""),
+      conversations: src.conversations && typeof src.conversations === "object" && !Array.isArray(src.conversations)
+        ? src.conversations
+        : {},
+      responseIds: src.responseIds && typeof src.responseIds === "object" && !Array.isArray(src.responseIds)
+        ? src.responseIds
+        : {},
+      responseIdChains: src.responseIdChains && typeof src.responseIdChains === "object" && !Array.isArray(src.responseIdChains)
+        ? src.responseIdChains
+        : {},
+      groupChats: Array.isArray(src.groupChats) ? src.groupChats.map(normalizeGroupChat) : [],
+      activeGroupChatId: String(src.activeGroupChatId || ""),
+      updatedAt: typeof src.updatedAt === "number" && Number.isFinite(src.updatedAt) ? src.updatedAt : 0
+    };
+  }
+
+  function chatHasSharedContent(chat) {
+    const messages = Array.isArray(chat?.messages) ? chat.messages.filter((m) => m && !m.pending) : [];
+    const visibleMessages = messages.filter((m) => m.role === "user" || m.role === "assistant");
+    const hasUserMessage = visibleMessages.some((m) => m.role === "user");
+    const hasSceneData =
+      (Array.isArray(chat?.tempCharacters) && chat.tempCharacters.length > 0) ||
+      (chat?.speakerStates && typeof chat.speakerStates === "object" && Object.keys(chat.speakerStates).length > 0);
+    return hasUserMessage || visibleMessages.length > 1 || hasSceneData;
+  }
+
+  function newerChat(a, b) {
+    const at = Number(a?.updatedAt || a?.messages?.[a.messages.length - 1]?.ts || a?.createdAt || 0);
+    const bt = Number(b?.updatedAt || b?.messages?.[b.messages.length - 1]?.ts || b?.createdAt || 0);
+    return at >= bt ? a : b;
+  }
+
+  function mergeConversationMaps(localConversations, serverConversations) {
+    const merged = {};
+    const ids = new Set([
+      ...Object.keys(localConversations || {}),
+      ...Object.keys(serverConversations || {})
+    ]);
+
+    for (const characterId of ids) {
+      const localBucket = normalizeConversationBucket(characterId, localConversations?.[characterId]);
+      const serverBucket = normalizeConversationBucket(characterId, serverConversations?.[characterId]);
+      const byId = new Map();
+
+      for (const chat of serverBucket.chats || []) {
+        if (chat?.id) byId.set(chat.id, chat);
+      }
+
+      for (const chat of localBucket.chats || []) {
+        if (!chat?.id) continue;
+        if (byId.has(chat.id)) byId.set(chat.id, newerChat(chat, byId.get(chat.id)));
+        else if (chatHasSharedContent(chat)) byId.set(chat.id, chat);
+      }
+
+      const chats = Array.from(byId.values()).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      if (chats.length === 0) continue;
+
+      let activeChatId = serverBucket.activeChatId || localBucket.activeChatId || chats[0].id;
+      if (!chats.some((chat) => chat.id === activeChatId)) activeChatId = chats[0].id;
+      merged[characterId] = { activeChatId, chats };
+    }
+
+    return merged;
+  }
+
+  function mergeGroupChats(localGroupChats, serverGroupChats) {
+    const byId = new Map();
+    for (const chat of Array.isArray(serverGroupChats) ? serverGroupChats : []) {
+      const normalized = normalizeGroupChat(chat);
+      if (normalized.id) byId.set(normalized.id, normalized);
+    }
+    for (const chat of Array.isArray(localGroupChats) ? localGroupChats : []) {
+      const normalized = normalizeGroupChat(chat);
+      if (!normalized.id || !Array.isArray(normalized.messages) || normalized.messages.length === 0) continue;
+      const existing = byId.get(normalized.id);
+      byId.set(normalized.id, existing ? newerChat(normalized, existing) : normalized);
+    }
+    return Array.from(byId.values()).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  }
+
+  function mergeUserData(localData, serverData) {
+    const local = normalizeServerUserData(localData);
+    const server = normalizeServerUserData(serverData);
+    const groupChats = mergeGroupChats(local.groupChats, server.groupChats);
+    const activeGroupChatId = groupChats.some((g) => g.id === server.activeGroupChatId)
+      ? server.activeGroupChatId
+      : groupChats.some((g) => g.id === local.activeGroupChatId)
+        ? local.activeGroupChatId
+        : groupChats[0]?.id || "";
+
+    return {
+      profile: server.profile || local.profile || defaultProfile(),
+      selectedCharacterId: server.selectedCharacterId || local.selectedCharacterId,
+      conversations: mergeConversationMaps(local.conversations, server.conversations),
+      responseIds: { ...local.responseIds, ...server.responseIds },
+      responseIdChains: { ...local.responseIdChains, ...server.responseIdChains },
+      groupChats,
+      activeGroupChatId,
+      updatedAt: Math.max(local.updatedAt || 0, server.updatedAt || 0, nowTs())
+    };
+  }
+
+  function applyUserDataToState(data) {
+    const normalized = normalizeServerUserData(data);
+
+    if (normalized.profile) {
+      state.profile = normalized.profile;
+      saveJson(STORAGE_KEYS.profile, state.profile);
+    }
+
+    state.selectedCharacterId = normalized.selectedCharacterId || state.selectedCharacterId;
+    state.conversations = normalized.conversations;
+    state.responseIds = normalized.responseIds;
+    state.responseIdChains = normalized.responseIdChains;
+    state.groupChats = normalized.groupChats;
+    state.activeGroupChatId = normalized.activeGroupChatId;
+
+    saveJson(STORAGE_KEYS.selectedCharacterId, state.selectedCharacterId);
+    saveJson(STORAGE_KEYS.conversations, state.conversations);
+    saveJson(STORAGE_KEYS.responseIds, state.responseIds);
+    saveJson(STORAGE_KEYS.responseIdChains, state.responseIdChains);
+    saveJson(STORAGE_KEYS.groupChats, state.groupChats);
+    saveJson(STORAGE_KEYS.activeGroupChatId, state.activeGroupChatId);
+
+    ensureSeed();
+    loadGroupChats();
+  }
+
+  async function saveUserDataToServer(data) {
+    return fetchJson("/api/user-data", {
+      method: "POST",
+      body: JSON.stringify({ data: normalizeServerUserData(data) })
+    });
+  }
+
+  function scheduleUserDataSync() {
+    if (!userDataSyncReady) return;
+    if (userDataSyncTimer) clearTimeout(userDataSyncTimer);
+    userDataSyncTimer = setTimeout(() => {
+      userDataSyncTimer = null;
+      pushUserDataToServer().catch((err) => console.warn("[user-data sync]", err));
+    }, 500);
+  }
+
+  async function pushUserDataToServer(opts = {}) {
+    if (!opts.immediate && !userDataSyncReady) return null;
+    if (userDataSyncInFlight) {
+      try {
+        await userDataSyncInFlight;
+      } catch {
+        // The next save will retry.
+      }
+    }
+
+    const payload = collectUserDataForSync();
+    userDataSyncInFlight = saveUserDataToServer(payload);
+    try {
+      return await userDataSyncInFlight;
+    } finally {
+      userDataSyncInFlight = null;
+    }
+  }
+
+  async function syncUserDataFromServer() {
+    try {
+      const payload = await fetchJson("/api/user-data");
+      const localData = collectUserDataForSync();
+
+      if (payload?.empty) {
+        await saveUserDataToServer(localData);
+        return;
+      }
+
+      const serverData = normalizeServerUserData(payload?.data);
+      const merged = mergeUserData(localData, serverData);
+      applyUserDataToState(merged);
+
+      if (JSON.stringify(merged) !== JSON.stringify(serverData)) {
+        await saveUserDataToServer(merged);
+      }
+    } catch (err) {
+      console.warn("[user-data load]", err);
+    }
   }
 
   function parsePngTextChunks(arrayBuffer) {
@@ -9189,6 +9412,8 @@
     wireUI();
     fillProfileUI();
     await syncCharactersFromServer();
+    await syncUserDataFromServer();
+    userDataSyncReady = true;
     ensureInitialMessage();
     renderHeader();
     renderMessages();

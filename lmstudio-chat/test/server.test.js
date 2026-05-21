@@ -219,6 +219,59 @@ test('POST /api/characters/bulk replace overwrites server character storage', as
   }
 });
 
+test('user data is stored on server and isolated per account', async () => {
+  const { server, baseUrl } = startTestServer();
+
+  try {
+    const cookieA = await createSessionCookie(baseUrl, `data-a-${Date.now()}@example.com`);
+    const cookieB = await createSessionCookie(baseUrl, `data-b-${Date.now()}@example.com`);
+    const data = {
+      profile: { name: 'Desktop User', gender: 'unspecified', avatar: '' },
+      selectedCharacterId: 'char-1',
+      conversations: {
+        'char-1': {
+          activeChatId: 'chat-1',
+          chats: [
+            {
+              id: 'chat-1',
+              title: 'Phone sync',
+              createdAt: 10,
+              updatedAt: 20,
+              messages: [{ id: 'msg-1', role: 'user', content: 'hello from desktop', ts: 20 }]
+            }
+          ]
+        }
+      },
+      responseIds: { 'chat-1': 'resp-1' },
+      responseIdChains: { 'chat-1': ['resp-1'] },
+      groupChats: [],
+      activeGroupChatId: ''
+    };
+
+    const saveRes = await fetch(`${baseUrl}/api/user-data`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookieA },
+      body: JSON.stringify({ data })
+    });
+    assert.equal(saveRes.status, 200);
+
+    const loadA = await fetch(`${baseUrl}/api/user-data`, { headers: { Cookie: cookieA } });
+    assert.equal(loadA.status, 200);
+    const bodyA = await loadA.json();
+    assert.equal(bodyA.empty, false);
+    assert.equal(bodyA.data.conversations['char-1'].chats[0].messages[0].content, 'hello from desktop');
+    assert.equal(bodyA.data.responseIdChains['chat-1'][0], 'resp-1');
+
+    const loadB = await fetch(`${baseUrl}/api/user-data`, { headers: { Cookie: cookieB } });
+    assert.equal(loadB.status, 200);
+    const bodyB = await loadB.json();
+    assert.equal(bodyB.empty, true);
+    assert.deepEqual(bodyB.data.conversations, {});
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
 test('GET /api/auth/me and protected APIs reject anonymous requests', async () => {
   const { server, baseUrl } = startTestServer();
 
@@ -228,6 +281,9 @@ test('GET /api/auth/me and protected APIs reject anonymous requests', async () =
 
     const charsRes = await fetch(`${baseUrl}/api/characters`);
     assert.equal(charsRes.status, 401);
+
+    const dataRes = await fetch(`${baseUrl}/api/user-data`);
+    assert.equal(dataRes.status, 401);
   } finally {
     await closeTestServer(server);
   }
