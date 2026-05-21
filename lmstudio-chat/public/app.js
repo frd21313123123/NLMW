@@ -84,11 +84,9 @@
 
   let speakerStateModalContext = null;
   let appBootstrapped = false;
-  let syncCharactersTimer = null;
   let userDataSyncReady = false;
   let userDataSyncTimer = null;
   let userDataSyncInFlight = null;
-  let userDataPullTimer = null;
   let userDataChangeRevision = 0;
   let applyingServerUserData = false;
   let mobileStatePanelOpen = false;
@@ -1144,11 +1142,110 @@
     }
   }
 
-  function startUserDataPulling() {
-    if (userDataPullTimer) return;
-    userDataPullTimer = setInterval(() => {
-      syncUserDataFromServer({ periodic: true }).catch((err) => console.warn("[user-data pull]", err));
-    }, 5000);
+  function createUserDataSyncError(message) {
+    const err = new Error(message || "Данные чата не синхронизированы с сервером. Обновите страницу или отправьте сообщение повторно.");
+    err.code = "USER_DATA_SYNC_ERROR";
+    return err;
+  }
+
+  function isUserDataSyncError(err) {
+    return err && err.code === "USER_DATA_SYNC_ERROR";
+  }
+
+  function showUserDataSyncError(err, hintEl) {
+    const msg = String(err?.message || "Данные чата не синхронизированы с сервером.");
+    if (hintEl) hintEl.textContent = msg;
+    flashStatus(msg, false, 4500);
+  }
+
+  function targetUserDataSnapshot(data, target) {
+    const normalized = normalizeServerUserData(data);
+    if (!target || target.type === "personal") {
+      const characterId = String(target?.characterId || "");
+      const chatId = String(target?.chatId || "");
+      const bucket = normalizeConversationBucket(characterId, normalized.conversations?.[characterId]);
+      const chat = bucket.chats.find((x) => x?.id === chatId) || null;
+      return {
+        type: "personal",
+        selectedCharacterId: normalized.selectedCharacterId,
+        characterId,
+        activeChatId: bucket.activeChatId,
+        chat
+      };
+    }
+
+    if (target.type === "group") {
+      const groupChatId = String(target.groupChatId || "");
+      const groupChat = normalized.groupChats.find((x) => x?.id === groupChatId) || null;
+      return {
+        type: "group",
+        activeGroupChatId: normalized.activeGroupChatId,
+        groupChatId,
+        groupChat
+      };
+    }
+
+    return { type: "unknown" };
+  }
+
+  async function requireUserDataFreshForSend(target) {
+    if (userDataSyncTimer || userDataSyncInFlight) {
+      try {
+        await pushUserDataToServer({ immediate: true });
+      } catch {
+        throw createUserDataSyncError("Не удалось сохранить предыдущие изменения чата на сервере. Данные не синхронизированы.");
+      }
+    }
+
+    const localData = collectUserDataForSync();
+    const localTargetJson = JSON.stringify(targetUserDataSnapshot(localData, target));
+
+    let payload = null;
+    try {
+      payload = await fetchJson("/api/user-data");
+    } catch {
+      throw createUserDataSyncError("Не удалось проверить данные чата на сервере. Сообщение не отправлено, чтобы не потерять историю.");
+    }
+
+    if (payload?.empty) {
+      try {
+        await saveUserDataToServer(localData);
+      } catch {
+        throw createUserDataSyncError("Не удалось сохранить текущий чат на сервере. Данные не синхронизированы.");
+      }
+      return;
+    }
+
+    const serverData = normalizeServerUserData(payload?.data);
+    const merged = mergeUserData(localData, serverData);
+    const mergedTargetJson = JSON.stringify(targetUserDataSnapshot(merged, target));
+    const localJson = JSON.stringify(localData);
+    const mergedJson = JSON.stringify(merged);
+
+    if (mergedJson !== localJson) {
+      applyUserDataToState(merged);
+      renderAfterUserDataSync();
+    }
+
+    if (mergedJson !== JSON.stringify(serverData)) {
+      try {
+        await saveUserDataToServer(merged);
+      } catch {
+        throw createUserDataSyncError("Не удалось записать объединенные данные чата на сервер. Данные не синхронизированы.");
+      }
+    }
+
+    if (mergedTargetJson !== localTargetJson) {
+      throw createUserDataSyncError("Данные этого чата отличались от серверных. Я обновил чат с сервера, проверьте последние сообщения и отправьте текст ещё раз.");
+    }
+  }
+
+  async function saveUserDataAfterChatChange() {
+    try {
+      await pushUserDataToServer({ immediate: true });
+    } catch {
+      throw createUserDataSyncError("Сообщение не удалось сохранить на сервере. Данные чата не синхронизированы.");
+    }
   }
 
   function countDialogCloudPayload(data) {
@@ -2276,6 +2373,23 @@
     else messages.push({ role, content: text });
   }
 
+  function escapeRegExp(value) {
+    return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function normalizeMatchText(value) {
+    return String(value || "").toLowerCase().replace(/ё/g, "е");
+  }
+
+  function nameAppearsInText(name, text) {
+    const cleanName = normalizeMatchText(name).trim();
+    const cleanText = normalizeMatchText(text);
+    if (cleanName.length < 2 || !cleanText) return false;
+    const parts = cleanName.split(/\s+/).filter((x) => x.length >= 2);
+    const candidates = [cleanName, ...parts].filter((x, idx, arr) => arr.indexOf(x) === idx);
+    return candidates.some((candidate) => cleanText.includes(candidate));
+  }
+
   function sceneTranscriptLines(mainChar, history, maxMessages = 30) {
     const items = (Array.isArray(history) ? history : [])
       .filter((m) => m && !m.pending)
@@ -2380,6 +2494,8 @@
       }
     }
 
+    pushChatMessage(msgs, "user", speakerTurnInstruction(speaker));
+
     if (msgs.length >= 2 && msgs[1].role === "assistant") {
       const greeting = msgs.splice(1, 1)[0];
       msgs[0].content += "\n\nПервая реплика этого говорящего: " + greeting.content;
@@ -2405,6 +2521,11 @@
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
     }
     return null;
+  }
+
+  function speakerTurnInstruction(speaker) {
+    const name = String(speaker?.name || "Персонаж").trim() || "Персонаж";
+    return `[Служебная инструкция: сейчас отвечает только ${name}. Пиши реплику только от лица ${name}, без метки имени в начале, и не говори за других участников.]`;
   }
 
   async function requestChatCompletionText(messages, opts = {}) {
@@ -2618,7 +2739,95 @@
     return npc ? npcSpeakerFor(npc) : null;
   }
 
-  function applyScenePlan(mainChar, plan) {
+  function latestUserTextFromHistory(history) {
+    const lastUser = [...(Array.isArray(history) ? history : [])].reverse().find((m) => m?.role === "user");
+    return String(lastUser?.content || "").trim();
+  }
+
+  function hasGroupAddressCue(text) {
+    const s = normalizeMatchText(text);
+    if (!s) return false;
+    const hasWord = (words) => words.some((word) => {
+      const re = new RegExp(`(^|[^a-zа-яе0-9_])${escapeRegExp(word)}(?=$|[^a-zа-яе0-9_])`, "iu");
+      return re.test(s);
+    });
+    return (
+      hasWord(["оба", "обе", "обоих", "все", "всем", "всех", "каждый", "каждая", "каждому", "вдвоем", "вместе"]) ||
+      hasWord(["вы", "вас", "вам", "ваше", "ваши"]) ||
+      hasWord(["ребята", "девочки", "парни", "участники"]) ||
+      /что\s+думаете/u.test(s) ||
+      /как\s+думаете/u.test(s) ||
+      /ваше\s+мнение/u.test(s) ||
+      /ответьте\s+(оба|обе|все)/u.test(s)
+    );
+  }
+
+  function addUniqueSpeaker(target, speaker, max = 3) {
+    if (!speaker || target.some((s) => speakerKey(s) === speakerKey(speaker))) return;
+    if (target.length >= max) return;
+    target.push(speaker);
+  }
+
+  function directSpeakersFromText(mainChar, activeNpcs, text) {
+    const speakers = [];
+    if (nameAppearsInText(mainChar.name, text)) addUniqueSpeaker(speakers, mainSpeakerFor(mainChar));
+    for (const npc of Array.isArray(activeNpcs) ? activeNpcs : []) {
+      if (nameAppearsInText(npc.name, text)) addUniqueSpeaker(speakers, npcSpeakerFor(npc));
+    }
+    return speakers;
+  }
+
+  function userAddressedOnlyMain(mainChar, activeNpcs, text) {
+    if (hasGroupAddressCue(text)) return false;
+    if (!nameAppearsInText(mainChar.name, text)) return false;
+    return !directSpeakersFromText(mainChar, activeNpcs, text).some((speaker) => speaker.type === "npc");
+  }
+
+  function npcHasSpokenInHistory(mainChar, npc, history) {
+    if (!npc) return false;
+    return (Array.isArray(history) ? history : []).some((m) => {
+      if (!m || m.role !== "assistant" || m.pending) return false;
+      const speaker = messageSpeaker(mainChar, m);
+      return sameSpeaker(speaker, npcSpeakerFor(npc));
+    });
+  }
+
+  function strengthenSceneSpeakers(mainChar, initialSpeakers, history, maxSpeakers = 3) {
+    const activeNpcs = getTempCharactersForChat(mainChar.id);
+    const userText = latestUserTextFromHistory(history);
+    const groupCue = hasGroupAddressCue(userText);
+    const directSpeakers = directSpeakersFromText(mainChar, activeNpcs, userText);
+    const directOnlyMode = directSpeakers.length > 0 && !groupCue;
+    const speakers = [];
+
+    if (!directOnlyMode) {
+      for (const speaker of Array.isArray(initialSpeakers) ? initialSpeakers : []) {
+        addUniqueSpeaker(speakers, speaker, maxSpeakers);
+      }
+    }
+
+    for (const speaker of directSpeakers) {
+      addUniqueSpeaker(speakers, speaker, maxSpeakers);
+    }
+
+    if (groupCue) {
+      addUniqueSpeaker(speakers, mainSpeakerFor(mainChar), maxSpeakers);
+      for (const npc of activeNpcs) addUniqueSpeaker(speakers, npcSpeakerFor(npc), maxSpeakers);
+    }
+
+    if (!directOnlyMode && !userAddressedOnlyMain(mainChar, activeNpcs, userText)) {
+      for (const npc of activeNpcs) {
+        if (npc.source !== "manual") continue;
+        if (npcHasSpokenInHistory(mainChar, npc, history)) continue;
+        addUniqueSpeaker(speakers, npcSpeakerFor(npc), maxSpeakers);
+      }
+    }
+
+    if (speakers.length === 0) speakers.push(mainSpeakerFor(mainChar));
+    return speakers;
+  }
+
+  function applyScenePlan(mainChar, plan, history = []) {
     const safePlan = normalizeScenePlan(plan);
     const mainNameKey = canonicalNpcName(mainChar.name);
 
@@ -2642,8 +2851,7 @@
       if (!speakers.some((s) => speakerKey(s) === speakerKey(speaker))) speakers.push(speaker);
     }
 
-    if (speakers.length === 0) speakers.push(mainSpeakerFor(mainChar));
-    return speakers;
+    return strengthenSceneSpeakers(mainChar, speakers, history);
   }
 
   function applyLegacySceneCommands(mainChar, commands) {
@@ -3174,14 +3382,29 @@
   }
 
   async function sendGroupMessage(userText) {
-    const gc = activeGroupChat();
-    if (!gc) return;
+    let gc = activeGroupChat();
+    if (!gc) return false;
     if (!state.lmOk) {
       const hint = $("#groupComposerHint");
       if (hint) hint.textContent = `${providerLabel()} недоступна.`;
-      return;
+      return false;
     }
-    if (state.generating) return;
+    if (state.generating) return false;
+
+    const hint = $("#groupComposerHint");
+    const groupChatId = gc.id;
+
+    try {
+      await requireUserDataFreshForSend({ type: "group", groupChatId });
+    } catch (err) {
+      showUserDataSyncError(err, hint);
+      return false;
+    }
+
+    gc = state.groupChats.find((g) => g.id === groupChatId) || activeGroupChat();
+    if (!gc) return false;
+    const historyBefore = Array.isArray(gc.messages) ? gc.messages.slice() : [];
+    const updatedAtBefore = gc.updatedAt;
 
     // Add user message
     const userMsg = { id: uuid(), role: "user", content: userText, ts: nowTs() };
@@ -3190,8 +3413,18 @@
     saveGroupChats();
     renderGroupMessages();
 
+    try {
+      await saveUserDataAfterChatChange();
+    } catch (err) {
+      gc.messages = historyBefore;
+      gc.updatedAt = updatedAtBefore;
+      saveGroupChats();
+      renderGroupMessages();
+      showUserDataSyncError(err, hint);
+      return false;
+    }
+
     setGenerating(true);
-    const hint = $("#groupComposerHint");
     if (hint) hint.textContent = "Генерирую ответы...";
 
     // Each character responds sequentially
@@ -3394,6 +3627,12 @@
     setGenerating(false);
     if (hint) hint.textContent = "";
     refreshChatsView();
+    try {
+      await saveUserDataAfterChatChange();
+    } catch (err) {
+      showUserDataSyncError(err, hint);
+    }
+    return true;
   }
 
   // Multi-chat modal
@@ -7423,12 +7662,30 @@
     if (!ch) return;
     if (state.generating) return;
 
+    const chatId = activeChatIdFor(ch.id);
     const historyBefore = chatHistoryFor(ch.id);
+
+    try {
+      await requireUserDataFreshForSend({ type: "personal", characterId: ch.id, chatId });
+    } catch (err) {
+      showUserDataSyncError(err, $("#composerHint"));
+      return false;
+    }
 
     const userMsg = { id: uuid(), role: "user", content: "/img " + prompt, ts: nowTs() };
     setChatHistory(ch.id, historyBefore.concat([userMsg]));
     renderMessages();
     refreshChatsView();
+
+    try {
+      await saveUserDataAfterChatChange();
+    } catch (err) {
+      setChatHistory(ch.id, historyBefore);
+      renderMessages();
+      refreshChatsView();
+      showUserDataSyncError(err, $("#composerHint"));
+      return false;
+    }
 
     const placeholderId = uuid();
     const placeholder = {
@@ -7446,7 +7703,7 @@
       + "?width=1024&height=1024&nologo=true&model=flux&seed=" + Math.floor(Math.random() * 1e9);
 
     const img = new Image();
-    img.onload = () => {
+    img.onload = async () => {
       setChatHistory(
         ch.id,
         chatHistoryFor(ch.id).map((m) =>
@@ -7459,8 +7716,13 @@
       refreshChatsView();
       $("#composerHint").textContent = "";
       setGenerating(false);
+      try {
+        await saveUserDataAfterChatChange();
+      } catch (err) {
+        showUserDataSyncError(err, $("#composerHint"));
+      }
     };
-    img.onerror = () => {
+    img.onerror = async () => {
       setChatHistory(
         ch.id,
         chatHistoryFor(ch.id).map((m) =>
@@ -7473,8 +7735,14 @@
       refreshChatsView();
       $("#composerHint").textContent = "Ошибка генерации изображения";
       setGenerating(false);
+      try {
+        await saveUserDataAfterChatChange();
+      } catch (err) {
+        showUserDataSyncError(err, $("#composerHint"));
+      }
     };
     img.src = imageUrl;
+    return true;
   }
 
   async function streamMistralToMessage({ character, assistantMsgId, messages, baseText }) {
@@ -7730,6 +7998,66 @@
     return streamLmStudioOpenAiToMessage({ character, assistantMsgId, messages, baseText: baseText || "" });
   }
 
+  function leadingSpeakerLabelRe(name) {
+    const cleanName = String(name || "").trim();
+    if (!cleanName) return null;
+    return new RegExp(`^\\s*(?:\\*\\*)?(?:\\[\\s*)?${escapeRegExp(cleanName)}(?:\\s*\\])?(?:\\*\\*)?\\s*(?:[:：]|[-—–])\\s*`, "iu");
+  }
+
+  function stripOwnSpeakerLabel(content, speaker) {
+    let text = String(content || "");
+    const re = leadingSpeakerLabelRe(speaker?.name);
+    if (!re) return text;
+    for (let i = 0; i < 2; i++) {
+      const next = text.replace(re, "");
+      if (next === text) break;
+      text = next;
+    }
+    return text.trim();
+  }
+
+  function identityClaimStartsWith(text, name) {
+    const cleanName = normalizeMatchText(name).trim();
+    if (!cleanName) return false;
+    const s = normalizeMatchText(stripThoughtsContent(text))
+      .replace(/^[\s"'«»“”]+/, "")
+      .slice(0, 220);
+    return [
+      `я ${cleanName}`,
+      `я - ${cleanName}`,
+      `я — ${cleanName}`,
+      `я – ${cleanName}`,
+      `я это ${cleanName}`,
+      `это я ${cleanName}`,
+      `меня зовут ${cleanName}`,
+      `i am ${cleanName}`,
+      `i'm ${cleanName}`,
+      `im ${cleanName}`,
+      `my name is ${cleanName}`
+    ].some((prefix) => s.startsWith(prefix));
+  }
+
+  function wrongSpeakerMatch(mainChar, speaker, content) {
+    const activeNpcs = getTempCharactersForChat(mainChar.id);
+    const others = [mainSpeakerFor(mainChar), ...activeNpcs.map(npcSpeakerFor)]
+      .filter((candidate) => candidate && !sameSpeaker(candidate, speaker));
+    const text = String(content || "").trim();
+
+    for (const other of others) {
+      const labelRe = leadingSpeakerLabelRe(other.name);
+      if (labelRe && labelRe.test(text)) return other;
+      if (identityClaimStartsWith(text, other.name)) return other;
+    }
+
+    return null;
+  }
+
+  function speakerCorrectionMessage(speaker, wrongSpeaker) {
+    const speakerName = String(speaker?.name || "Персонаж").trim() || "Персонаж";
+    const wrongName = String(wrongSpeaker?.name || "другого персонажа").trim();
+    return `[Служебная коррекция: предыдущая попытка была распознана как реплика от лица "${wrongName}". Перепиши ответ заново. Сейчас отвечает только ${speakerName}. Не начинай с имени другого персонажа и не представляйся им.]`;
+  }
+
   async function generateSpeakerContent(mainChar, speaker, assistantMsgId, history, opts = {}) {
     const messages = buildDynamicOpenAiMessages(mainChar, speaker, history, {
       extraMessages: opts.extraMessages || []
@@ -7742,9 +8070,33 @@
     });
 
     const rawContent = String(fullContent || "").trim() ? String(fullContent) : "(пустой ответ)";
-    const { displayText, commands } = parseAiCommands(rawContent);
+    const cleanedContent = stripOwnSpeakerLabel(rawContent, speaker);
+    const wrongSpeaker = wrongSpeakerMatch(mainChar, speaker, cleanedContent);
+    if (wrongSpeaker && !opts.identityRetry) {
+      console.warn("[speaker identity] retrying wrong-speaker answer", {
+        expected: speaker?.name || "",
+        detected: wrongSpeaker.name || ""
+      });
+      return generateSpeakerContent(mainChar, speaker, assistantMsgId, history, {
+        ...opts,
+        identityRetry: true,
+        extraMessages: (opts.extraMessages || []).concat([{
+          role: "user",
+          content: speakerCorrectionMessage(speaker, wrongSpeaker)
+        }])
+      });
+    }
+    if (wrongSpeaker) {
+      console.warn("[speaker identity] rejected wrong-speaker answer", {
+        expected: speaker?.name || "",
+        detected: wrongSpeaker.name || ""
+      });
+      return { content: "[молчание]", commands: [] };
+    }
+
+    const { displayText, commands } = parseAiCommands(cleanedContent);
     return {
-      content: displayText || rawContent,
+      content: displayText || cleanedContent,
       commands
     };
   }
@@ -8109,21 +8461,27 @@
   async function sendMessage(userText) {
     const imgMatch = userText.match(/^\/img\s+(.+)/i);
     if (imgMatch) {
-      generateImage(imgMatch[1].trim());
-      return;
+      return await generateImage(imgMatch[1].trim());
     }
 
     const ch = activeCharacter();
-    if (!ch) return;
+    if (!ch) return false;
     if (!state.lmOk) {
       $("#composerHint").textContent = `${providerLabel()} недоступна.`;
-      return;
+      return false;
     }
 
-    if (state.generating) return;
+    if (state.generating) return false;
 
     const chatId = activeChatIdFor(ch.id);
     const historyBefore = chatHistoryFor(ch.id);
+
+    try {
+      await requireUserDataFreshForSend({ type: "personal", characterId: ch.id, chatId });
+    } catch (err) {
+      showUserDataSyncError(err, $("#composerHint"));
+      return false;
+    }
 
     const userMsg = { id: uuid(), role: "user", content: userText, ts: nowTs() };
     setChatHistory(ch.id, historyBefore.concat([userMsg]));
@@ -8131,16 +8489,34 @@
     renderMessages();
     refreshChatsView();
 
+    try {
+      await saveUserDataAfterChatChange();
+    } catch (err) {
+      setChatHistory(ch.id, historyBefore);
+      if (chatId) resetLmContextFor(chatId);
+      renderMessages();
+      refreshChatsView();
+      showUserDataSyncError(err, $("#composerHint"));
+      return false;
+    }
+
     setGenerating(true);
     $("#composerHint").textContent = "Анализирую сцену…";
 
     try {
-      const scenePlan = await planSceneTurn(ch, chatHistoryFor(ch.id));
-      const speakers = applyScenePlan(ch, scenePlan);
+      const turnHistory = chatHistoryFor(ch.id);
+      const scenePlan = await planSceneTurn(ch, turnHistory);
+      const speakers = applyScenePlan(ch, scenePlan, turnHistory);
       renderMessages();
       refreshChatsView();
       $("#composerHint").textContent = "Генерирую ответ…";
       await respondAsSpeakers(ch, speakers);
+      try {
+        await saveUserDataAfterChatChange();
+      } catch (syncErr) {
+        showUserDataSyncError(syncErr, $("#composerHint"));
+        return true;
+      }
       $("#composerHint").textContent = "";
     } catch (err) {
       const msg = String(err?.message || err || "Ошибка");
@@ -8148,10 +8524,19 @@
       setChatHistory(ch.id, chatHistoryFor(ch.id).concat([errMsg]));
       renderMessages();
       refreshChatsView();
-      $("#composerHint").textContent = clampText(msg, 140);
+      if (isUserDataSyncError(err)) showUserDataSyncError(err, $("#composerHint"));
+      else {
+        $("#composerHint").textContent = clampText(msg, 140);
+        try {
+          await saveUserDataAfterChatChange();
+        } catch (syncErr) {
+          showUserDataSyncError(syncErr, $("#composerHint"));
+        }
+      }
     } finally {
       setGenerating(false);
     }
+    return true;
   }
 
   async function regenerateMessageAt(targetMsgId) {
@@ -9543,9 +9928,11 @@
       if (state.generating) return;
       const text = String(input.value || "").trim();
       if (!text) return;
-      input.value = "";
-      autoGrowTextarea(input);
-      await sendMessage(text);
+      const sent = await sendMessage(text);
+      if (sent) {
+        input.value = "";
+        autoGrowTextarea(input);
+      }
     });
 
     input.addEventListener("keydown", (e) => {
@@ -9637,9 +10024,11 @@
         if (state.generating) return;
         const text = String(groupInput.value || "").trim();
         if (!text) return;
-        groupInput.value = "";
-        autoGrowTextarea(groupInput);
-        await sendGroupMessage(text);
+        const sent = await sendGroupMessage(text);
+        if (sent) {
+          groupInput.value = "";
+          autoGrowTextarea(groupInput);
+        }
       });
     }
 
@@ -9736,15 +10125,12 @@
     await syncCharactersFromServer();
     await syncUserDataFromServer();
     userDataSyncReady = true;
-    startUserDataPulling();
     ensureInitialMessage();
     renderHeader();
     renderMessages();
     setView("chats");
     refreshChatsView();
     refreshModels();
-
-    if (!syncCharactersTimer) syncCharactersTimer = setInterval(syncCharactersFromServer, 15000);
   }
 
   async function startAuthenticatedApp() {
