@@ -37,6 +37,24 @@ async function createSessionCookie(baseUrl, login = `user-${Date.now()}-${Math.r
   return cookie.split(';')[0];
 }
 
+async function readStreamUntil(reader, pattern, timeoutMs = 3000) {
+  const decoder = new TextDecoder();
+  let text = '';
+  const expiresAt = Date.now() + timeoutMs;
+  while (Date.now() < expiresAt) {
+    const remaining = Math.max(1, expiresAt - Date.now());
+    const read = reader.read();
+    const result = await Promise.race([
+      read,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out waiting for SSE event')), remaining))
+    ]);
+    if (result.done) break;
+    text += decoder.decode(result.value, { stream: true });
+    if (text.includes(pattern)) return text;
+  }
+  throw new Error(`Missing SSE pattern: ${pattern}`);
+}
+
 function resetAuthStore() {
   fs.rmSync(authFile, { force: true });
 }
@@ -228,6 +246,8 @@ test('user data is stored on server and isolated per account', async () => {
     const data = {
       profile: { name: 'Desktop User', gender: 'unspecified', avatar: '' },
       selectedCharacterId: 'char-1',
+      modelId: 'openrouter/test-model',
+      provider: 'openrouter',
       conversations: {
         'char-1': {
           activeChatId: 'chat-1',
@@ -245,8 +265,11 @@ test('user data is stored on server and isolated per account', async () => {
       responseIds: { 'chat-1': 'resp-1' },
       responseIdChains: { 'chat-1': ['resp-1'] },
       cloudDialogsPushedAt: 12345,
+      savedPrompts: [{ id: 'prompt-1', title: 'Prompt', text: 'Use this', createdAt: 1, updatedAt: 2 }],
+      promptFolders: [{ id: 'folder-1', name: 'Folder', createdAt: 1 }],
       groupChats: [],
-      activeGroupChatId: ''
+      activeGroupChatId: '',
+      polybuzzSettings: { pageSize: 50, autoload: false, genderAccuracy: 'precise' }
     };
 
     const saveRes = await fetch(`${baseUrl}/api/user-data`, {
@@ -263,6 +286,11 @@ test('user data is stored on server and isolated per account', async () => {
     assert.equal(bodyA.data.conversations['char-1'].chats[0].messages[0].content, 'hello from desktop');
     assert.equal(bodyA.data.responseIdChains['chat-1'][0], 'resp-1');
     assert.equal(bodyA.data.cloudDialogsPushedAt, 12345);
+    assert.equal(bodyA.data.provider, 'openrouter');
+    assert.equal(bodyA.data.modelId, 'openrouter/test-model');
+    assert.equal(bodyA.data.savedPrompts[0].id, 'prompt-1');
+    assert.equal(bodyA.data.promptFolders[0].id, 'folder-1');
+    assert.equal(bodyA.data.polybuzzSettings.genderAccuracy, 'precise');
 
     const loadB = await fetch(`${baseUrl}/api/user-data`, { headers: { Cookie: cookieB } });
     assert.equal(loadB.status, 200);
@@ -270,6 +298,41 @@ test('user data is stored on server and isolated per account', async () => {
     assert.equal(bodyB.empty, true);
     assert.deepEqual(bodyB.data.conversations, {});
   } finally {
+    await closeTestServer(server);
+  }
+});
+
+test('user data save pushes live event to connected account devices', async () => {
+  const { server, baseUrl } = startTestServer();
+  const ac = new AbortController();
+
+  try {
+    const cookie = await createSessionCookie(baseUrl, `events-${Date.now()}@example.com`);
+    const eventsRes = await fetch(`${baseUrl}/api/live/events`, {
+      headers: { Cookie: cookie },
+      signal: ac.signal
+    });
+    assert.equal(eventsRes.status, 200);
+    assert.match(eventsRes.headers.get('content-type') || '', /text\/event-stream/);
+    const reader = eventsRes.body.getReader();
+    await readStreamUntil(reader, 'event: ready');
+
+    const saveRes = await fetch(`${baseUrl}/api/user-data`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        data: {
+          profile: { name: 'Live User', gender: 'unspecified', avatar: '' },
+          conversations: {}
+        }
+      })
+    });
+    assert.equal(saveRes.status, 200);
+
+    const text = await readStreamUntil(reader, 'event: user-data');
+    assert.match(text, /"type":"user-data"/);
+  } finally {
+    ac.abort();
     await closeTestServer(server);
   }
 });

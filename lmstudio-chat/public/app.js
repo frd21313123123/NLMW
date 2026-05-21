@@ -24,11 +24,21 @@
     STORAGE_KEYS.profile,
     STORAGE_KEYS.selectedCharacterId,
     STORAGE_KEYS.conversations,
+    STORAGE_KEYS.modelId,
+    STORAGE_KEYS.provider,
     STORAGE_KEYS.responseIds,
     STORAGE_KEYS.responseIdChains,
     STORAGE_KEYS.cloudDialogsPushedAt,
+    STORAGE_KEYS.savedPrompts,
+    STORAGE_KEYS.promptFolders,
     STORAGE_KEYS.groupChats,
-    STORAGE_KEYS.activeGroupChatId
+    STORAGE_KEYS.activeGroupChatId,
+    STORAGE_KEYS.polybuzzSettings
+  ]);
+
+  const SERVER_BACKED_LOCAL_KEYS = new Set([
+    STORAGE_KEYS.characters,
+    ...SERVER_USER_DATA_KEYS
   ]);
 
   const DIALOGUE_STYLES = [
@@ -90,6 +100,9 @@
   let userDataChangeRevision = 0;
   let applyingServerUserData = false;
   let mobileStatePanelOpen = false;
+  let liveEvents = null;
+  let liveEventsReconnectTimer = null;
+  let liveEventsSyncTimer = null;
 
   function safeJsonParse(text) {
     try {
@@ -107,7 +120,11 @@
   }
 
   function saveJson(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
+    if (SERVER_BACKED_LOCAL_KEYS.has(key) && userDataSyncReady) {
+      localStorage.removeItem(key);
+    } else {
+      localStorage.setItem(key, JSON.stringify(value));
+    }
     if (!SERVER_USER_DATA_KEYS.has(key) || applyingServerUserData) return;
     userDataChangeRevision++;
     scheduleUserDataSync();
@@ -895,14 +912,19 @@
       profile: cloneForExport(normalizeProfileRecord(state.profile), defaultProfile()),
       selectedCharacterId: String(state.selectedCharacterId || ""),
       conversations: cloneForExport(state.conversations && typeof state.conversations === "object" ? state.conversations : {}, {}),
+      modelId: String(state.modelId || ""),
+      provider: ["lmstudio", "mistral", "openrouter"].includes(state.provider) ? state.provider : "lmstudio",
       responseIds: cloneForExport(state.responseIds && typeof state.responseIds === "object" ? state.responseIds : {}, {}),
       responseIdChains: cloneForExport(
         state.responseIdChains && typeof state.responseIdChains === "object" ? state.responseIdChains : {},
         {}
       ),
       cloudDialogsPushedAt: Number(state.cloudDialogsPushedAt) || 0,
+      savedPrompts: cloneForExport(Array.isArray(state.savedPrompts) ? state.savedPrompts : [], []),
+      promptFolders: cloneForExport(Array.isArray(state.promptFolders) ? state.promptFolders : [], []),
       groupChats: cloneForExport(Array.isArray(state.groupChats) ? state.groupChats.map(normalizeGroupChat) : [], []),
       activeGroupChatId: String(state.activeGroupChatId || ""),
+      polybuzzSettings: cloneForExport(normalizePolybuzzSettings(state.polybuzzSettings), defaultPolybuzzSettings()),
       updatedAt: nowTs()
     };
   }
@@ -917,6 +939,8 @@
       conversations: src.conversations && typeof src.conversations === "object" && !Array.isArray(src.conversations)
         ? src.conversations
         : {},
+      modelId: String(src.modelId || ""),
+      provider: ["lmstudio", "mistral", "openrouter"].includes(src.provider) ? src.provider : "lmstudio",
       responseIds: src.responseIds && typeof src.responseIds === "object" && !Array.isArray(src.responseIds)
         ? src.responseIds
         : {},
@@ -924,8 +948,11 @@
         ? src.responseIdChains
         : {},
       cloudDialogsPushedAt: Number(src.cloudDialogsPushedAt) || 0,
+      savedPrompts: Array.isArray(src.savedPrompts) ? src.savedPrompts : [],
+      promptFolders: Array.isArray(src.promptFolders) ? src.promptFolders : [],
       groupChats: Array.isArray(src.groupChats) ? src.groupChats.map(normalizeGroupChat) : [],
       activeGroupChatId: String(src.activeGroupChatId || ""),
+      polybuzzSettings: normalizePolybuzzSettings(src.polybuzzSettings),
       updatedAt: typeof src.updatedAt === "number" && Number.isFinite(src.updatedAt) ? src.updatedAt : 0
     };
   }
@@ -994,6 +1021,21 @@
     return Array.from(byId.values()).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   }
 
+  function mergeRecordsById(localItems, serverItems, normalizer) {
+    const byId = new Map();
+    const add = (item) => {
+      const normalized = normalizer(item);
+      if (!normalized?.id) return;
+      const existing = byId.get(normalized.id);
+      if (!existing || (normalized.updatedAt || normalized.createdAt || 0) >= (existing.updatedAt || existing.createdAt || 0)) {
+        byId.set(normalized.id, normalized);
+      }
+    };
+    for (const item of Array.isArray(localItems) ? localItems : []) add(item);
+    for (const item of Array.isArray(serverItems) ? serverItems : []) add(item);
+    return Array.from(byId.values()).sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+  }
+
   function mergeUserData(localData, serverData) {
     const local = normalizeServerUserData(localData);
     const server = normalizeServerUserData(serverData);
@@ -1008,11 +1050,27 @@
       profile: server.profile || local.profile || defaultProfile(),
       selectedCharacterId: server.selectedCharacterId || local.selectedCharacterId,
       conversations: mergeConversationMaps(local.conversations, server.conversations),
+      modelId: server.modelId || local.modelId,
+      provider: server.provider || local.provider || "lmstudio",
       responseIds: { ...local.responseIds, ...server.responseIds },
       responseIdChains: { ...local.responseIdChains, ...server.responseIdChains },
       cloudDialogsPushedAt: Math.max(local.cloudDialogsPushedAt || 0, server.cloudDialogsPushedAt || 0),
+      savedPrompts: mergeRecordsById(local.savedPrompts, server.savedPrompts, (x) => ({
+        id: typeof x?.id === "string" && x.id.trim() ? x.id.trim() : "",
+        title: clampText(String(x?.title || "").trim() || "Промт", 80),
+        text: clampText(String(x?.text || "").trim(), 4000),
+        folderId: typeof x?.folderId === "string" ? x.folderId : "",
+        createdAt: typeof x?.createdAt === "number" && Number.isFinite(x.createdAt) ? x.createdAt : nowTs(),
+        updatedAt: typeof x?.updatedAt === "number" && Number.isFinite(x.updatedAt) ? x.updatedAt : nowTs()
+      })).filter((x) => x.text),
+      promptFolders: mergeRecordsById(local.promptFolders, server.promptFolders, (x) => ({
+        id: typeof x?.id === "string" && x.id.trim() ? x.id.trim() : "",
+        name: clampText(String(x?.name || "").trim() || "Папка", 40),
+        createdAt: typeof x?.createdAt === "number" && Number.isFinite(x.createdAt) ? x.createdAt : nowTs()
+      })),
       groupChats,
       activeGroupChatId,
+      polybuzzSettings: server.polybuzzSettings || local.polybuzzSettings || defaultPolybuzzSettings(),
       updatedAt: Math.max(local.updatedAt || 0, server.updatedAt || 0, nowTs())
     };
   }
@@ -1026,22 +1084,32 @@
 
     state.selectedCharacterId = normalized.selectedCharacterId || state.selectedCharacterId;
     state.conversations = normalized.conversations;
+    state.modelId = normalized.modelId || "";
+    state.provider = normalized.provider || "lmstudio";
     state.responseIds = normalized.responseIds;
     state.responseIdChains = normalized.responseIdChains;
     state.cloudDialogsPushedAt = normalized.cloudDialogsPushedAt || 0;
+    state.savedPrompts = normalized.savedPrompts;
+    state.promptFolders = normalized.promptFolders;
     state.groupChats = normalized.groupChats;
     state.activeGroupChatId = normalized.activeGroupChatId;
+    state.polybuzzSettings = normalized.polybuzzSettings;
 
     applyingServerUserData = true;
     try {
       if (normalized.profile) saveJson(STORAGE_KEYS.profile, state.profile);
       saveJson(STORAGE_KEYS.selectedCharacterId, state.selectedCharacterId);
       saveJson(STORAGE_KEYS.conversations, state.conversations);
+      saveJson(STORAGE_KEYS.modelId, state.modelId);
+      saveJson(STORAGE_KEYS.provider, state.provider);
       saveJson(STORAGE_KEYS.responseIds, state.responseIds);
       saveJson(STORAGE_KEYS.responseIdChains, state.responseIdChains);
       saveJson(STORAGE_KEYS.cloudDialogsPushedAt, state.cloudDialogsPushedAt);
+      saveJson(STORAGE_KEYS.savedPrompts, state.savedPrompts);
+      saveJson(STORAGE_KEYS.promptFolders, state.promptFolders);
       saveJson(STORAGE_KEYS.groupChats, state.groupChats);
       saveJson(STORAGE_KEYS.activeGroupChatId, state.activeGroupChatId);
+      saveJson(STORAGE_KEYS.polybuzzSettings, state.polybuzzSettings);
     } finally {
       applyingServerUserData = false;
     }
@@ -1124,6 +1192,16 @@
       }
 
       const serverData = normalizeServerUserData(payload?.data);
+      if (!opts.periodic && opts.preferServer !== false) {
+        const beforeJson = JSON.stringify(localData);
+        const serverJson = JSON.stringify(serverData);
+        if (serverJson !== beforeJson) {
+          applyUserDataToState(serverData);
+          if (opts.render !== false) renderAfterUserDataSync();
+        }
+        return serverData;
+      }
+
       const merged = mergeUserData(localData, serverData);
       const beforeJson = JSON.stringify(localData);
       const mergedJson = JSON.stringify(merged);
@@ -1245,6 +1323,33 @@
       await pushUserDataToServer({ immediate: true });
     } catch {
       throw createUserDataSyncError("Сообщение не удалось сохранить на сервере. Данные чата не синхронизированы.");
+    }
+  }
+
+  function flushUserDataBeforeUnload() {
+    if (!userDataSyncReady) return;
+    if (userDataSyncTimer) {
+      clearTimeout(userDataSyncTimer);
+      userDataSyncTimer = null;
+    }
+    const body = JSON.stringify({ data: collectUserDataForSync() });
+    if (navigator.sendBeacon) {
+      const blob = new Blob([body], { type: "application/json" });
+      navigator.sendBeacon("/api/user-data", blob);
+      return;
+    }
+    fetch("/api/user-data", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body,
+      keepalive: true
+    }).catch(() => {});
+  }
+
+  function clearServerBackedLocalStorage() {
+    for (const key of SERVER_BACKED_LOCAL_KEYS) {
+      localStorage.removeItem(key);
     }
   }
 
@@ -10116,15 +10221,58 @@
     }
   }
 
+  function scheduleLiveServerSync(type) {
+    if (!userDataSyncReady) return;
+    if (liveEventsSyncTimer) clearTimeout(liveEventsSyncTimer);
+    liveEventsSyncTimer = setTimeout(async () => {
+      liveEventsSyncTimer = null;
+      if (type === "characters") {
+        await syncCharactersFromServer();
+        refreshChatsView();
+        return;
+      }
+      await syncUserDataFromServer({ periodic: true });
+    }, 150);
+  }
+
+  function startLiveServerPush() {
+    if (!window.EventSource || liveEvents || !state.currentUser) return;
+    if (liveEventsReconnectTimer) {
+      clearTimeout(liveEventsReconnectTimer);
+      liveEventsReconnectTimer = null;
+    }
+
+    const events = new EventSource("/api/live/events");
+    liveEvents = events;
+
+    events.addEventListener("user-data", () => scheduleLiveServerSync("user-data"));
+    events.addEventListener("characters", () => scheduleLiveServerSync("characters"));
+    events.onerror = () => {
+      if (liveEvents !== events) return;
+      events.close();
+      liveEvents = null;
+      liveEventsReconnectTimer = setTimeout(() => {
+        liveEventsReconnectTimer = null;
+        startLiveServerPush();
+      }, 3000);
+    };
+  }
+
   async function bootstrap() {
     ensureSeed();
     loadGroupChats();
     bootstrapCopyModal();
     wireUI();
+    window.addEventListener("pagehide", flushUserDataBeforeUnload);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flushUserDataBeforeUnload();
+    });
     fillProfileUI();
     await syncCharactersFromServer();
     await syncUserDataFromServer();
     userDataSyncReady = true;
+    clearServerBackedLocalStorage();
+    startLiveServerPush();
     ensureInitialMessage();
     renderHeader();
     renderMessages();

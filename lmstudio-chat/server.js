@@ -263,11 +263,16 @@ function defaultUserData() {
     profile: null,
     selectedCharacterId: "",
     conversations: {},
+    modelId: "",
+    provider: "lmstudio",
     responseIds: {},
     responseIdChains: {},
     cloudDialogsPushedAt: 0,
+    savedPrompts: [],
+    promptFolders: [],
     groupChats: [],
     activeGroupChatId: "",
+    polybuzzSettings: null,
     updatedAt: 0
   };
 }
@@ -282,11 +287,18 @@ function normalizeUserDataRecord(raw) {
   out.profile = src.profile && typeof src.profile === "object" && !Array.isArray(src.profile) ? src.profile : null;
   out.selectedCharacterId = normalizeString(src.selectedCharacterId).trim();
   out.conversations = normalizePlainObject(src.conversations);
+  out.modelId = normalizeString(src.modelId).trim();
+  out.provider = ["lmstudio", "mistral", "openrouter"].includes(src.provider) ? src.provider : "lmstudio";
   out.responseIds = normalizePlainObject(src.responseIds);
   out.responseIdChains = normalizePlainObject(src.responseIdChains);
   out.cloudDialogsPushedAt = Number(src.cloudDialogsPushedAt) || 0;
+  out.savedPrompts = Array.isArray(src.savedPrompts) ? src.savedPrompts.filter((x) => x && typeof x === "object") : [];
+  out.promptFolders = Array.isArray(src.promptFolders) ? src.promptFolders.filter((x) => x && typeof x === "object") : [];
   out.groupChats = Array.isArray(src.groupChats) ? src.groupChats.filter((x) => x && typeof x === "object") : [];
   out.activeGroupChatId = normalizeString(src.activeGroupChatId).trim();
+  out.polybuzzSettings = src.polybuzzSettings && typeof src.polybuzzSettings === "object" && !Array.isArray(src.polybuzzSettings)
+    ? src.polybuzzSettings
+    : null;
   out.updatedAt = Number(src.updatedAt) || Date.now();
   return out;
 }
@@ -304,6 +316,57 @@ function writeUserData(userId, data) {
   const normalized = normalizeUserDataRecord({ ...data, updatedAt: Date.now() });
   writeJsonFile(userDataFileFor(userId), normalized);
   return normalized;
+}
+
+const liveClientsByUserId = new Map();
+
+function liveEventPayload(type, data = {}) {
+  return {
+    type,
+    at: Date.now(),
+    ...data
+  };
+}
+
+function sendLiveEvent(res, event) {
+  res.write(`event: ${event.type}\n`);
+  res.write(`data: ${JSON.stringify(event)}\n\n`);
+}
+
+function addLiveClient(userId, res) {
+  const id = safeUserDataId(userId);
+  if (!id) return () => {};
+  let clients = liveClientsByUserId.get(id);
+  if (!clients) {
+    clients = new Set();
+    liveClientsByUserId.set(id, clients);
+  }
+  clients.add(res);
+  return () => {
+    clients.delete(res);
+    if (clients.size === 0) liveClientsByUserId.delete(id);
+  };
+}
+
+function broadcastLiveEvent(userId, type, data = {}) {
+  const id = safeUserDataId(userId);
+  const clients = liveClientsByUserId.get(id);
+  if (!clients || clients.size === 0) return;
+  const event = liveEventPayload(type, data);
+  for (const client of [...clients]) {
+    try {
+      sendLiveEvent(client, event);
+    } catch (_err) {
+      clients.delete(client);
+    }
+  }
+  if (clients.size === 0) liveClientsByUserId.delete(id);
+}
+
+function broadcastLiveEventToAll(type, data = {}) {
+  for (const userId of [...liveClientsByUserId.keys()]) {
+    broadcastLiveEvent(userId, type, data);
+  }
 }
 
 app.get("/api/health", (_req, res) => {
@@ -492,11 +555,37 @@ app.get("/api/user-data", (req, res) => {
   }
 });
 
+app.get("/api/live/events", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  const removeClient = addLiveClient(req.user.id, res);
+  sendLiveEvent(res, liveEventPayload("ready", { userId: req.user.id }));
+
+  const keepAlive = setInterval(() => {
+    try {
+      res.write(": keepalive\n\n");
+    } catch (_err) {
+      clearInterval(keepAlive);
+      removeClient();
+    }
+  }, 25000);
+
+  req.on("close", () => {
+    clearInterval(keepAlive);
+    removeClient();
+  });
+});
+
 app.post("/api/user-data", (req, res) => {
   try {
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const data = body.data && typeof body.data === "object" ? body.data : body;
     const saved = writeUserData(req.user.id, data);
+    broadcastLiveEvent(req.user.id, "user-data", { updatedAt: saved.updatedAt });
     res.json({ ok: true, data: saved });
   } catch (err) {
     console.error("[user-data save]", err);
@@ -2212,6 +2301,7 @@ app.post("/api/characters", (req, res) => {
   if (idx === -1) chars.unshift(ch);
   else chars[idx] = ch;
   saveCharactersFile(chars);
+  broadcastLiveEventToAll("characters", { count: chars.length });
   res.json({ ok: true });
 });
 
@@ -2239,6 +2329,7 @@ app.post("/api/characters/bulk", (req, res) => {
     }
   }
   saveCharactersFile(chars);
+  broadcastLiveEventToAll("characters", { count: chars.length, replace });
   res.json({ ok: true, count: chars.length });
 });
 
@@ -2249,7 +2340,9 @@ app.delete("/api/characters/:id", (req, res) => {
   const before = chars.length;
   chars = chars.filter((c) => c.id !== id);
   saveCharactersFile(chars);
-  res.json({ ok: true, deleted: chars.length < before });
+  const deleted = chars.length < before;
+  if (deleted) broadcastLiveEventToAll("characters", { count: chars.length, deletedId: id });
+  res.json({ ok: true, deleted });
 });
 
 const publicDir = path.join(__dirname, "public");
