@@ -1891,7 +1891,7 @@ body {
   font-size: 28px;
   line-height: 1.02;
   font-weight: 800;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
 }
 
 .charCreator__subtitle {
@@ -3024,6 +3024,7 @@ body {
 
   /* --- Modal content: list screen --- */
   .modal__content {
+    min-height: 0;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -3100,6 +3101,7 @@ body {
     display: flex;
     flex-direction: column;
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     overflow-anchor: none;
     -webkit-overflow-scrolling: touch;
@@ -3112,6 +3114,50 @@ body {
 
   .tagComposer {
     flex-direction: column;
+  }
+
+  #charactersModal .modal__window--editing .charCreator {
+    width: 100%;
+    gap: 16px;
+  }
+
+  #charactersModal .modal__window--editing .row--chatManager {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+  }
+
+  #charactersModal .modal__window--editing .row--chatManager .charCreator__chatField {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+
+  #charactersModal .modal__window--editing .row--chatManager .btn {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 10px;
+  }
+
+  #charactersModal .modal__window--editing .segmented {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  #charactersModal .modal__window--editing .segmented--style {
+    grid-template-columns: 1fr;
+  }
+
+  #charactersModal .modal__window--editing .segmented__item {
+    min-width: 0;
+    padding-inline: 10px;
+    text-align: center;
+  }
+
+  #charactersModal .modal__window--editing .charCreator__footer {
+    margin-inline: 0;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    background: none;
   }
 
   .charCreator__submit {
@@ -3703,6 +3749,12 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.06);
   }
 
+  #charactersModal .modal__window {
+    width: min(1480px, calc(100vw - 32px));
+    height: min(94vh, 940px);
+    border-radius: 20px;
+  }
+
   .modal__header {
     background: #141416;
     border-bottom-color: rgba(255, 255, 255, 0.05);
@@ -3724,8 +3776,110 @@ body {
       #151517;
   }
 
-  .charCreator {
-    width: min(100%, 760px);
+  #charactersModal .modal__content {
+    display: grid;
+    grid-template-columns: 286px minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  #charactersModal .importPanel {
+    grid-column: 1;
+    grid-row: 1;
+    border-right: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom-color: rgba(255, 255, 255, 0.05);
+  }
+
+  #charactersModal .charList {
+    grid-column: 1;
+    grid-row: 2;
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    border-right: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 0;
+    min-height: 0;
+  }
+
+  #charactersModal .charCard {
+    width: 100%;
+    min-width: 0;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  #charactersModal .charCard .avatar {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 auto;
+  }
+
+  #charactersModal .charCard > div {
+    min-width: 0;
+    text-align: left;
+  }
+
+  #charactersModal .charCard__name,
+  #charactersModal .charCard__meta {
+    max-width: none;
+    text-align: left;
+  }
+
+  #charactersModal .charEditor {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    min-width: 0;
+    min-height: 0;
+    padding: 24px;
+  }
+
+  #charactersModal .charCreator {
+    width: 100%;
+    max-width: none;
+    display: grid;
+    grid-template-columns: minmax(260px, 340px) minmax(360px, 1fr);
+    gap: 18px 24px;
+    align-items: start;
+  }
+
+  #charactersModal .charCreator__phone {
+    grid-column: 1;
+    position: sticky;
+    top: 0;
+    min-height: 248px;
+  }
+
+  #charactersModal .row--chatManager {
+    grid-column: 1;
+    align-items: stretch;
+  }
+
+  #charactersModal .row--chatManager .charCreator__chatField {
+    min-width: 0;
+    flex-basis: 100%;
+  }
+
+  #charactersModal .row--chatManager .btn {
+    flex: 1 1 120px;
+  }
+
+  #charactersModal .charCreator > .charSection,
+  #charactersModal .charCreator > .charCreator__footer,
+  #charactersModal .charCreator > #charFormNote {
+    grid-column: 2;
+  }
+
+  #charactersModal .charCreator__footer {
+    justify-content: flex-end;
+    margin-inline: 0;
+    background: none;
+  }
+
+  #charactersModal .charCreator__submit {
+    width: min(360px, 100%);
+    min-width: 0;
   }
 }
 
@@ -3753,6 +3907,15 @@ body {
 
   .modal__window {
     width: min(680px, calc(100vw - 32px));
+  }
+
+  #charactersModal .modal__window {
+    width: min(920px, calc(100vw - 24px));
+    height: min(92vh, 860px);
+  }
+
+  #charactersModal .charCreator {
+    width: min(100%, 760px);
   }
 
   .bubble {
@@ -4275,7 +4438,8 @@ body {
   }
 
   .charCreator__submit {
-    width: min(100%, 244px);
+    width: 100%;
+    min-width: 0;
     height: 52px;
     background: #5850ba;
     border-color: #5850ba;
