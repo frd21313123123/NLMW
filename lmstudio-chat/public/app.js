@@ -3393,10 +3393,12 @@
     }
   }
 
-  function renderGroupMessages() {
+  function renderGroupMessages(options = {}) {
     const gc = activeGroupChat();
     const list = $("#groupMessages");
     if (!list || !gc) return;
+    const preserveScroll = Boolean(options.preserveScroll || state.generating);
+    const scrollTop = preserveScroll ? list.scrollTop : 0;
     list.innerHTML = "";
 
     const disclaimer = document.createElement("div");
@@ -3474,8 +3476,10 @@
       list.appendChild(row);
     }
 
+    if (preserveScroll) restoreScrollTop(list, scrollTop);
     requestAnimationFrame(() => {
-      list.scrollTop = list.scrollHeight;
+      if (preserveScroll) restoreScrollTop(list, scrollTop);
+      else list.scrollTop = list.scrollHeight;
     });
   }
 
@@ -3601,8 +3605,7 @@
               if (typeof delta === "string") {
                 generated += delta;
                 if (bubble) {
-                  renderBubbleContent(bubble, generated, { role: "assistant", characterName: ch.name });
-                  if (listEl) listEl.scrollTop = listEl.scrollHeight;
+                  renderBubbleContentKeepingScroll(bubble, listEl, generated, { role: "assistant", characterName: ch.name });
                 }
               }
             }
@@ -3691,8 +3694,7 @@
                   if (respText && !generated) generated = respText;
                 }
                 if (bubble) {
-                  renderBubbleContent(bubble, generated, { role: "assistant", characterName: ch.name });
-                  if (listEl) listEl.scrollTop = listEl.scrollHeight;
+                  renderBubbleContentKeepingScroll(bubble, listEl, generated, { role: "assistant", characterName: ch.name });
                 }
               }
             } } finally { if (stallTimer2) clearTimeout(stallTimer2); try { reader.releaseLock?.(); } catch {} }
@@ -4462,7 +4464,7 @@
     reconcileAutoTempCharactersFromHistory(characterId);
 
     noteHistoryChanged(characterId);
-    renderMessages();
+    renderMessages({ preserveScroll: true });
 
     // Now generate a new AI response (similar to sendMessage)
     if (!state.lmOk) {
@@ -5167,10 +5169,23 @@
     });
   }
 
-  function renderMessages() {
+  function restoreScrollTop(list, scrollTop) {
+    if (!list || !Number.isFinite(scrollTop)) return;
+    list.scrollTop = scrollTop;
+  }
+
+  function renderBubbleContentKeepingScroll(bubble, list, content, options) {
+    const scrollTop = list ? list.scrollTop : 0;
+    renderBubbleContent(bubble, content, options);
+    restoreScrollTop(list, scrollTop);
+  }
+
+  function renderMessages(options = {}) {
     const ch = activeCharacter();
     const list = $("#messages");
     if (!list) return;
+    const preserveScroll = Boolean(options.preserveScroll || state.generating);
+    const scrollTop = preserveScroll ? list.scrollTop : 0;
 
     renderChatStatePanel(ch);
     renderNpcStrip(ch.id);
@@ -5425,9 +5440,10 @@
       list.appendChild(row);
     }
 
-    // Scroll to bottom after the view becomes visible
+    if (preserveScroll) restoreScrollTop(list, scrollTop);
     requestAnimationFrame(() => {
-      list.scrollTop = list.scrollHeight;
+      if (preserveScroll) restoreScrollTop(list, scrollTop);
+      else list.scrollTop = list.scrollHeight;
     });
   }
 
@@ -6964,9 +6980,11 @@
     return row ? row.querySelector(".bubble") : null;
   }
 
-  function appendMessageRow(m, ch) {
+  function appendMessageRow(m, ch, options = {}) {
     const list = $("#messages");
     if (!list) return;
+    const preserveScroll = Boolean(options.preserveScroll || state.generating);
+    const scrollTop = preserveScroll ? list.scrollTop : 0;
 
     const row = document.createElement("div");
     row.className = `msg ${m.role === "user" ? "msg--me" : ""}`;
@@ -7039,7 +7057,8 @@
     }
 
     list.appendChild(row);
-    list.scrollTop = list.scrollHeight;
+    if (preserveScroll) restoreScrollTop(list, scrollTop);
+    else list.scrollTop = list.scrollHeight;
 
     updateChatActionButtons();
   }
@@ -7540,8 +7559,7 @@
 
     const renderNow = () => {
       if (!bubble) return;
-      renderBubbleContent(bubble, base + generated, { role: "assistant", characterName: ch.name });
-      if (list) list.scrollTop = list.scrollHeight;
+      renderBubbleContentKeepingScroll(bubble, list, base + generated, { role: "assistant", characterName: ch.name });
     };
 
     const payload = {
@@ -7798,7 +7816,7 @@
       ts: nowTs(), pending: true, image_loading: true
     };
     setChatHistory(ch.id, chatHistoryFor(ch.id).concat([placeholder]));
-    appendMessageRow(placeholder, ch);
+    appendMessageRow(placeholder, ch, { preserveScroll: true });
 
     setGenerating(true);
     $("#composerHint").textContent = "Генерация изображения…";
@@ -7860,8 +7878,7 @@
 
     const renderNow = () => {
       if (!bubble) return;
-      renderBubbleContent(bubble, base + generated, { role: "assistant", characterName: ch.name });
-      if (list) list.scrollTop = list.scrollHeight;
+      renderBubbleContentKeepingScroll(bubble, list, base + generated, { role: "assistant", characterName: ch.name });
     };
 
     const cfg = openAiProviderDefaults(state.provider);
@@ -7988,8 +8005,7 @@
 
     const renderNow = () => {
       if (!bubble) return;
-      renderBubbleContent(bubble, base + generated, { role: "assistant", characterName: ch.name });
-      if (list) list.scrollTop = list.scrollHeight;
+      renderBubbleContentKeepingScroll(bubble, list, base + generated, { role: "assistant", characterName: ch.name });
     };
 
     const payload = {
@@ -8688,7 +8704,7 @@
     setChatHistory(ch.id, pendingHistory);
     if (chatId) resetLmContextFor(chatId);
     reconcileAutoTempCharactersFromHistory(ch.id);
-    renderMessages();
+    renderMessages({ preserveScroll: true });
 
     setGenerating(true);
     $("#composerHint").textContent = "Перегенерирую ответ…";
@@ -8857,7 +8873,7 @@
     nextHistory[lastIdx] = { ...last, pending: true };
     setChatHistory(ch.id, nextHistory);
     if (chatId) resetLmContextFor(chatId);
-    renderMessages();
+    renderMessages({ preserveScroll: true });
 
     setGenerating(true);
     $("#composerHint").textContent = hintText;
