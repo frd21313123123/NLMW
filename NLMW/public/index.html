@@ -213,6 +213,7 @@
           <div class="chatsSubTabs">
             <button class="chatsSubTabs__btn chatsSubTabs__btn--active" id="subTabPersonal" type="button">Личные</button>
             <button class="chatsSubTabs__btn" id="subTabMulti" type="button">Мульти</button>
+            <button class="chatsSubTabs__btn" id="subTabRoleplay" type="button">Ролевки</button>
           </div>
           <div class="chatList" id="chatList"></div>
         </section>
@@ -408,6 +409,40 @@
       </nav>
 
       </div><!-- /mainContent -->
+
+      <!-- Free Roleplay (custom plot) modal -->
+      <div class="modal" id="freeRoleplayModal" hidden>
+        <div class="modal__overlay" id="freeRoleplayOverlay"></div>
+        <div class="modal__window modal__window--sm" role="dialog" aria-modal="true" aria-label="Ролевая по сюжету">
+          <div class="modal__header">
+            <div class="modal__title">Свободная ролевая</div>
+            <div class="modal__headerActions">
+              <button class="btn" id="freeRoleplayClose" type="button">Закрыть</button>
+            </div>
+          </div>
+          <div class="modal__content" style="padding: 16px; overflow-y: auto;">
+            <form id="freeRoleplayForm" autocomplete="off">
+              <label class="field">
+                <span class="field__label">Имя вашего персонажа/собеседника</span>
+                <input class="field__input" id="frCharNameInput" type="text" placeholder="Например: Рассказчик, Таинственный незнакомец" maxlength="25" />
+                <div class="smallNote">По умолчанию: Рассказчик.</div>
+              </label>
+              
+              <label class="field" style="margin-top: 12px;">
+                <span class="field__label">Сюжет сценария / Обстановка *</span>
+                <textarea class="field__input field__input--area" id="frPlotInput" rows="5" required
+                  placeholder="Опишите, где вы находитесь, что происходит и в чем суть сценария. Например: Мы оказались заперты в старом заброшенном особняке, на улице бушует гроза, и мы слышим шаги на втором этаже..." maxlength="2000"></textarea>
+                <div class="smallNote">Опишите завязку сюжета, роли, локацию и правила игры.</div>
+              </label>
+              
+              <div class="row row--actions" style="margin-top: 18px;">
+                <button class="btn btn--ghost" id="btnFrCancel" type="button">Отмена</button>
+                <button class="btn btn--accent" type="submit" id="btnFrSubmit">Начать ролевую</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
 
       <!-- NPC (temporary character) modal -->
       <div class="modal" id="npcModal" hidden>

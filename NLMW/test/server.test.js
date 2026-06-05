@@ -203,10 +203,11 @@ test('first registered user is admin and can toggle registration', async () => {
 });
 
 test('POST /api/characters/bulk replace overwrites server character storage', async () => {
+  resetAuthStore();
   const { server, baseUrl } = startTestServer();
 
   try {
-    const cookie = await createSessionCookie(baseUrl);
+    const cookie = await createSessionCookie(baseUrl, 'catalog-admin@example.com');
     const firstRes = await fetch(`${baseUrl}/api/characters/bulk?replace=1`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },
@@ -232,6 +233,50 @@ test('POST /api/characters/bulk replace overwrites server character storage', as
     assert.equal(getRes.status, 200);
     const chars = await getRes.json();
     assert.deepEqual(chars.map((c) => c.id), ['replace-new']);
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test('regular users cannot mutate shared character storage', async () => {
+  resetAuthStore();
+  const { server, baseUrl } = startTestServer();
+
+  try {
+    const adminCookie = await createSessionCookie(baseUrl, 'catalog-owner@example.com');
+    const userCookie = await createSessionCookie(baseUrl, 'catalog-user@example.com');
+
+    const seedRes = await fetch(`${baseUrl}/api/characters/bulk?replace=1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify([{ id: 'admin-seed', name: 'Admin Seed', updatedAt: 1 }])
+    });
+    assert.equal(seedRes.status, 200);
+
+    const replaceRes = await fetch(`${baseUrl}/api/characters/bulk?replace=1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: userCookie },
+      body: JSON.stringify([{ id: 'regular-overwrite', name: 'Regular Overwrite', updatedAt: 2 }])
+    });
+    assert.equal(replaceRes.status, 403);
+
+    const upsertRes = await fetch(`${baseUrl}/api/characters`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: userCookie },
+      body: JSON.stringify({ id: 'regular-upsert', name: 'Regular Upsert', updatedAt: 3 })
+    });
+    assert.equal(upsertRes.status, 403);
+
+    const deleteRes = await fetch(`${baseUrl}/api/characters/admin-seed`, {
+      method: 'DELETE',
+      headers: { Cookie: userCookie }
+    });
+    assert.equal(deleteRes.status, 403);
+
+    const getRes = await fetch(`${baseUrl}/api/characters`, { headers: { Cookie: adminCookie } });
+    assert.equal(getRes.status, 200);
+    const chars = await getRes.json();
+    assert.deepEqual(chars.map((c) => c.id), ['admin-seed']);
   } finally {
     await closeTestServer(server);
   }
@@ -269,7 +314,8 @@ test('user data is stored on server and isolated per account', async () => {
       promptFolders: [{ id: 'folder-1', name: 'Folder', createdAt: 1 }],
       groupChats: [],
       activeGroupChatId: '',
-      polybuzzSettings: { pageSize: 50, autoload: false, genderAccuracy: 'precise' }
+      polybuzzSettings: { pageSize: 50, autoload: false, genderAccuracy: 'precise' },
+      customCharacters: [{ id: 'custom-char-1', name: 'Custom Character', isQuickRoleplay: true }]
     };
 
     const saveRes = await fetch(`${baseUrl}/api/user-data`, {
@@ -291,6 +337,7 @@ test('user data is stored on server and isolated per account', async () => {
     assert.equal(bodyA.data.savedPrompts[0].id, 'prompt-1');
     assert.equal(bodyA.data.promptFolders[0].id, 'folder-1');
     assert.equal(bodyA.data.polybuzzSettings.genderAccuracy, 'precise');
+    assert.equal(bodyA.data.customCharacters[0].id, 'custom-char-1');
 
     const loadB = await fetch(`${baseUrl}/api/user-data`, { headers: { Cookie: cookieB } });
     assert.equal(loadB.status, 200);
@@ -349,6 +396,56 @@ test('GET /api/auth/me and protected APIs reject anonymous requests', async () =
 
     const dataRes = await fetch(`${baseUrl}/api/user-data`);
     assert.equal(dataRes.status, 401);
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test('robust cookie URI decoding does not crash on malformed cookie', async () => {
+  const { server, baseUrl } = startTestServer();
+
+  try {
+    const res = await fetch(`${baseUrl}/api/auth/me`, {
+      headers: { Cookie: 'nlmw_session=%E0%A4%A' }
+    });
+    // Should reject with 401 instead of crashing the server/request with 500 URIError
+    assert.equal(res.status, 401);
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test('rate limiting blocks registration and login after 10 requests', async () => {
+  const { server, baseUrl } = startTestServer();
+  const login = `rate-${Date.now()}@example.com`;
+
+  try {
+    // Make 10 requests which may fail/succeed but should not be rate-limited yet
+    for (let i = 0; i < 10; i++) {
+      const res = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-rate-limit': 'true'
+        },
+        body: JSON.stringify({ login, password: 'wrong-password' })
+      });
+      // All these should be 401 since it's wrong password
+      assert.equal(res.status, 401);
+    }
+
+    // 11th request must be rate-limited (429)
+    const resRateLimited = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-test-rate-limit': 'true'
+      },
+      body: JSON.stringify({ login, password: 'wrong-password' })
+    });
+    assert.equal(resRateLimited.status, 429);
+    const body = await resRateLimited.json();
+    assert.match(body.error, /Слишком много попыток/);
   } finally {
     await closeTestServer(server);
   }

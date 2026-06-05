@@ -1142,6 +1142,26 @@ body {
   margin-left: auto;
 }
 
+.msg__bubbleWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.msg--me .msg__bubbleWrap {
+  align-items: flex-end;
+}
+
+.msg--me .msg__meta {
+  text-align: right;
+}
+
+.msg--me .msg__actions,
+.msg--me .msg__branchNav {
+  justify-content: flex-end;
+}
+
 .msg__meta {
   margin-top: 4px;
   font-size: 11px;
@@ -5218,3 +5238,4 @@ body {
     transition: none !important;
   }
 }
+

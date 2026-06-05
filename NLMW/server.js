@@ -6,12 +6,17 @@ const http = require("http");
 const https = require("https");
 const crypto = require("crypto");
 const { Readable } = require("stream");
+const dns = require("dns");
 const express = require("express");
+
+// Force Node.js to prefer IPv4 when resolving DNS (e.g., resolving "localhost" to 127.0.0.1 first).
+// This avoids IPv6 loopback connection failures (EACCES) on Windows when contacting localhost.
+dns.setDefaultResultOrder("ipv4first");
 
 const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
-const LMSTUDIO_BASE_URL = String(process.env.LMSTUDIO_BASE_URL || "http://localhost:1234/v1").replace(/\/+$/, "");
+const LMSTUDIO_BASE_URL = String(process.env.LMSTUDIO_BASE_URL || "http://127.0.0.1:1234/v1").replace(/\/+$/, "");
 const LMSTUDIO_API_KEY = process.env.LMSTUDIO_API_KEY ? String(process.env.LMSTUDIO_API_KEY) : "";
 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY ? String(process.env.MISTRAL_API_KEY) : "";
 const MISTRAL_BASE_URL = String(process.env.MISTRAL_BASE_URL || "https://api.mistral.ai/v1").replace(/\/+$/, "");
@@ -61,12 +66,13 @@ function ensureDataDir() {
 function readJsonFile(file, fallback) {
   ensureDataDir();
   try {
+    if (!fs.existsSync(file)) return fallback;
     const raw = fs.readFileSync(file, "utf8");
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? parsed : fallback;
   } catch (err) {
-    if (err && err.code !== "ENOENT") console.error(`[data] failed to read ${path.basename(file)}`, err);
-    return fallback;
+    console.error(`[data] failed to read ${path.basename(file)}`, err);
+    throw err;
   }
 }
 
@@ -168,10 +174,55 @@ function parseCookies(header) {
     if (idx === -1) continue;
     const key = part.slice(0, idx).trim();
     const value = part.slice(idx + 1).trim();
-    if (key) out[key] = decodeURIComponent(value);
+    if (key) {
+      try {
+        out[key] = decodeURIComponent(value);
+      } catch (_err) {
+        out[key] = value;
+      }
+    }
   }
   return out;
 }
+
+const authRateLimits = new Map();
+const MAX_RATE_LIMIT_KEYS = 10000;
+
+function consumeAuthRateLimit(ip, endpoint, maxRequests = 10, windowMs = 60 * 1000, req) {
+  if (process.env.SESSION_SECRET === "test-session-secret" && !req?.headers?.["x-test-rate-limit"]) {
+    return true;
+  }
+  const key = `${ip}:${endpoint}`;
+  const now = Date.now();
+
+  if (authRateLimits.size >= MAX_RATE_LIMIT_KEYS) {
+    for (const [k, val] of authRateLimits.entries()) {
+      if (val.resetTime <= now) {
+        authRateLimits.delete(k);
+      }
+    }
+    if (authRateLimits.size >= MAX_RATE_LIMIT_KEYS) {
+      const firstKey = authRateLimits.keys().next().value;
+      if (firstKey !== undefined) {
+        authRateLimits.delete(firstKey);
+      }
+    }
+  }
+
+  let record = authRateLimits.get(key);
+  if (!record || record.resetTime <= now) {
+    record = {
+      count: 0,
+      resetTime: now + windowMs
+    };
+  }
+
+  record.count++;
+  authRateLimits.set(key, record);
+
+  return record.count <= maxRequests;
+}
+
 
 function sessionCookie(token, maxAgeSeconds = Math.floor(SESSION_TTL_MS / 1000)) {
   const parts = [
@@ -273,6 +324,7 @@ function defaultUserData() {
     groupChats: [],
     activeGroupChatId: "",
     polybuzzSettings: null,
+    customCharacters: [],
     updatedAt: 0
   };
 }
@@ -299,6 +351,7 @@ function normalizeUserDataRecord(raw) {
   out.polybuzzSettings = src.polybuzzSettings && typeof src.polybuzzSettings === "object" && !Array.isArray(src.polybuzzSettings)
     ? src.polybuzzSettings
     : null;
+  out.customCharacters = Array.isArray(src.customCharacters) ? src.customCharacters.filter((x) => x && typeof x === "object") : [];
   out.updatedAt = Number(src.updatedAt) || Date.now();
   return out;
 }
@@ -381,6 +434,11 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.post("/api/auth/register", (req, res) => {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  if (!consumeAuthRateLimit(ip, "register", 10, 60 * 1000, req)) {
+    res.status(429).json({ error: "Слишком много попыток. Пожалуйста, попробуйте позже." });
+    return;
+  }
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const login = normalizeLogin(body.login || body.email);
   const name = String(body.name || "").trim();
@@ -444,6 +502,11 @@ app.post("/api/auth/register", (req, res) => {
 });
 
 app.post("/api/auth/login", (req, res) => {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  if (!consumeAuthRateLimit(ip, "login", 10, 60 * 1000, req)) {
+    res.status(429).json({ error: "Слишком много попыток. Пожалуйста, попробуйте позже." });
+    return;
+  }
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const login = normalizeLogin(body.login || body.email);
   const password = String(body.password || "");
@@ -609,7 +672,10 @@ app.get("/api/video/preview", async (req, res) => {
     }
 
     const endpoint = `https://noembed.com/embed?url=${encodeURIComponent(videoUrl.toString())}`;
-    const upstream = await fetch(endpoint, { method: "GET" });
+    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(10000)
+      : undefined;
+    const upstream = await fetch(endpoint, { method: "GET", signal });
     const data = await upstream.json();
     if (!upstream.ok || data.error) {
       res.status(404).json({ error: data.error || "Preview unavailable" });
@@ -641,16 +707,22 @@ function upstreamHeaders() {
 
 app.get("/api/lmstudio/models", async (_req, res) => {
   try {
+    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(10000)
+      : undefined;
+
     // Prefer native REST v1 models; fall back to OpenAI-compatible /v1/models.
     let upstream = await fetch(`${LMSTUDIO_REST_BASE_URL}/api/v1/models`, {
       method: "GET",
-      headers: upstreamHeaders()
+      headers: upstreamHeaders(),
+      signal
     });
 
     if (upstream.status === 404) {
       upstream = await fetch(`${LMSTUDIO_OPENAI_BASE_URL}/models`, {
         method: "GET",
-        headers: upstreamHeaders()
+        headers: upstreamHeaders(),
+        signal
       });
     }
 
@@ -685,7 +757,18 @@ function proxyStream(targetUrl, jsonPayload, headers, res) {
       }
     };
 
+    let upstreamResRef = null;
+    const onClose = () => {
+      upstream.destroy();
+      if (upstreamResRef) {
+        upstreamResRef.destroy();
+      }
+    };
+
+    res.on("close", onClose);
+
     const upstream = transport.request(opts, (upstreamRes) => {
+      upstreamResRef = upstreamRes;
       const status = upstreamRes.statusCode || 502;
       const contentType = upstreamRes.headers["content-type"] || "";
       const isEventStream = String(contentType).includes("text/event-stream");
@@ -701,13 +784,8 @@ function proxyStream(targetUrl, jsonPayload, headers, res) {
 
       if (typeof res.flushHeaders === "function") res.flushHeaders();
 
-      // Abort upstream if client disconnects.
-      res.on("close", () => {
-        upstream.destroy();
-        upstreamRes.destroy();
-      });
-
       upstreamRes.on("error", (err) => {
+        res.off("close", onClose);
         console.error("[chat stream]", err);
         res.end();
         resolve();
@@ -716,11 +794,13 @@ function proxyStream(targetUrl, jsonPayload, headers, res) {
       upstreamRes.pipe(res);
 
       upstreamRes.on("end", () => {
+        res.off("close", onClose);
         resolve();
       });
     });
 
     upstream.on("error", (err) => {
+      res.off("close", onClose);
       reject(err);
     });
 
@@ -1066,7 +1146,7 @@ function extractMetaContent(html, metaKey) {
   const tag = String(html || "").match(tagRe)?.[0] || "";
   if (!tag) return "";
 
-  const m = tag.match(/content\\s*=\\s*["']([^"']*)["']/i);
+  const m = tag.match(/content\s*=\s*["']([^"']*)["']/i);
   return m ? decodeHtmlEntities(m[1]).trim() : "";
 }
 
@@ -1554,7 +1634,10 @@ app.post("/api/import/polybuzz", async (req, res) => {
     };
     if (POLYBUZZ_COOKIE) headers.Cookie = POLYBUZZ_COOKIE;
 
-    const upstream = await fetch(u.toString(), { method: "GET", headers, redirect: "follow" });
+    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(10000)
+      : undefined;
+    const upstream = await fetch(u.toString(), { method: "GET", headers, redirect: "follow", signal });
     const html = await upstream.text();
 
     if (!upstream.ok) {
@@ -1787,7 +1870,11 @@ async function scrapePolybuzzCatalog() {
     "Cache-Control": "no-cache"
   };
 
-  const upstream = await fetch("https://www.polybuzz.ai/ru", { method: "GET", headers, redirect: "follow" });
+  const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+    ? AbortSignal.timeout(10000)
+    : undefined;
+
+  const upstream = await fetch("https://www.polybuzz.ai/ru", { method: "GET", headers, redirect: "follow", signal });
   if (!upstream.ok) throw new Error(`Polybuzz returned ${upstream.status}`);
   const html = await upstream.text();
 
@@ -1870,7 +1957,10 @@ async function fetchPolybuzzCatalogPage(page) {
   };
 
   try {
-    const upstream = await fetch(`https://www.polybuzz.ai${locale}`, { method: "GET", headers, redirect: "follow" });
+    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(10000)
+      : undefined;
+    const upstream = await fetch(`https://www.polybuzz.ai${locale}`, { method: "GET", headers, redirect: "follow", signal });
     if (!upstream.ok) return [];
     const html = await upstream.text();
 
@@ -2058,7 +2148,10 @@ async function downloadImageAsDataUrl(imgUrl, maxBytes = 2 * 1024 * 1024) {
   if (!imgUrl) return null;
   try {
     const headers = polybuzzBaseHeaders({ accept: "image/*,*/*;q=0.8" });
-    const resp = await fetch(String(imgUrl), { method: "GET", headers, redirect: "follow" });
+    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(10000)
+      : undefined;
+    const resp = await fetch(String(imgUrl), { method: "GET", headers, redirect: "follow", signal });
     if (!resp.ok) return null;
 
     const contentLength = Number(resp.headers.get("content-length") || 0);
@@ -2106,12 +2199,15 @@ app.get("/api/media", async (req, res) => {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
       Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
       "Accept-Language": "ru,en;q=0.8",
-      Referer: "https://www.polybuzz.ai/",
+      "Referer": "https://www.polybuzz.ai/",
       Origin: "https://www.polybuzz.ai"
     };
     if (POLYBUZZ_COOKIE) headers.Cookie = POLYBUZZ_COOKIE;
 
-    const upstream = await fetch(u.toString(), { method: "GET", headers, redirect: "follow" });
+    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(10000)
+      : undefined;
+    const upstream = await fetch(u.toString(), { method: "GET", headers, redirect: "follow", signal });
     if (!upstream.ok || !upstream.body) {
       res.status(502).json({ error: `Upstream media error: ${upstream.status}` });
       return;
@@ -2262,6 +2358,7 @@ function backupCharactersFileOnce(rawText) {
 function loadCharacters() {
   ensureDataDir();
   try {
+    if (!fs.existsSync(CHARACTERS_FILE)) return [];
     const raw = fs.readFileSync(CHARACTERS_FILE, "utf8");
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return [];
@@ -2275,7 +2372,11 @@ function loadCharacters() {
     }
 
     return migrated;
-  } catch {
+  } catch (err) {
+    console.error("[characters] failed to load characters", err);
+    if (fs.existsSync(CHARACTERS_FILE)) {
+      throw err;
+    }
     return [];
   }
 }
@@ -2291,7 +2392,7 @@ app.get("/api/characters", (_req, res) => {
 });
 
 // POST upsert a character
-app.post("/api/characters", (req, res) => {
+app.post("/api/characters", requireAdmin, (req, res) => {
   const ch = migrateCharacterRecord(req.body);
   if (!ch) {
     return res.status(400).json({ error: "Character must have an id" });
@@ -2306,7 +2407,7 @@ app.post("/api/characters", (req, res) => {
 });
 
 // POST bulk upsert or replace (for migration / import)
-app.post("/api/characters/bulk", (req, res) => {
+app.post("/api/characters/bulk", requireAdmin, (req, res) => {
   const items = Array.isArray(req.body) ? req.body : req.body?.characters;
   if (!Array.isArray(items)) {
     return res.status(400).json({ error: "Expected array" });
@@ -2334,7 +2435,7 @@ app.post("/api/characters/bulk", (req, res) => {
 });
 
 // DELETE a character by id
-app.delete("/api/characters/:id", (req, res) => {
+app.delete("/api/characters/:id", requireAdmin, (req, res) => {
   const id = req.params.id;
   let chars = loadCharacters();
   const before = chars.length;

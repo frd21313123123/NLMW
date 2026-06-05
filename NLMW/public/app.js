@@ -22,6 +22,7 @@
 
   const SERVER_USER_DATA_KEYS = new Set([
     STORAGE_KEYS.profile,
+    STORAGE_KEYS.characters,
     STORAGE_KEYS.selectedCharacterId,
     STORAGE_KEYS.conversations,
     STORAGE_KEYS.modelId,
@@ -37,7 +38,6 @@
   ]);
 
   const SERVER_BACKED_LOCAL_KEYS = new Set([
-    STORAGE_KEYS.characters,
     ...SERVER_USER_DATA_KEYS
   ]);
 
@@ -92,6 +92,7 @@
     registrationEnabled: true
   };
 
+  const serverCharacterIds = new Set();
   let speakerStateModalContext = null;
   let appBootstrapped = false;
   let userDataSyncReady = false;
@@ -484,25 +485,28 @@
     merged.backstory = String(merged.backstory || "");
     merged.dialogueStyle = normalizeDialogueStyleId(merged.dialogueStyle, "");
     merged.initialMessage = String(merged.initialMessage || "");
+    merged.isQuickRoleplay = c?.isQuickRoleplay === true;
 
     return merged;
   }
 
-  function ensureSeed() {
-    state.profile = normalizeProfileRecord(loadJson(STORAGE_KEYS.profile, defaultProfile()));
-    state.characters = loadJson(STORAGE_KEYS.characters, []);
-    state.selectedCharacterId = String(loadJson(STORAGE_KEYS.selectedCharacterId, ""));
-    state.conversations = loadJson(STORAGE_KEYS.conversations, {});
-    state.responseIds = loadJson(STORAGE_KEYS.responseIds, {});
-    state.responseIdChains = loadJson(STORAGE_KEYS.responseIdChains, {});
-    state.cloudDialogsPushedAt = Number(loadJson(STORAGE_KEYS.cloudDialogsPushedAt, 0)) || 0;
-    state.modelId = String(loadJson(STORAGE_KEYS.modelId, ""));
-    state.provider = String(loadJson(STORAGE_KEYS.provider, "lmstudio"));
-    state.mistralKey = String(loadJson(STORAGE_KEYS.mistralKey, ""));
-    state.openrouterKey = String(loadJson(STORAGE_KEYS.openrouterKey, ""));
-    state.savedPrompts = loadJson(STORAGE_KEYS.savedPrompts, []);
-    state.promptFolders = loadJson(STORAGE_KEYS.promptFolders, []);
-    state.polybuzzSettings = normalizePolybuzzSettings(loadJson(STORAGE_KEYS.polybuzzSettings, defaultPolybuzzSettings()));
+  function ensureSeed(opts = {}) {
+    if (opts.forceLoadFromLocalStorage || !state.profile) {
+      state.profile = normalizeProfileRecord(loadJson(STORAGE_KEYS.profile, defaultProfile()));
+      state.characters = loadJson(STORAGE_KEYS.characters, []);
+      state.selectedCharacterId = String(loadJson(STORAGE_KEYS.selectedCharacterId, ""));
+      state.conversations = loadJson(STORAGE_KEYS.conversations, {});
+      state.responseIds = loadJson(STORAGE_KEYS.responseIds, {});
+      state.responseIdChains = loadJson(STORAGE_KEYS.responseIdChains, {});
+      state.cloudDialogsPushedAt = Number(loadJson(STORAGE_KEYS.cloudDialogsPushedAt, 0)) || 0;
+      state.modelId = String(loadJson(STORAGE_KEYS.modelId, ""));
+      state.provider = String(loadJson(STORAGE_KEYS.provider, "lmstudio"));
+      state.mistralKey = String(loadJson(STORAGE_KEYS.mistralKey, ""));
+      state.openrouterKey = String(loadJson(STORAGE_KEYS.openrouterKey, ""));
+      state.savedPrompts = loadJson(STORAGE_KEYS.savedPrompts, []);
+      state.promptFolders = loadJson(STORAGE_KEYS.promptFolders, []);
+      state.polybuzzSettings = normalizePolybuzzSettings(loadJson(STORAGE_KEYS.polybuzzSettings, defaultPolybuzzSettings()));
+    }
 
     if (!["lmstudio", "mistral", "openrouter"].includes(state.provider)) {
       state.provider = "lmstudio";
@@ -831,6 +835,10 @@
   }
 
   async function replaceServerCharacters(characters) {
+    if (state.currentUser && !state.currentUser.isAdmin) {
+      return { ok: true, count: characters.length, serverSkipped: true };
+    }
+
     const resp = await fetch("/api/characters/bulk?replace=1", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -863,26 +871,42 @@
     }
 
     const importedCharacters = src.characters.filter((x) => x && typeof x === "object").map(normalizeCharacterRecord);
+    const importedCharacterIds = new Set(importedCharacters.map((c) => c.id));
+    const selectedCharacterId = importedCharacterIds.has(String(src.selectedCharacterId || ""))
+      ? String(src.selectedCharacterId || "")
+      : importedCharacters[0]?.id || "";
 
-    saveJson(STORAGE_KEYS.profile, normalizeProfileRecord(src.profile));
-    saveJson(STORAGE_KEYS.characters, importedCharacters);
-    saveJson(STORAGE_KEYS.selectedCharacterId, String(src.selectedCharacterId || ""));
-    saveJson(STORAGE_KEYS.conversations, src.conversations);
-    saveJson(STORAGE_KEYS.responseIds, src.responseIds && typeof src.responseIds === "object" && !Array.isArray(src.responseIds) ? src.responseIds : {});
-    saveJson(
-      STORAGE_KEYS.responseIdChains,
-      src.responseIdChains && typeof src.responseIdChains === "object" && !Array.isArray(src.responseIdChains) ? src.responseIdChains : {}
-    );
-    if (Object.hasOwn(src, "modelId")) saveJson(STORAGE_KEYS.modelId, String(src.modelId || ""));
+    state.profile = normalizeProfileRecord(src.profile);
+    state.characters = importedCharacters;
+    state.selectedCharacterId = selectedCharacterId;
+    state.conversations = src.conversations;
+    state.responseIds = src.responseIds && typeof src.responseIds === "object" && !Array.isArray(src.responseIds) ? src.responseIds : {};
+    state.responseIdChains = src.responseIdChains && typeof src.responseIdChains === "object" && !Array.isArray(src.responseIdChains) ? src.responseIdChains : {};
+    if (Object.hasOwn(src, "modelId")) state.modelId = String(src.modelId || "");
     if (Object.hasOwn(src, "provider")) {
-      saveJson(STORAGE_KEYS.provider, ["lmstudio", "mistral", "openrouter"].includes(src.provider) ? src.provider : "lmstudio");
+      state.provider = ["lmstudio", "mistral", "openrouter"].includes(src.provider) ? src.provider : "lmstudio";
     }
-    if (Object.hasOwn(src, "mistralKey")) saveJson(STORAGE_KEYS.mistralKey, String(src.mistralKey || ""));
-    if (Object.hasOwn(src, "openrouterKey")) saveJson(STORAGE_KEYS.openrouterKey, String(src.openrouterKey || ""));
-    if (Object.hasOwn(src, "savedPrompts")) saveJson(STORAGE_KEYS.savedPrompts, Array.isArray(src.savedPrompts) ? src.savedPrompts : []);
-    if (Object.hasOwn(src, "promptFolders")) saveJson(STORAGE_KEYS.promptFolders, Array.isArray(src.promptFolders) ? src.promptFolders : []);
-    saveJson(STORAGE_KEYS.groupChats, Array.isArray(src.groupChats) ? src.groupChats.map(normalizeGroupChat) : []);
-    saveJson(STORAGE_KEYS.activeGroupChatId, String(src.activeGroupChatId || ""));
+    if (Object.hasOwn(src, "mistralKey")) state.mistralKey = String(src.mistralKey || "");
+    if (Object.hasOwn(src, "openrouterKey")) state.openrouterKey = String(src.openrouterKey || "");
+    if (Object.hasOwn(src, "savedPrompts")) state.savedPrompts = Array.isArray(src.savedPrompts) ? src.savedPrompts : [];
+    if (Object.hasOwn(src, "promptFolders")) state.promptFolders = Array.isArray(src.promptFolders) ? src.promptFolders : [];
+    state.groupChats = Array.isArray(src.groupChats) ? src.groupChats.map(normalizeGroupChat) : [];
+    state.activeGroupChatId = String(src.activeGroupChatId || "");
+
+    saveJson(STORAGE_KEYS.profile, state.profile);
+    saveJson(STORAGE_KEYS.characters, state.characters);
+    saveJson(STORAGE_KEYS.selectedCharacterId, state.selectedCharacterId);
+    saveJson(STORAGE_KEYS.conversations, state.conversations);
+    saveJson(STORAGE_KEYS.responseIds, state.responseIds);
+    saveJson(STORAGE_KEYS.responseIdChains, state.responseIdChains);
+    saveJson(STORAGE_KEYS.modelId, state.modelId);
+    saveJson(STORAGE_KEYS.provider, state.provider);
+    saveJson(STORAGE_KEYS.mistralKey, state.mistralKey);
+    saveJson(STORAGE_KEYS.openrouterKey, state.openrouterKey);
+    saveJson(STORAGE_KEYS.savedPrompts, state.savedPrompts);
+    saveJson(STORAGE_KEYS.promptFolders, state.promptFolders);
+    saveJson(STORAGE_KEYS.groupChats, state.groupChats);
+    saveJson(STORAGE_KEYS.activeGroupChatId, state.activeGroupChatId);
 
     ensureSeed();
     loadGroupChats();
@@ -925,6 +949,10 @@
       groupChats: cloneForExport(Array.isArray(state.groupChats) ? state.groupChats.map(normalizeGroupChat) : [], []),
       activeGroupChatId: String(state.activeGroupChatId || ""),
       polybuzzSettings: cloneForExport(normalizePolybuzzSettings(state.polybuzzSettings), defaultPolybuzzSettings()),
+      customCharacters: cloneForExport(
+        Array.isArray(state.characters) ? state.characters.filter(isCustomCharacter) : [],
+        []
+      ),
       updatedAt: nowTs()
     };
   }
@@ -953,8 +981,14 @@
       groupChats: Array.isArray(src.groupChats) ? src.groupChats.map(normalizeGroupChat) : [],
       activeGroupChatId: String(src.activeGroupChatId || ""),
       polybuzzSettings: normalizePolybuzzSettings(src.polybuzzSettings),
+      customCharacters: Array.isArray(src.customCharacters) ? src.customCharacters : [],
       updatedAt: typeof src.updatedAt === "number" && Number.isFinite(src.updatedAt) ? src.updatedAt : 0
     };
+  }
+
+  function isCustomCharacter(c) {
+    if (!c || !c.id) return false;
+    return c.isQuickRoleplay === true || c.visibility === "private" || !serverCharacterIds.has(c.id);
   }
 
   function chatHasSharedContent(chat) {
@@ -1071,6 +1105,7 @@
       groupChats,
       activeGroupChatId,
       polybuzzSettings: server.polybuzzSettings || local.polybuzzSettings || defaultPolybuzzSettings(),
+      customCharacters: mergeRecordsById(local.customCharacters, server.customCharacters, normalizeCharacterRecord),
       updatedAt: Math.max(local.updatedAt || 0, server.updatedAt || 0, nowTs())
     };
   }
@@ -1095,6 +1130,21 @@
     state.activeGroupChatId = normalized.activeGroupChatId;
     state.polybuzzSettings = normalized.polybuzzSettings;
 
+    if (Array.isArray(normalized.customCharacters)) {
+      for (const cc of normalized.customCharacters) {
+        if (!cc || !cc.id) continue;
+        const idx = state.characters.findIndex((c) => c.id === cc.id);
+        if (idx === -1) {
+          state.characters.push(cc);
+        } else {
+          const local = state.characters[idx];
+          if ((cc.updatedAt || 0) > (local.updatedAt || 0)) {
+            state.characters[idx] = cc;
+          }
+        }
+      }
+    }
+
     applyingServerUserData = true;
     try {
       if (normalized.profile) saveJson(STORAGE_KEYS.profile, state.profile);
@@ -1110,6 +1160,7 @@
       saveJson(STORAGE_KEYS.groupChats, state.groupChats);
       saveJson(STORAGE_KEYS.activeGroupChatId, state.activeGroupChatId);
       saveJson(STORAGE_KEYS.polybuzzSettings, state.polybuzzSettings);
+      saveJson(STORAGE_KEYS.characters, state.characters);
     } finally {
       applyingServerUserData = false;
     }
@@ -2058,7 +2109,10 @@
     syncDiscoverTabButtons();
 
     const chars = Array.isArray(state.characters) ? state.characters.slice() : [];
-    const categories = buildDiscoverCategories(chars);
+    const isRoleplayTab = state.chatsSubTab === "roleplay";
+    const filteredChars = chars.filter((c) => isRoleplayTab ? c.isQuickRoleplay === true : c.isQuickRoleplay !== true);
+
+    const categories = buildDiscoverCategories(filteredChars);
     if (!categories.some((item) => item.id === state.discoverCategory)) {
       state.discoverCategory = "all";
     }
@@ -2066,7 +2120,18 @@
     const shell = document.createElement("div");
     shell.className = "discoverShell";
 
-    const items = chars
+    if (isRoleplayTab) {
+      const createBtn = document.createElement("button");
+      createBtn.type = "button";
+      createBtn.className = "multiCreateBtn";
+      createBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:20px;height:20px;flex-shrink:0"><path d="M12 5v14"/><path d="M5 12h14"/></svg> <span>Создать сюжетную ролевую</span>';
+      createBtn.style.margin = "12px 16px 4px 16px";
+      createBtn.style.width = "calc(100% - 32px)";
+      createBtn.addEventListener("click", () => openFreeRoleplayModal());
+      shell.appendChild(createBtn);
+    }
+
+    const items = filteredChars
       .map((character) => {
         const snapshot = latestChatSnapshotForCharacter(character.id);
         return {
@@ -3029,12 +3094,13 @@
     if (idx === -1) state.characters.unshift(next);
     else state.characters[idx] = next;
     saveJson(STORAGE_KEYS.characters, state.characters);
-    // Sync to server
-    fetch("/api/characters", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(next)
-    }).catch(() => {});
+    if (state.currentUser?.isAdmin) {
+      fetch("/api/characters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next)
+      }).catch(() => {});
+    }
   }
 
   function deleteCharacter(id) {
@@ -3058,8 +3124,9 @@
       saveJson(STORAGE_KEYS.selectedCharacterId, state.selectedCharacterId);
     }
     if (state.editingCharacterId === id) state.editingCharacterId = state.selectedCharacterId;
-    // Sync to server
-    fetch("/api/characters/" + encodeURIComponent(id), { method: "DELETE" }).catch(() => {});
+    if (state.currentUser?.isAdmin) {
+      fetch("/api/characters/" + encodeURIComponent(id), { method: "DELETE" }).catch(() => {});
+    }
   }
 
   // ── Group Chats ──
@@ -3089,10 +3156,12 @@
     };
   }
 
-  function loadGroupChats() {
-    const raw = loadJson(STORAGE_KEYS.groupChats, []);
-    state.groupChats = Array.isArray(raw) ? raw.map(normalizeGroupChat) : [];
-    state.activeGroupChatId = String(loadJson(STORAGE_KEYS.activeGroupChatId, ""));
+  function loadGroupChats(opts = {}) {
+    if (opts.forceLoadFromLocalStorage || !state.profile) {
+      const raw = loadJson(STORAGE_KEYS.groupChats, []);
+      state.groupChats = Array.isArray(raw) ? raw.map(normalizeGroupChat) : [];
+      state.activeGroupChatId = String(loadJson(STORAGE_KEYS.activeGroupChatId, ""));
+    }
   }
 
   function saveGroupChats() {
@@ -3221,8 +3290,10 @@
   function syncChatsSubTabs() {
     const btnPersonal = $("#subTabPersonal");
     const btnMulti = $("#subTabMulti");
+    const btnRoleplay = $("#subTabRoleplay");
     if (btnPersonal) btnPersonal.classList.toggle("chatsSubTabs__btn--active", state.chatsSubTab === "personal");
     if (btnMulti) btnMulti.classList.toggle("chatsSubTabs__btn--active", state.chatsSubTab === "multi");
+    if (btnRoleplay) btnRoleplay.classList.toggle("chatsSubTabs__btn--active", state.chatsSubTab === "roleplay");
   }
 
   function renderGroupChatList(filterText) {
@@ -3399,6 +3470,33 @@
     if (!list || !gc) return;
     const preserveScroll = Boolean(options.preserveScroll || state.generating);
     const scrollTop = preserveScroll ? list.scrollTop : 0;
+
+    // OPTIMIZATION: Check if message elements match history exactly to avoid rebuilding the DOM
+    const history = gc.messages;
+    const msgElements = Array.from(list.children).filter((el) => el.dataset.msgId);
+    const renderSignature = JSON.stringify([
+      state.profile?.avatar,
+      state.profile?.name,
+      state.characters.map((c) => [c.id, c.avatar, c.name])
+    ]);
+
+    if (list._renderSignature === renderSignature && msgElements.length === history.length) {
+      let identical = true;
+      for (let i = 0; i < history.length; i++) {
+        const el = msgElements[i];
+        const m = history[i];
+        if (el.dataset.msgId !== m.id || el._msgState !== JSON.stringify(m)) {
+          identical = false;
+          break;
+        }
+      }
+      if (identical) {
+        if (preserveScroll) restoreScrollTop(list, scrollTop);
+        return;
+      }
+    }
+
+    list._renderSignature = renderSignature;
     list.innerHTML = "";
 
     const disclaimer = document.createElement("div");
@@ -3417,6 +3515,7 @@
         setImg(avatar, state.profile?.avatar, state.profile?.name);
 
         const bubbleWrap = document.createElement("div");
+        bubbleWrap.className = "msg__bubbleWrap";
         const bubble = document.createElement("div");
         bubble.className = "bubble";
         renderBubbleContent(bubble, m.content, { role: "user", characterName: "" });
@@ -3439,6 +3538,7 @@
         setImg(avatar, ch ? getBestCharacterDisplayImage(ch) : "", ch?.name || "?");
 
         const bubbleWrap = document.createElement("div");
+        bubbleWrap.className = "msg__bubbleWrap";
 
         const charLabel = document.createElement("button");
         charLabel.type = "button";
@@ -3473,6 +3573,7 @@
       }
 
       row.dataset.msgId = m.id;
+      row._msgState = JSON.stringify(m);
       list.appendChild(row);
     }
 
@@ -4692,7 +4793,7 @@
       } else if (action === "regen") {
         const hasUserBefore = b.dataset.hasUserBefore === "1";
         b.disabled = disableAll || !hasUserBefore;
-      } else if (action === "branch-prev" || action === "branch-next") {
+      } else if (action === "branch-prev" || action === "branch-next" || action === "edit-prompt") {
         b.disabled = state.generating;
       }
     }
@@ -5191,6 +5292,33 @@
     renderNpcStrip(ch.id);
 
     const history = chatHistoryFor(ch.id);
+
+    // OPTIMIZATION: Check if message elements match history exactly to avoid rebuilding the DOM
+    const msgElements = Array.from(list.children).filter((el) => el.dataset.msgId);
+    const renderSignature = JSON.stringify([
+      state.profile?.avatar,
+      state.profile?.name,
+      ch.avatar,
+      ch.name
+    ]);
+
+    if (list._renderSignature === renderSignature && msgElements.length === history.length) {
+      let identical = true;
+      for (let i = 0; i < history.length; i++) {
+        const el = msgElements[i];
+        const m = history[i];
+        if (el.dataset.msgId !== m.id || el._msgState !== JSON.stringify(m)) {
+          identical = false;
+          break;
+        }
+      }
+      if (identical) {
+        if (preserveScroll) restoreScrollTop(list, scrollTop);
+        return;
+      }
+    }
+
+    list._renderSignature = renderSignature;
     list.innerHTML = "";
 
     const mobileDisclaimer = document.createElement("div");
@@ -5226,6 +5354,7 @@
         const evRow = document.createElement("div");
         evRow.className = `sceneEvent sceneEvent--${m.type === "npc_joined" ? "joined" : "left"}`;
         evRow.dataset.msgId = m.id;
+        evRow._msgState = JSON.stringify(m);
         const arrow = m.type === "npc_joined" ? "→" : "←";
         const verb = m.type === "npc_joined" ? "появился в сцене" : "покинул сцену";
         const span = document.createElement("span");
@@ -5239,6 +5368,7 @@
       row.className = `msg ${m.role === "user" ? "msg--me" : ""}`;
       if (index === 0 && m.role === "assistant") row.classList.add("msg--intro");
       row.dataset.msgId = m.id;
+      row._msgState = JSON.stringify(m);
 
       const avatar = document.createElement("img");
       // Resolve display identity (NPC vs main character)
@@ -5259,6 +5389,7 @@
       if (m.npcDeleted) row.classList.add("msg--npc-deleted");
 
       const bubbleWrap = document.createElement("div");
+      bubbleWrap.className = "msg__bubbleWrap";
 
       // NPC name label above bubble
       if (npcObj) {
@@ -5295,6 +5426,24 @@
       let actionsEl = null;
       let branchNavEl = null;
 
+      // Only show edit for user messages
+      if (m.role === "user" && !m.pending) {
+        const actions = document.createElement("div");
+        actions.className = "msg__actions";
+
+        const btnEdit = document.createElement("button");
+        btnEdit.className = "miniBtn";
+        btnEdit.type = "button";
+        btnEdit.textContent = "✎";
+        btnEdit.title = "Редактировать";
+        btnEdit.dataset.action = "edit-prompt";
+        btnEdit.dataset.msgId = m.id;
+        btnEdit.disabled = state.generating;
+
+        actions.appendChild(btnEdit);
+        actionsEl = actions;
+      }
+
       // Only show regen/cont/thoughts for main character messages (not NPC, not deleted)
       if (m.role === "assistant" && !m.image_url && !m.image_loading && speaker?.type !== "npc" && !m.npcDeleted) {
         let hasUserBeforeThisMsg = false;
@@ -5308,7 +5457,7 @@
         const btnRegen = document.createElement("button");
         btnRegen.className = "miniBtn";
         btnRegen.type = "button";
-        btnRegen.textContent = "R";
+        btnRegen.textContent = "⟳";
         btnRegen.title = "Перегенерировать";
         btnRegen.dataset.action = "regen";
         btnRegen.dataset.msgId = m.id;
@@ -6597,18 +6746,30 @@
 
   function fillProfileUI() {
     renderAccountSummary();
-    $("#userName").value = state.profile?.name || "";
-    $("#userGender").value = state.profile?.gender || "unspecified";
+    const nameEl = $("#userName");
+    if (nameEl && document.activeElement !== nameEl) {
+      nameEl.value = state.profile?.name || "";
+    }
+    const genderEl = $("#userGender");
+    if (genderEl && document.activeElement !== genderEl) {
+      genderEl.value = state.profile?.gender || "unspecified";
+    }
     setImg($("#userAvatarPreview"), state.profile?.avatar, state.profile?.name);
 
     const providerSel = $("#providerSelect");
-    if (providerSel) providerSel.value = state.provider || "lmstudio";
+    if (providerSel && document.activeElement !== providerSel) {
+      providerSel.value = state.provider || "lmstudio";
+    }
 
     const mistralKeyInput = $("#mistralKeyInput");
-    if (mistralKeyInput) mistralKeyInput.value = state.mistralKey || "";
+    if (mistralKeyInput && document.activeElement !== mistralKeyInput) {
+      mistralKeyInput.value = state.mistralKey || "";
+    }
 
     const openrouterKeyInput = $("#openrouterKeyInput");
-    if (openrouterKeyInput) openrouterKeyInput.value = state.openrouterKey || "";
+    if (openrouterKeyInput && document.activeElement !== openrouterKeyInput) {
+      openrouterKeyInput.value = state.openrouterKey || "";
+    }
 
     const mistralSection = $("#mistralSettings");
     if (mistralSection) mistralSection.hidden = state.provider !== "mistral";
@@ -7009,6 +7170,7 @@
     else setImg(avatar, displayAvatar, displayName);
 
     const bubbleWrap = document.createElement("div");
+    bubbleWrap.className = "msg__bubbleWrap";
 
     if (npcObj) {
       const npcLabel = document.createElement("button");
@@ -7047,6 +7209,23 @@
 
     bubbleWrap.appendChild(bubble);
     bubbleWrap.appendChild(meta);
+
+    if (m.role === "user") {
+      const actions = document.createElement("div");
+      actions.className = "msg__actions";
+
+      const btnEdit = document.createElement("button");
+      btnEdit.className = "miniBtn";
+      btnEdit.type = "button";
+      btnEdit.textContent = "✎";
+      btnEdit.title = "Редактировать";
+      btnEdit.dataset.action = "edit-prompt";
+      btnEdit.dataset.msgId = m.id;
+      btnEdit.disabled = state.generating;
+
+      actions.appendChild(btnEdit);
+      bubbleWrap.appendChild(actions);
+    }
 
     if (m.role === "user") {
       row.appendChild(bubbleWrap);
@@ -7288,6 +7467,75 @@
 
   function shouldUseMistralForOutfitVision() {
     return isRemoteOpenAiProvider() || Boolean(String(state.mistralKey || "").trim());
+  }
+
+  async function generateGreetingFromAI(charName, plot) {
+    const prompt = `Ты — ${charName}. Ты находишься в ролевой игре со следующим сюжетом:\n${plot}\n\nНапиши первое сообщение от своего лица, чтобы начать ролевую игру. Опиши действия, мысли или реплику, которые подходят под сюжет, чтобы вовлечь пользователя. Пиши только сообщение от первого лица, без мета-текста. Не пиши приветствий вроде "Привет, давай начнем игру". Сразу входи в роль. Напиши 1-3 абзаца.`;
+
+    const openAiStyleMessages = [
+      {
+        role: "user",
+        content: prompt
+      }
+    ];
+
+    let res;
+    if (isRemoteOpenAiProvider()) {
+      const cfg = openAiProviderDefaults(state.provider);
+      res = await fetch(cfg.endpoint, {
+        method: "POST",
+        headers: openAiProviderHeaders(state.provider),
+        body: JSON.stringify({
+          model: cfg.model,
+          messages: openAiStyleMessages,
+          temperature: 0.85,
+          max_tokens: 400,
+          stream: false
+        })
+      });
+    } else {
+      res = await fetch("/api/lmstudio/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: state.modelId || "local-model",
+          messages: openAiStyleMessages,
+          temperature: 0.85,
+          max_tokens: 400,
+          stream: false
+        })
+      });
+    }
+
+    const text = await res.text();
+    const data = safeJsonParse(text);
+
+    if (!res.ok) {
+      const errMsg = data?.error || data?.message || `Ошибка генерации приветствия (${res.status})`;
+      throw new Error(String(errMsg));
+    }
+
+    let greetingText = "";
+    if (data && Array.isArray(data.output)) greetingText = extractRestMessagesFromResult(data);
+    else greetingText = data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || "";
+
+    return String(greetingText || "").trim();
+  }
+
+  function openFreeRoleplayModal() {
+    const modal = $("#freeRoleplayModal");
+    if (modal) {
+      modal.hidden = false;
+      const charName = $("#frCharNameInput");
+      const plot = $("#frPlotInput");
+      if (charName) charName.value = "";
+      if (plot) plot.value = "";
+    }
+  }
+
+  function closeFreeRoleplayModal() {
+    const modal = $("#freeRoleplayModal");
+    if (modal) modal.hidden = true;
   }
 
   async function generateOutfitFromAvatar() {
@@ -8763,8 +9011,9 @@
 
   function parseCommandAttrs(s) {
     const out = {};
-    for (const m of s.matchAll(/(\w+)\s*=\s*"([^"]*)"/g)) {
-      out[m[1]] = m[2];
+    for (const m of s.matchAll(/(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^"'\s]+))/g)) {
+      const val = m[2] !== undefined ? m[2] : (m[3] !== undefined ? m[3] : m[4]);
+      out[m[1]] = val;
     }
     return out;
   }
@@ -9188,6 +9437,9 @@
 
         if (action === "regen") {
           regenerateMessageAt(msgId);
+        } else if (action === "edit-prompt") {
+          const ch = activeCharacter();
+          if (ch) editMessage(ch.id, msgId);
         } else if (action === "cont") {
           continueLastAnswer();
         } else if (action === "thoughts") {
@@ -9830,7 +10082,9 @@
           const result = await applyImportedAppData(payload);
           if (profileDataNote) {
             const count = typeof result?.count === "number" ? result.count : state.characters.length;
-            profileDataNote.textContent = `Импорт завершен. Сервер обновлен: персонажей ${count}.`;
+            profileDataNote.textContent = result?.serverSkipped
+              ? `Импорт завершен локально: персонажей ${count}. Общий серверный каталог меняет только администратор.`
+              : `Импорт завершен. Сервер обновлен: персонажей ${count}.`;
           }
           flashStatus("Импорт данных завершен", true);
         } catch (err) {
@@ -9985,6 +10239,113 @@
       });
     }
 
+    // ─── Free Roleplay event listeners ────────────────────────────────────────
+
+    const frModal = $("#freeRoleplayModal");
+    if (frModal) {
+      frModal.addEventListener("click", (e) => {
+        if (e.target === frModal || e.target.id === "freeRoleplayOverlay") {
+          closeFreeRoleplayModal();
+        }
+      });
+    }
+
+    const freeRoleplayClose = $("#freeRoleplayClose");
+    if (freeRoleplayClose) freeRoleplayClose.addEventListener("click", closeFreeRoleplayModal);
+
+    const btnFrCancel = $("#btnFrCancel");
+    if (btnFrCancel) btnFrCancel.addEventListener("click", closeFreeRoleplayModal);
+
+    const frForm = $("#freeRoleplayForm");
+    if (frForm) {
+      frForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const charName = String($("#frCharNameInput").value || "").trim() || "Рассказчик";
+        const plot = String($("#frPlotInput").value || "").trim();
+        let greeting = "";
+
+        if (!plot) {
+          alert("Пожалуйста, введите сюжет сценария.");
+          return;
+        }
+
+        const btn = $("#btnFrSubmit");
+        const cancelBtn = $("#btnFrCancel");
+        const closeBtn = $("#freeRoleplayClose");
+        const originalText = btn.textContent;
+
+        btn.disabled = true;
+        if (cancelBtn) cancelBtn.disabled = true;
+        if (closeBtn) closeBtn.disabled = true;
+
+        btn.textContent = "ИИ пишет приветствие...";
+        try {
+          greeting = await generateGreetingFromAI(charName, plot);
+        } catch (err) {
+          console.error("Failed to generate AI greeting:", err);
+          greeting = `*Вы начали ролевую игру по сюжету:*\n${plot}`;
+        }
+
+        btn.textContent = "Создание персонажа...";
+
+        const charId = uuid();
+        const newChar = {
+          id: charId,
+          name: charName,
+          gender: "unspecified",
+          intro: "Свободная ролевая игра по сюжету пользователя.",
+          visibility: "private",
+          tags: ["ролевая", "сюжет"],
+          avatar: "",
+          background: "",
+          backgroundHint: "",
+          outfit: "",
+          setting: plot,
+          backstory: "Этот персонаж создан для свободной ролевой игры по сюжету: " + plot,
+          dialogueStyle: "roleplay",
+          initialMessage: greeting,
+          isQuickRoleplay: true,
+          createdAt: nowTs(),
+          updatedAt: nowTs()
+        };
+
+        upsertCharacter(newChar);
+
+        // Reset inputs
+        $("#frCharNameInput").value = "";
+        $("#frPlotInput").value = "";
+
+        btn.disabled = false;
+        if (cancelBtn) cancelBtn.disabled = false;
+        if (closeBtn) closeBtn.disabled = false;
+        btn.textContent = originalText;
+
+        // Hide modal
+        closeFreeRoleplayModal();
+
+        // Open chat with this character
+        state.selectedCharacterId = charId;
+        state.editingCharacterId = charId;
+        saveJson(STORAGE_KEYS.selectedCharacterId, state.selectedCharacterId);
+
+        // Make sure the chat history contains the initial message
+        const bucket = conversationBucketFor(charId);
+        const chat = activeChatFor(charId);
+        if (chat) {
+          chat.messages = [{ id: uuid(), role: "assistant", content: greeting, ts: nowTs() }];
+          const last = chat.messages[chat.messages.length - 1];
+          chat.updatedAt = last.ts;
+          const idx = bucket.chats.findIndex((c) => c.id === chat.id);
+          if (idx >= 0) bucket.chats[idx] = chat;
+          state.conversations[charId] = bucket;
+          saveJson(STORAGE_KEYS.conversations, state.conversations);
+        }
+
+        // Open chat view
+        openCharacterChat(charId, chat ? chat.id : "");
+      });
+    }
+
     // ─── NPC event listeners ───────────────────────────────────────────────────
 
     const btnAddNpc = $("#btnAddNpc");
@@ -10072,6 +10433,7 @@
     // ── Multi-chat wiring ──
     const subTabPersonal = $("#subTabPersonal");
     const subTabMulti = $("#subTabMulti");
+    const subTabRoleplay = $("#subTabRoleplay");
     if (subTabPersonal) {
       subTabPersonal.addEventListener("click", () => {
         state.chatsSubTab = "personal";
@@ -10081,6 +10443,12 @@
     if (subTabMulti) {
       subTabMulti.addEventListener("click", () => {
         state.chatsSubTab = "multi";
+        refreshChatsView();
+      });
+    }
+    if (subTabRoleplay) {
+      subTabRoleplay.addEventListener("click", () => {
+        state.chatsSubTab = "roleplay";
         refreshChatsView();
       });
     }
@@ -10177,13 +10545,20 @@
       const serverChars = await resp.json();
       if (!Array.isArray(serverChars)) return;
 
+      serverCharacterIds.clear();
+      for (const sc of serverChars) {
+        if (sc && sc.id) serverCharacterIds.add(sc.id);
+      }
+
       if (serverChars.length === 0 && state.characters.length > 0) {
         // Server empty, push local characters (first-time migration)
-        await fetch("/api/characters/bulk", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(state.characters)
-        }).catch(() => {});
+        if (state.currentUser?.isAdmin) {
+          await fetch("/api/characters/bulk", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(state.characters)
+          }).catch(() => {});
+        }
         return;
       }
 
@@ -10213,7 +10588,7 @@
 
       // Remove characters that were deleted on server
       const before = state.characters.length;
-      state.characters = state.characters.filter((c) => serverIds.has(c.id));
+      state.characters = state.characters.filter((c) => serverIds.has(c.id) || isCustomCharacter(c));
       if (state.characters.length !== before) changed = true;
 
       if (changed) {

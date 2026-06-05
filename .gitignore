@@ -5,10 +5,10 @@
 node_modules/
 jspm_packages/
 .npm/
-lmstudio-chat/node_modules/
-lmstudio-chat/.npm-cache/
-lmstudio-chat/.npm/
-lmstudio-chat/.yarn/
+NLMW/node_modules/
+NLMW/.npm-cache/
+NLMW/.npm/
+NLMW/.yarn/
 
 # Production
 build/
@@ -16,8 +16,8 @@ dist/
 coverage/
 
 # Shared data (characters)
-lmstudio-chat/data/
-lmstudio-chat/temp/
+NLMW/data/
+NLMW/temp/
 
 # Misc
 .DS_Store
@@ -39,8 +39,8 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 *.log
-lmstudio-chat/server.out.log
-lmstudio-chat/server.err.log
+NLMW/server.out.log
+NLMW/server.err.log
 
 # Python artifacts
 __pycache__/
