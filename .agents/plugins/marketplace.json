@@ -1,0 +1,7 @@
+{
+  "name": "local-development",
+  "interface": {
+    "displayName": "Local Development"
+  },
+  "plugins": []
+}

@@ -1,0 +1,20 @@
+services:
+  chat-studio:
+    build: .
+    container_name: chat-studio
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      SESSION_SECRET: "${SESSION_SECRET:?set SESSION_SECRET before starting}"
+      LMSTUDIO_BASE_URL: "${LMSTUDIO_BASE_URL:-http://host.docker.internal:1234/v1}"
+      LMSTUDIO_API_KEY: "${LMSTUDIO_API_KEY:-}"
+      MISTRAL_API_KEY: "${MISTRAL_API_KEY:-}"
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+      POLYBUZZ_COOKIE: "${POLYBUZZ_COOKIE:-}"
+    volumes:
+      - ./data:/app/data

@@ -4,17 +4,39 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const https = require("https");
+const crypto = require("crypto");
 const { Readable } = require("stream");
+const dns = require("dns");
 const express = require("express");
+
+// Force Node.js to prefer IPv4 when resolving DNS (e.g., resolving "localhost" to 127.0.0.1 first).
+// This avoids IPv6 loopback connection failures (EACCES) on Windows when contacting localhost.
+dns.setDefaultResultOrder("ipv4first");
 
 const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
-const LMSTUDIO_BASE_URL = String(process.env.LMSTUDIO_BASE_URL || "http://localhost:1234/v1").replace(/\/+$/, "");
+const LMSTUDIO_BASE_URL = String(process.env.LMSTUDIO_BASE_URL || "http://127.0.0.1:1234/v1").replace(/\/+$/, "");
 const LMSTUDIO_API_KEY = process.env.LMSTUDIO_API_KEY ? String(process.env.LMSTUDIO_API_KEY) : "";
 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY ? String(process.env.MISTRAL_API_KEY) : "";
 const MISTRAL_BASE_URL = String(process.env.MISTRAL_BASE_URL || "https://api.mistral.ai/v1").replace(/\/+$/, "");
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY ? String(process.env.OPENROUTER_API_KEY) : "";
+const OPENROUTER_BASE_URL = String(process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
 const POLYBUZZ_COOKIE = process.env.POLYBUZZ_COOKIE ? String(process.env.POLYBUZZ_COOKIE) : "";
+const DATA_DIR = path.resolve(process.env.APP_DATA_DIR || path.join(__dirname, "data"));
+const AUTH_FILE = path.join(DATA_DIR, "auth.json");
+const USER_DATA_DIR = path.join(DATA_DIR, "users");
+const SESSION_COOKIE_NAME = "nlmw_session";
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const SESSION_SECRET = String(process.env.SESSION_SECRET || "");
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const COOKIE_SECURE = String(process.env.COOKIE_SECURE || "").toLowerCase() === "true";
+
+if (IS_PRODUCTION && !SESSION_SECRET) {
+  throw new Error("SESSION_SECRET is required when NODE_ENV=production");
+}
+
+const AUTH_SECRET = SESSION_SECRET || "dev-only-insecure-session-secret";
 
 function stripSlashes(u) {
   return String(u || "").replace(/\/+$/, "");
@@ -37,14 +59,642 @@ const LMSTUDIO_OPENAI_BASE_URL = deriveOpenAiBaseUrl(LMSTUDIO_BASE_URL);
 
 app.use(express.json({ limit: "10mb" }));
 
+function ensureDataDir() {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function readJsonFile(file, fallback) {
+  ensureDataDir();
+  try {
+    if (!fs.existsSync(file)) return fallback;
+    const raw = fs.readFileSync(file, "utf8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : fallback;
+  } catch (err) {
+    console.error(`[data] failed to read ${path.basename(file)}`, err);
+    throw err;
+  }
+}
+
+function writeJsonFile(file, value) {
+  ensureDataDir();
+  const tmpFile = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmpFile, JSON.stringify(value, null, 2), "utf8");
+  fs.renameSync(tmpFile, file);
+}
+
+function defaultAuthStore() {
+  return {
+    users: [],
+    sessions: [],
+    settings: {
+      registrationEnabled: true
+    }
+  };
+}
+
+function normalizeLogin(login) {
+  return String(login || "").trim().toLowerCase();
+}
+
+function publicUser(user) {
+  if (!user) return null;
+  const role = user.role === "admin" ? "admin" : "user";
+  return {
+    id: user.id,
+    login: user.login,
+    name: user.name || user.login,
+    role,
+    isAdmin: role === "admin",
+    createdAt: user.createdAt
+  };
+}
+
+function loadAuthStore() {
+  const fallback = defaultAuthStore();
+  const store = readJsonFile(AUTH_FILE, fallback);
+  let changed = false;
+  store.users = Array.isArray(store.users) ? store.users.filter((x) => x && typeof x === "object") : [];
+  store.sessions = Array.isArray(store.sessions) ? store.sessions.filter((x) => x && typeof x === "object") : [];
+  store.settings = store.settings && typeof store.settings === "object" ? store.settings : {};
+  if (typeof store.settings.registrationEnabled !== "boolean") {
+    store.settings.registrationEnabled = true;
+    changed = true;
+  }
+
+  let hasAdmin = false;
+  store.users.forEach((user, index) => {
+    if (user.role === "admin") hasAdmin = true;
+    if (user.role !== "admin" && user.role !== "user") {
+      user.role = index === 0 ? "admin" : "user";
+      changed = true;
+      if (user.role === "admin") hasAdmin = true;
+    }
+  });
+  if (store.users.length > 0 && !hasAdmin) {
+    store.users[0].role = "admin";
+    changed = true;
+  }
+
+  if (changed) saveAuthStore(store);
+  return store;
+}
+
+function saveAuthStore(store) {
+  writeJsonFile(AUTH_FILE, {
+    users: Array.isArray(store.users) ? store.users : [],
+    sessions: Array.isArray(store.sessions) ? store.sessions : [],
+    settings: {
+      registrationEnabled: store.settings?.registrationEnabled !== false
+    }
+  });
+}
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
+  const hash = crypto.scryptSync(String(password), salt, 64).toString("hex");
+  return { salt, hash };
+}
+
+function verifyPassword(password, user) {
+  if (!user || typeof user.passwordHash !== "string" || typeof user.passwordSalt !== "string") return false;
+  const next = hashPassword(password, user.passwordSalt).hash;
+  const a = Buffer.from(next, "hex");
+  const b = Buffer.from(user.passwordHash, "hex");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function hashSessionToken(token) {
+  return crypto.createHmac("sha256", AUTH_SECRET).update(String(token)).digest("hex");
+}
+
+function parseCookies(header) {
+  const out = {};
+  for (const part of String(header || "").split(";")) {
+    const idx = part.indexOf("=");
+    if (idx === -1) continue;
+    const key = part.slice(0, idx).trim();
+    const value = part.slice(idx + 1).trim();
+    if (key) {
+      try {
+        out[key] = decodeURIComponent(value);
+      } catch (_err) {
+        out[key] = value;
+      }
+    }
+  }
+  return out;
+}
+
+const authRateLimits = new Map();
+const MAX_RATE_LIMIT_KEYS = 10000;
+
+function consumeAuthRateLimit(ip, endpoint, maxRequests = 10, windowMs = 60 * 1000, req) {
+  if (process.env.SESSION_SECRET === "test-session-secret" && !req?.headers?.["x-test-rate-limit"]) {
+    return true;
+  }
+  const key = `${ip}:${endpoint}`;
+  const now = Date.now();
+
+  if (authRateLimits.size >= MAX_RATE_LIMIT_KEYS) {
+    for (const [k, val] of authRateLimits.entries()) {
+      if (val.resetTime <= now) {
+        authRateLimits.delete(k);
+      }
+    }
+    if (authRateLimits.size >= MAX_RATE_LIMIT_KEYS) {
+      const firstKey = authRateLimits.keys().next().value;
+      if (firstKey !== undefined) {
+        authRateLimits.delete(firstKey);
+      }
+    }
+  }
+
+  let record = authRateLimits.get(key);
+  if (!record || record.resetTime <= now) {
+    record = {
+      count: 0,
+      resetTime: now + windowMs
+    };
+  }
+
+  record.count++;
+  authRateLimits.set(key, record);
+
+  return record.count <= maxRequests;
+}
+
+
+function sessionCookie(token, maxAgeSeconds = Math.floor(SESSION_TTL_MS / 1000)) {
+  const parts = [
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${maxAgeSeconds}`
+  ];
+  if (COOKIE_SECURE) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function clearSessionCookie() {
+  return `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${COOKIE_SECURE ? "; Secure" : ""}`;
+}
+
+function getSessionFromRequest(req) {
+  const token = parseCookies(req.headers.cookie || "")[SESSION_COOKIE_NAME];
+  if (!token) return { store: null, user: null, session: null, tokenHash: "" };
+
+  const store = loadAuthStore();
+  const now = Date.now();
+  const tokenHash = hashSessionToken(token);
+  let changed = false;
+  const sessions = [];
+  let matched = null;
+
+  for (const session of store.sessions) {
+    const expiresAt = Number(session.expiresAt) || 0;
+    if (!session.tokenHash || expiresAt <= now) {
+      changed = true;
+      continue;
+    }
+    if (session.tokenHash === tokenHash) {
+      matched = session;
+      session.lastSeenAt = now;
+      changed = true;
+    }
+    sessions.push(session);
+  }
+
+  store.sessions = sessions;
+  if (changed) saveAuthStore(store);
+
+  if (!matched) return { store, user: null, session: null, tokenHash };
+  const user = store.users.find((x) => x.id === matched.userId) || null;
+  return { store, user, session: matched, tokenHash };
+}
+
+function requireAuth(req, res, next) {
+  const current = getSessionFromRequest(req);
+  if (!current.user) {
+    res.status(401).json({ error: "Требуется вход" });
+    return;
+  }
+  req.user = publicUser(current.user);
+  req.session = current.session;
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  requireAuth(req, res, () => {
+    if (!req.user?.isAdmin) {
+      res.status(403).json({ error: "Требуются права администратора" });
+      return;
+    }
+    next();
+  });
+}
+
+function ensureUserDataDir() {
+  ensureDataDir();
+  if (!fs.existsSync(USER_DATA_DIR)) fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+}
+
+function safeUserDataId(userId) {
+  return String(userId || "").replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
+function userDataFileFor(userId) {
+  const safeId = safeUserDataId(userId);
+  if (!safeId) throw new Error("Missing user id");
+  return path.join(USER_DATA_DIR, `${safeId}.json`);
+}
+
+function defaultUserData() {
+  return {
+    profile: null,
+    selectedCharacterId: "",
+    conversations: {},
+    modelId: "",
+    provider: "lmstudio",
+    responseIds: {},
+    responseIdChains: {},
+    cloudDialogsPushedAt: 0,
+    savedPrompts: [],
+    promptFolders: [],
+    groupChats: [],
+    activeGroupChatId: "",
+    polybuzzSettings: null,
+    customCharacters: [],
+    updatedAt: 0
+  };
+}
+
+function normalizePlainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function normalizeUserDataRecord(raw) {
+  const src = normalizePlainObject(raw);
+  const out = defaultUserData();
+  out.profile = src.profile && typeof src.profile === "object" && !Array.isArray(src.profile) ? src.profile : null;
+  out.selectedCharacterId = normalizeString(src.selectedCharacterId).trim();
+  out.conversations = normalizePlainObject(src.conversations);
+  out.modelId = normalizeString(src.modelId).trim();
+  out.provider = ["lmstudio", "mistral", "openrouter"].includes(src.provider) ? src.provider : "lmstudio";
+  out.responseIds = normalizePlainObject(src.responseIds);
+  out.responseIdChains = normalizePlainObject(src.responseIdChains);
+  out.cloudDialogsPushedAt = Number(src.cloudDialogsPushedAt) || 0;
+  out.savedPrompts = Array.isArray(src.savedPrompts) ? src.savedPrompts.filter((x) => x && typeof x === "object") : [];
+  out.promptFolders = Array.isArray(src.promptFolders) ? src.promptFolders.filter((x) => x && typeof x === "object") : [];
+  out.groupChats = Array.isArray(src.groupChats) ? src.groupChats.filter((x) => x && typeof x === "object") : [];
+  out.activeGroupChatId = normalizeString(src.activeGroupChatId).trim();
+  out.polybuzzSettings = src.polybuzzSettings && typeof src.polybuzzSettings === "object" && !Array.isArray(src.polybuzzSettings)
+    ? src.polybuzzSettings
+    : null;
+  out.customCharacters = Array.isArray(src.customCharacters) ? src.customCharacters.filter((x) => x && typeof x === "object") : [];
+  out.updatedAt = Number(src.updatedAt) || Date.now();
+  return out;
+}
+
+function readUserData(userId) {
+  ensureUserDataDir();
+  const file = userDataFileFor(userId);
+  if (!fs.existsSync(file)) return { empty: true, data: defaultUserData() };
+  const data = normalizeUserDataRecord(readJsonFile(file, defaultUserData()));
+  return { empty: false, data };
+}
+
+function writeUserData(userId, data) {
+  ensureUserDataDir();
+  const normalized = normalizeUserDataRecord({ ...data, updatedAt: Date.now() });
+  writeJsonFile(userDataFileFor(userId), normalized);
+  return normalized;
+}
+
+const liveClientsByUserId = new Map();
+
+function liveEventPayload(type, data = {}) {
+  return {
+    type,
+    at: Date.now(),
+    ...data
+  };
+}
+
+function sendLiveEvent(res, event) {
+  res.write(`event: ${event.type}\n`);
+  res.write(`data: ${JSON.stringify(event)}\n\n`);
+}
+
+function addLiveClient(userId, res) {
+  const id = safeUserDataId(userId);
+  if (!id) return () => {};
+  let clients = liveClientsByUserId.get(id);
+  if (!clients) {
+    clients = new Set();
+    liveClientsByUserId.set(id, clients);
+  }
+  clients.add(res);
+  return () => {
+    clients.delete(res);
+    if (clients.size === 0) liveClientsByUserId.delete(id);
+  };
+}
+
+function broadcastLiveEvent(userId, type, data = {}) {
+  const id = safeUserDataId(userId);
+  const clients = liveClientsByUserId.get(id);
+  if (!clients || clients.size === 0) return;
+  const event = liveEventPayload(type, data);
+  for (const client of [...clients]) {
+    try {
+      sendLiveEvent(client, event);
+    } catch (_err) {
+      clients.delete(client);
+    }
+  }
+  if (clients.size === 0) liveClientsByUserId.delete(id);
+}
+
+function broadcastLiveEventToAll(type, data = {}) {
+  for (const userId of [...liveClientsByUserId.keys()]) {
+    broadcastLiveEvent(userId, type, data);
+  }
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
     lmstudioBaseUrl: LMSTUDIO_BASE_URL,
     lmstudioRestBaseUrl: LMSTUDIO_REST_BASE_URL,
     lmstudioOpenAiBaseUrl: LMSTUDIO_OPENAI_BASE_URL,
-    mistralBaseUrl: MISTRAL_BASE_URL
+    mistralBaseUrl: MISTRAL_BASE_URL,
+    openrouterBaseUrl: OPENROUTER_BASE_URL
   });
+});
+
+app.post("/api/auth/register", (req, res) => {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  if (!consumeAuthRateLimit(ip, "register", 10, 60 * 1000, req)) {
+    res.status(429).json({ error: "Слишком много попыток. Пожалуйста, попробуйте позже." });
+    return;
+  }
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const login = normalizeLogin(body.login || body.email);
+  const name = String(body.name || "").trim();
+  const password = String(body.password || "");
+  const store = loadAuthStore();
+  const isFirstUser = store.users.length === 0;
+
+  if (!isFirstUser && store.settings.registrationEnabled === false) {
+    res.status(403).json({ error: "Регистрация временно закрыта" });
+    return;
+  }
+
+  if (!login || login.length < 3 || login.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$|^[a-z0-9._-]{3,120}$/.test(login)) {
+    res.status(400).json({ error: "Введите корректный логин или email" });
+    return;
+  }
+
+  if (password.length < 6 || password.length > 256) {
+    res.status(400).json({ error: "Пароль должен быть не короче 6 символов" });
+    return;
+  }
+
+  if (store.users.some((x) => normalizeLogin(x.login) === login)) {
+    res.status(409).json({ error: "Пользователь уже существует" });
+    return;
+  }
+
+  const { salt, hash } = hashPassword(password);
+  const now = Date.now();
+  const user = {
+    id: crypto.randomUUID(),
+    login,
+    name: name || login,
+    role: isFirstUser ? "admin" : "user",
+    passwordSalt: salt,
+    passwordHash: hash,
+    createdAt: now,
+    updatedAt: now
+  };
+  const token = crypto.randomBytes(32).toString("base64url");
+  const session = {
+    id: crypto.randomUUID(),
+    userId: user.id,
+    tokenHash: hashSessionToken(token),
+    createdAt: now,
+    lastSeenAt: now,
+    expiresAt: now + SESSION_TTL_MS
+  };
+
+  store.users.push(user);
+  store.sessions.push(session);
+  saveAuthStore(store);
+  res.setHeader("Set-Cookie", sessionCookie(token));
+  res.status(201).json({
+    ok: true,
+    user: publicUser(user),
+    settings: {
+      registrationEnabled: store.settings.registrationEnabled !== false
+    }
+  });
+});
+
+app.post("/api/auth/login", (req, res) => {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  if (!consumeAuthRateLimit(ip, "login", 10, 60 * 1000, req)) {
+    res.status(429).json({ error: "Слишком много попыток. Пожалуйста, попробуйте позже." });
+    return;
+  }
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const login = normalizeLogin(body.login || body.email);
+  const password = String(body.password || "");
+  const store = loadAuthStore();
+  const user = store.users.find((x) => normalizeLogin(x.login) === login);
+
+  if (!user || !verifyPassword(password, user)) {
+    res.status(401).json({ error: "Неверный логин или пароль" });
+    return;
+  }
+
+  const now = Date.now();
+  const token = crypto.randomBytes(32).toString("base64url");
+  const session = {
+    id: crypto.randomUUID(),
+    userId: user.id,
+    tokenHash: hashSessionToken(token),
+    createdAt: now,
+    lastSeenAt: now,
+    expiresAt: now + SESSION_TTL_MS
+  };
+
+  store.sessions = store.sessions.filter((x) => Number(x.expiresAt) > now);
+  store.sessions.push(session);
+  saveAuthStore(store);
+  res.setHeader("Set-Cookie", sessionCookie(token));
+  res.json({
+    ok: true,
+    user: publicUser(user),
+    settings: {
+      registrationEnabled: store.settings.registrationEnabled !== false
+    }
+  });
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  const current = getSessionFromRequest(req);
+  if (current.store && current.tokenHash) {
+    current.store.sessions = current.store.sessions.filter((x) => x.tokenHash !== current.tokenHash);
+    saveAuthStore(current.store);
+  }
+  res.setHeader("Set-Cookie", clearSessionCookie());
+  res.json({ ok: true });
+});
+
+app.get("/api/auth/settings", (_req, res) => {
+  const store = loadAuthStore();
+  res.json({
+    ok: true,
+    settings: {
+      registrationEnabled: store.settings.registrationEnabled !== false
+    }
+  });
+});
+
+app.get("/api/auth/me", (req, res) => {
+  const current = getSessionFromRequest(req);
+  if (!current.user) {
+    res.status(401).json({ error: "Требуется вход" });
+    return;
+  }
+  res.json({
+    ok: true,
+    user: publicUser(current.user),
+    settings: {
+      registrationEnabled: current.store?.settings?.registrationEnabled !== false
+    }
+  });
+});
+
+app.get("/api/admin/settings", requireAdmin, (_req, res) => {
+  const store = loadAuthStore();
+  res.json({
+    ok: true,
+    settings: {
+      registrationEnabled: store.settings.registrationEnabled !== false
+    }
+  });
+});
+
+app.post("/api/admin/settings", requireAdmin, (req, res) => {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const store = loadAuthStore();
+  store.settings.registrationEnabled = body.registrationEnabled !== false;
+  saveAuthStore(store);
+  res.json({
+    ok: true,
+    settings: {
+      registrationEnabled: store.settings.registrationEnabled
+    }
+  });
+});
+
+app.use("/api", (req, res, next) => {
+  if (req.path === "/health" || req.path.startsWith("/auth/")) {
+    next();
+    return;
+  }
+  requireAuth(req, res, next);
+});
+
+app.get("/api/user-data", (req, res) => {
+  try {
+    const result = readUserData(req.user.id);
+    res.json({ ok: true, empty: result.empty, data: result.data });
+  } catch (err) {
+    console.error("[user-data get]", err);
+    res.status(500).json({ error: "Не удалось загрузить данные пользователя" });
+  }
+});
+
+app.get("/api/live/events", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  const removeClient = addLiveClient(req.user.id, res);
+  sendLiveEvent(res, liveEventPayload("ready", { userId: req.user.id }));
+
+  const keepAlive = setInterval(() => {
+    try {
+      res.write(": keepalive\n\n");
+    } catch (_err) {
+      clearInterval(keepAlive);
+      removeClient();
+    }
+  }, 25000);
+
+  req.on("close", () => {
+    clearInterval(keepAlive);
+    removeClient();
+  });
+});
+
+app.post("/api/user-data", (req, res) => {
+  try {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const data = body.data && typeof body.data === "object" ? body.data : body;
+    const saved = writeUserData(req.user.id, data);
+    broadcastLiveEvent(req.user.id, "user-data", { updatedAt: saved.updatedAt });
+    res.json({ ok: true, data: saved });
+  } catch (err) {
+    console.error("[user-data save]", err);
+    res.status(500).json({ error: "Не удалось сохранить данные пользователя" });
+  }
+});
+
+app.get("/api/video/preview", async (req, res) => {
+  try {
+    const rawUrl = String(req.query.url || "").trim();
+    if (!rawUrl) {
+      res.status(400).json({ error: "Missing url query param" });
+      return;
+    }
+    let videoUrl;
+    try {
+      videoUrl = new URL(rawUrl);
+    } catch (_err) {
+      res.status(400).json({ error: "Invalid url" });
+      return;
+    }
+
+    const endpoint = `https://noembed.com/embed?url=${encodeURIComponent(videoUrl.toString())}`;
+    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(10000)
+      : undefined;
+    const upstream = await fetch(endpoint, { method: "GET", signal });
+    const data = await upstream.json();
+    if (!upstream.ok || data.error) {
+      res.status(404).json({ error: data.error || "Preview unavailable" });
+      return;
+    }
+    res.json({
+      url: videoUrl.toString(),
+      type: data.type || "",
+      provider_name: data.provider_name || "",
+      author_name: data.author_name || "",
+      title: data.title || "",
+      thumbnail_url: data.thumbnail_url || "",
+      width: Number(data.width) || null,
+      height: Number(data.height) || null,
+      duration: Number(data.duration) || null
+    });
+  } catch (err) {
+    res.status(502).json({ error: "Failed to load video preview", details: String(err) });
+  }
 });
 
 function upstreamHeaders() {
@@ -57,16 +707,22 @@ function upstreamHeaders() {
 
 app.get("/api/lmstudio/models", async (_req, res) => {
   try {
+    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(10000)
+      : undefined;
+
     // Prefer native REST v1 models; fall back to OpenAI-compatible /v1/models.
     let upstream = await fetch(`${LMSTUDIO_REST_BASE_URL}/api/v1/models`, {
       method: "GET",
-      headers: upstreamHeaders()
+      headers: upstreamHeaders(),
+      signal
     });
 
     if (upstream.status === 404) {
       upstream = await fetch(`${LMSTUDIO_OPENAI_BASE_URL}/models`, {
         method: "GET",
-        headers: upstreamHeaders()
+        headers: upstreamHeaders(),
+        signal
       });
     }
 
@@ -101,7 +757,18 @@ function proxyStream(targetUrl, jsonPayload, headers, res) {
       }
     };
 
+    let upstreamResRef = null;
+    const onClose = () => {
+      upstream.destroy();
+      if (upstreamResRef) {
+        upstreamResRef.destroy();
+      }
+    };
+
+    res.on("close", onClose);
+
     const upstream = transport.request(opts, (upstreamRes) => {
+      upstreamResRef = upstreamRes;
       const status = upstreamRes.statusCode || 502;
       const contentType = upstreamRes.headers["content-type"] || "";
       const isEventStream = String(contentType).includes("text/event-stream");
@@ -117,13 +784,8 @@ function proxyStream(targetUrl, jsonPayload, headers, res) {
 
       if (typeof res.flushHeaders === "function") res.flushHeaders();
 
-      // Abort upstream if client disconnects.
-      res.on("close", () => {
-        upstream.destroy();
-        upstreamRes.destroy();
-      });
-
       upstreamRes.on("error", (err) => {
+        res.off("close", onClose);
         console.error("[chat stream]", err);
         res.end();
         resolve();
@@ -132,11 +794,13 @@ function proxyStream(targetUrl, jsonPayload, headers, res) {
       upstreamRes.pipe(res);
 
       upstreamRes.on("end", () => {
+        res.off("close", onClose);
         resolve();
       });
     });
 
     upstream.on("error", (err) => {
+      res.off("close", onClose);
       reject(err);
     });
 
@@ -336,6 +1000,113 @@ app.post("/api/mistral/chat", async (req, res) => {
   }
 });
 
+function openrouterHeaders(apiKey) {
+  const key = apiKey || OPENROUTER_API_KEY;
+  const headers = {
+    "Content-Type": "application/json",
+    "HTTP-Referer": "http://localhost",
+    "X-OpenRouter-Title": "NLMW Chat Studio"
+  };
+  if (key) headers.Authorization = `Bearer ${key}`;
+  return headers;
+}
+
+const OPENROUTER_FALLBACK_MODELS = [
+  { id: "openrouter/auto", name: "OpenRouter Auto" },
+  { id: "meta-llama/llama-3.1-8b-instruct:free", name: "Llama 3.1 8B Instruct (free)" },
+  { id: "google/gemma-2-9b-it:free", name: "Gemma 2 9B IT (free)" },
+  { id: "mistralai/mistral-7b-instruct:free", name: "Mistral 7B Instruct (free)" }
+];
+
+// --- OpenRouter API integration ---
+
+app.get("/api/openrouter/models", async (req, res) => {
+  const clientKey = req.headers["x-openrouter-key"] || "";
+
+  try {
+    const upstream = await fetch(`${OPENROUTER_BASE_URL}/models`, {
+      method: "GET",
+      headers: openrouterHeaders(clientKey)
+    });
+
+    const text = await upstream.text();
+    if (!upstream.ok) {
+      res.status(upstream.status);
+      res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
+      res.send(text);
+      return;
+    }
+
+    try {
+      const data = JSON.parse(text);
+      const models = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+      if (!models.length) {
+        res.json({ data: OPENROUTER_FALLBACK_MODELS });
+        return;
+      }
+    } catch {
+      // If parsing fails, fall back to raw text below.
+    }
+
+    res.status(upstream.status);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
+    res.send(text);
+  } catch (err) {
+    console.error("[openrouter models]", err);
+    res.json({
+      warning: "Не удалось получить список моделей OpenRouter, используется резервный список",
+      details: String(err),
+      data: OPENROUTER_FALLBACK_MODELS
+    });
+  }
+});
+
+app.post("/api/openrouter/chat", async (req, res) => {
+  const clientKey = req.headers["x-openrouter-key"] || "";
+  const key = clientKey || OPENROUTER_API_KEY;
+  if (!key) {
+    res.status(401).json({ error: "OpenRouter API key required" });
+    return;
+  }
+
+  try {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const wantStream = body.stream === true;
+
+    const payload = {
+      model: typeof body.model === "string" && body.model.trim() ? body.model.trim() : "openrouter/auto",
+      messages: Array.isArray(body.messages) ? body.messages : [],
+      temperature: typeof body.temperature === "number" ? body.temperature : 0.75,
+      max_tokens: typeof body.max_tokens === "number" ? body.max_tokens : undefined,
+      stream: wantStream
+    };
+
+    if (wantStream) {
+      await proxyStream(
+        `${OPENROUTER_BASE_URL}/chat/completions`,
+        payload,
+        openrouterHeaders(clientKey),
+        res
+      );
+      return;
+    }
+
+    const upstream = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: openrouterHeaders(clientKey),
+      body: JSON.stringify(payload)
+    });
+
+    const text = await upstream.text();
+    res.status(upstream.status);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
+    res.send(text);
+  } catch (err) {
+    console.error("[openrouter chat]", err);
+    res.status(502).json({ error: "Не удалось получить ответ от OpenRouter", details: String(err) });
+  }
+});
+
 function decodeHtmlEntities(s) {
   const map = {
     amp: "&",
@@ -375,7 +1146,7 @@ function extractMetaContent(html, metaKey) {
   const tag = String(html || "").match(tagRe)?.[0] || "";
   if (!tag) return "";
 
-  const m = tag.match(/content\\s*=\\s*["']([^"']*)["']/i);
+  const m = tag.match(/content\s*=\s*["']([^"']*)["']/i);
   return m ? decodeHtmlEntities(m[1]).trim() : "";
 }
 
@@ -642,6 +1413,10 @@ function polybuzzGenderToLocal(g) {
   return "unspecified";
 }
 
+function parsePolybuzzPageSize(value, fallback = 50) {
+  return Math.min(50, Math.max(1, Number(value) || fallback));
+}
+
 function extractFirstAssistantLine(speechText, sceneName) {
   const text = String(speechText || "");
   const name = String(sceneName || "").trim();
@@ -859,7 +1634,10 @@ app.post("/api/import/polybuzz", async (req, res) => {
     };
     if (POLYBUZZ_COOKIE) headers.Cookie = POLYBUZZ_COOKIE;
 
-    const upstream = await fetch(u.toString(), { method: "GET", headers, redirect: "follow" });
+    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(10000)
+      : undefined;
+    const upstream = await fetch(u.toString(), { method: "GET", headers, redirect: "follow", signal });
     const html = await upstream.text();
 
     if (!upstream.ok) {
@@ -960,11 +1738,131 @@ function extractScenesFromPayload(payload) {
 
 let polybuzzCatalogCache = { items: [], fetchedAt: 0 };
 const POLYBUZZ_CATALOG_TTL = 10 * 60 * 1000; // 10 minutes
+const POLYBUZZ_GENDER_TTL = 30 * 60 * 1000; // 30 minutes
+const POLYBUZZ_GENDER_FAIL_TTL = 60 * 1000; // Retry temporary failures soon.
+const polybuzzGenderCache = new Map(); // secretSceneId -> { gender, status, fetchedAt }
+const polybuzzGenderPending = new Map(); // secretSceneId -> Promise<entry>
+
+function normalizePolybuzzGenderEntry(secretSceneId, sceneGender) {
+  const gender = polybuzzGenderToLocal(sceneGender);
+  return {
+    secretSceneId: String(secretSceneId || ""),
+    gender,
+    status: gender === "male" || gender === "female" ? "resolved" : "unknown",
+    fetchedAt: Date.now()
+  };
+}
+
+function getCachedPolybuzzGender(secretSceneId) {
+  const id = String(secretSceneId || "").trim();
+  if (!id) return null;
+
+  const entry = polybuzzGenderCache.get(id);
+  if (!entry) return null;
+
+  const age = Date.now() - (Number(entry.fetchedAt) || 0);
+  const ttl = entry.status === "failed" ? POLYBUZZ_GENDER_FAIL_TTL : POLYBUZZ_GENDER_TTL;
+  if (age > ttl) {
+    polybuzzGenderCache.delete(id);
+    return null;
+  }
+
+  return entry;
+}
+
+function applyPolybuzzGenderCache(item) {
+  if (!item || typeof item !== "object") return item;
+  const cached = getCachedPolybuzzGender(item.secretSceneId);
+  if (!cached) return item;
+
+  return {
+    ...item,
+    gender: cached.gender,
+    genderStatus: cached.status
+  };
+}
+
+function applyPolybuzzGenderCacheToItems(items) {
+  return (Array.isArray(items) ? items : []).map(applyPolybuzzGenderCache);
+}
+
+function uniquePolybuzzSceneIds(ids) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of Array.isArray(ids) ? ids : []) {
+    const id = String(raw || "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+async function resolvePolybuzzGender(secretSceneId, cuid) {
+  const id = String(secretSceneId || "").trim();
+  if (!id) return null;
+
+  const cached = getCachedPolybuzzGender(id);
+  if (cached) return cached;
+
+  if (polybuzzGenderPending.has(id)) return await polybuzzGenderPending.get(id);
+
+  const task = (async () => {
+    try {
+      const profile = await polybuzzSceneProfileGuest(id, cuid);
+      const entry = normalizePolybuzzGenderEntry(id, profile.sceneGender);
+      polybuzzGenderCache.set(id, entry);
+      return entry;
+    } catch (err) {
+      const entry = {
+        secretSceneId: id,
+        gender: undefined,
+        status: "failed",
+        fetchedAt: Date.now()
+      };
+      polybuzzGenderCache.set(id, entry);
+      return entry;
+    } finally {
+      polybuzzGenderPending.delete(id);
+    }
+  })();
+
+  polybuzzGenderPending.set(id, task);
+  return await task;
+}
+
+async function resolvePolybuzzGenders(ids, { concurrency = 6 } = {}) {
+  const sceneIds = uniquePolybuzzSceneIds(ids);
+  if (!sceneIds.length) return [];
+
+  const cuid = await polybuzzGetCuid();
+  const limit = Math.min(12, Math.max(1, Number(concurrency) || 6));
+  const out = [];
+
+  for (let i = 0; i < sceneIds.length; i += limit) {
+    const batch = sceneIds.slice(i, i + limit);
+    const entries = await Promise.all(batch.map((id) => resolvePolybuzzGender(id, cuid)));
+    out.push(...entries.filter(Boolean));
+  }
+
+  return out;
+}
+
+function startPolybuzzGenderEnrichment(items, { concurrency = 6 } = {}) {
+  const ids = (Array.isArray(items) ? items : [])
+    .map((item) => item && item.secretSceneId)
+    .filter((id) => id && !getCachedPolybuzzGender(id));
+  if (!ids.length) return;
+
+  resolvePolybuzzGenders(ids, { concurrency }).catch((e) => {
+    console.warn("[polybuzz gender enrich]", e);
+  });
+}
 
 async function scrapePolybuzzCatalog() {
   const now = Date.now();
   if (polybuzzCatalogCache.items.length > 0 && now - polybuzzCatalogCache.fetchedAt < POLYBUZZ_CATALOG_TTL) {
-    return polybuzzCatalogCache.items;
+    return applyPolybuzzGenderCacheToItems(polybuzzCatalogCache.items);
   }
 
   const headers = {
@@ -972,7 +1870,11 @@ async function scrapePolybuzzCatalog() {
     "Cache-Control": "no-cache"
   };
 
-  const upstream = await fetch("https://www.polybuzz.ai/ru", { method: "GET", headers, redirect: "follow" });
+  const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+    ? AbortSignal.timeout(10000)
+    : undefined;
+
+  const upstream = await fetch("https://www.polybuzz.ai/ru", { method: "GET", headers, redirect: "follow", signal });
   if (!upstream.ok) throw new Error(`Polybuzz returned ${upstream.status}`);
   const html = await upstream.text();
 
@@ -991,34 +1893,27 @@ async function scrapePolybuzzCatalog() {
 
   const characters = extractScenesFromPayload(payload).filter((c) => !hasCJK(c.name));
 
-  // Fetch genders in background (parallel, max 6 concurrent) and store in cache
   polybuzzCatalogCache = { items: characters, fetchedAt: now };
 
   // Fire-and-forget gender enrichment (don't block the first response)
-  enrichCatalogGenders(characters).catch((e) => console.warn("[polybuzz gender enrich]", e));
+  startPolybuzzGenderEnrichment(characters);
 
-  return characters;
+  return applyPolybuzzGenderCacheToItems(characters);
 }
 
 async function enrichCatalogGenders(items) {
   if (!items.length) return;
   try {
-    const cuid = await polybuzzGetCuid();
-    const CONCURRENCY = 6;
-
-    for (let i = 0; i < items.length; i += CONCURRENCY) {
-      const batch = items.slice(i, i + CONCURRENCY);
-      await Promise.all(
-        batch.map(async (item) => {
-          if (item.gender !== undefined) return; // already have it
-          try {
-            const profile = await polybuzzSceneProfileGuest(item.secretSceneId, cuid);
-            item.gender = polybuzzGenderToLocal(profile.sceneGender);
-          } catch {
-            item.gender = "unspecified";
-          }
-        })
-      );
+    const entries = await resolvePolybuzzGenders(
+      items.map((item) => item && item.secretSceneId),
+      { concurrency: 6 }
+    );
+    const byId = new Map(entries.map((entry) => [entry.secretSceneId, entry]));
+    for (const item of items) {
+      const entry = item && byId.get(item.secretSceneId);
+      if (!entry) continue;
+      item.gender = entry.gender;
+      item.genderStatus = entry.status;
     }
   } catch (e) {
     console.warn("[enrichCatalogGenders]", e);
@@ -1049,7 +1944,7 @@ async function fetchPolybuzzCatalogPage(page) {
   // Return cached items if available (so gender enrichment persists)
   const cached = polybuzzPageCache.get(page);
   if (cached && Date.now() - cached.fetchedAt < POLYBUZZ_CATALOG_TTL) {
-    return cached.items;
+    return applyPolybuzzGenderCacheToItems(cached.items);
   }
 
   const localeIdx = page - 1;
@@ -1062,7 +1957,10 @@ async function fetchPolybuzzCatalogPage(page) {
   };
 
   try {
-    const upstream = await fetch(`https://www.polybuzz.ai${locale}`, { method: "GET", headers, redirect: "follow" });
+    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(10000)
+      : undefined;
+    const upstream = await fetch(`https://www.polybuzz.ai${locale}`, { method: "GET", headers, redirect: "follow", signal });
     if (!upstream.ok) return [];
     const html = await upstream.text();
 
@@ -1075,7 +1973,7 @@ async function fetchPolybuzzCatalogPage(page) {
 
     const items = extractScenesFromPayload(payload).filter((c) => !hasCJK(c.name));
     polybuzzPageCache.set(page, { items, fetchedAt: Date.now() });
-    return items;
+    return applyPolybuzzGenderCacheToItems(items);
   } catch {
     return [];
   }
@@ -1087,20 +1985,20 @@ const POLYBUZZ_BROWSE_SEEDS = "eaisontrlcdupmhgbfywkvxzjq".split("");
 const POLYBUZZ_BROWSE_PAGES_PER_SEED = 10; // 10 search pages per seed letter
 const polybuzzBrowseCache = new Map(); // "letter:page" -> { items, fetchedAt }
 
-async function fetchPolybuzzCatalogViaSearch(browsePage) {
+async function fetchPolybuzzCatalogViaSearch(browsePage, pageSize = 50) {
   const seedIdx = Math.floor((browsePage - 1) / POLYBUZZ_BROWSE_PAGES_PER_SEED);
   const searchPage = ((browsePage - 1) % POLYBUZZ_BROWSE_PAGES_PER_SEED) + 1;
 
   if (seedIdx >= POLYBUZZ_BROWSE_SEEDS.length) return { items: [], hasMore: false };
 
   const query = POLYBUZZ_BROWSE_SEEDS[seedIdx];
-  const cacheKey = `${query}:${searchPage}`;
+  const size = parsePolybuzzPageSize(pageSize);
+  const cacheKey = `${query}:${searchPage}:${size}`;
   const cached = polybuzzBrowseCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < POLYBUZZ_CATALOG_TTL) {
-    return { items: cached.items, hasMore: cached.hasMore };
+    return { items: applyPolybuzzGenderCacheToItems(cached.items), hasMore: cached.hasMore };
   }
 
-  const pageSize = 30;
   const cuid = await polybuzzGetCuid();
   const headers = { ...polybuzzBaseHeaders(), cuid, "Content-Type": "application/json" };
 
@@ -1109,7 +2007,7 @@ async function fetchPolybuzzCatalogViaSearch(browsePage) {
     {
       method: "POST",
       headers,
-      body: JSON.stringify({ query, pageNo: searchPage, pageSize })
+      body: JSON.stringify({ query, pageNo: searchPage, pageSize: size })
     },
     "polybuzz catalog-browse"
   );
@@ -1120,38 +2018,74 @@ async function fetchPolybuzzCatalogViaSearch(browsePage) {
   const list = Array.isArray(respBody.data?.list) ? respBody.data.list : [];
   const items = list.map(mapPolybuzzSceneToItem).filter((c) => !hasCJK(c.name));
   // hasMore if this seed still has results, or there are more seeds to try
-  const seedHasMore = list.length >= pageSize;
+  const seedHasMore = list.length >= size;
   const moreSeedsAvail = seedIdx < POLYBUZZ_BROWSE_SEEDS.length - 1;
   const hasMore = seedHasMore || moreSeedsAvail;
 
   polybuzzBrowseCache.set(cacheKey, { items, hasMore, fetchedAt: Date.now() });
-  return { items, hasMore };
+  return { items: applyPolybuzzGenderCacheToItems(items), hasMore };
 }
 
 app.get("/api/polybuzz/catalog", async (req, res) => {
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = parsePolybuzzPageSize(req.query.pageSize, 50);
+    const sendItems = (rawItems, hasMore) => {
+      const items = applyPolybuzzGenderCacheToItems(rawItems).slice(0, pageSize);
+      startPolybuzzGenderEnrichment(items);
+      res.json({ ok: true, items, hasMore });
+    };
     if (page === 1) {
       // First page: use scraped HTML catalog (richer data)
       const items = await scrapePolybuzzCatalog();
-      res.json({ ok: true, items, hasMore: true });
+      sendItems(items, true);
     } else if (page <= POLYBUZZ_LOCALE_PAGES.length) {
       // Locale pages 2-6: scrape other locale versions
       const items = await fetchPolybuzzCatalogPage(page);
-      // Fire-and-forget gender enrichment for new items
-      enrichCatalogGenders(items).catch(() => {});
       // Always hasMore — search API continues after locales
-      res.json({ ok: true, items, hasMore: true });
+      sendItems(items, true);
     } else {
       // Pages beyond locales: browse via search API
       const browsePage = page - POLYBUZZ_LOCALE_PAGES.length;
-      const { items, hasMore } = await fetchPolybuzzCatalogViaSearch(browsePage);
-      enrichCatalogGenders(items).catch(() => {});
-      res.json({ ok: true, items, hasMore });
+      const { items, hasMore } = await fetchPolybuzzCatalogViaSearch(browsePage, pageSize);
+      sendItems(items, hasMore);
     }
   } catch (err) {
     console.error("[polybuzz catalog]", err);
     res.status(502).json({ ok: false, error: String(err?.message || err), items: [], hasMore: false });
+  }
+});
+
+app.post("/api/polybuzz/genders", async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const ids = uniquePolybuzzSceneIds(body.ids).slice(0, 100);
+    const shouldResolve = body.resolve === true;
+
+    if (shouldResolve) {
+      await resolvePolybuzzGenders(ids, { concurrency: 8 });
+    }
+
+    const genders = ids.map((id) => {
+      const cached = getCachedPolybuzzGender(id);
+      if (!cached) {
+        return {
+          secretSceneId: id,
+          status: polybuzzGenderPending.has(id) ? "pending" : "missing"
+        };
+      }
+
+      return {
+        secretSceneId: id,
+        gender: cached.gender,
+        status: cached.status
+      };
+    });
+
+    res.json({ ok: true, genders });
+  } catch (err) {
+    console.error("[polybuzz genders]", err);
+    res.status(502).json({ ok: false, error: String(err?.message || err), genders: [] });
   }
 });
 
@@ -1160,7 +2094,7 @@ app.post("/api/polybuzz/search", async (req, res) => {
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const query = String(body.query || "").trim();
     const page = Math.max(1, Number(body.page) || 1);
-    const pageSize = Math.min(50, Math.max(1, Number(body.pageSize) || 20));
+    const pageSize = parsePolybuzzPageSize(body.pageSize, 50);
 
     if (!query) {
       res.status(400).json({ ok: false, error: "query обязателен", items: [] });
@@ -1186,8 +2120,9 @@ app.post("/api/polybuzz/search", async (req, res) => {
     }
 
     const list = Array.isArray(respBody.data?.list) ? respBody.data.list : [];
-    const items = list.map(mapPolybuzzSceneToItem).filter((c) => !hasCJK(c.name));
+    const items = applyPolybuzzGenderCacheToItems(list.map(mapPolybuzzSceneToItem).filter((c) => !hasCJK(c.name)));
     const hasMore = list.length >= pageSize;
+    startPolybuzzGenderEnrichment(items);
 
     res.json({ ok: true, items, hasMore });
   } catch (err) {
@@ -1213,7 +2148,10 @@ async function downloadImageAsDataUrl(imgUrl, maxBytes = 2 * 1024 * 1024) {
   if (!imgUrl) return null;
   try {
     const headers = polybuzzBaseHeaders({ accept: "image/*,*/*;q=0.8" });
-    const resp = await fetch(String(imgUrl), { method: "GET", headers, redirect: "follow" });
+    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(10000)
+      : undefined;
+    const resp = await fetch(String(imgUrl), { method: "GET", headers, redirect: "follow", signal });
     if (!resp.ok) return null;
 
     const contentLength = Number(resp.headers.get("content-length") || 0);
@@ -1261,12 +2199,15 @@ app.get("/api/media", async (req, res) => {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
       Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
       "Accept-Language": "ru,en;q=0.8",
-      Referer: "https://www.polybuzz.ai/",
+      "Referer": "https://www.polybuzz.ai/",
       Origin: "https://www.polybuzz.ai"
     };
     if (POLYBUZZ_COOKIE) headers.Cookie = POLYBUZZ_COOKIE;
 
-    const upstream = await fetch(u.toString(), { method: "GET", headers, redirect: "follow" });
+    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(10000)
+      : undefined;
+    const upstream = await fetch(u.toString(), { method: "GET", headers, redirect: "follow", signal });
     if (!upstream.ok || !upstream.body) {
       res.status(502).json({ error: `Upstream media error: ${upstream.status}` });
       return;
@@ -1292,7 +2233,6 @@ app.get("/api/media", async (req, res) => {
 
 // ===== Shared characters storage =====
 
-const DATA_DIR = path.join(__dirname, "data");
 const CHARACTERS_FILE = path.join(DATA_DIR, "characters.json");
 const CHARACTERS_BACKUP_PREFIX = "characters.pre-migration";
 
@@ -1319,10 +2259,6 @@ const LEGACY_CHARACTER_KEYS = [
   "setting",
   "dialogueStyle"
 ];
-
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-}
 
 function isPlainObject(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -1422,6 +2358,7 @@ function backupCharactersFileOnce(rawText) {
 function loadCharacters() {
   ensureDataDir();
   try {
+    if (!fs.existsSync(CHARACTERS_FILE)) return [];
     const raw = fs.readFileSync(CHARACTERS_FILE, "utf8");
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return [];
@@ -1435,7 +2372,11 @@ function loadCharacters() {
     }
 
     return migrated;
-  } catch {
+  } catch (err) {
+    console.error("[characters] failed to load characters", err);
+    if (fs.existsSync(CHARACTERS_FILE)) {
+      throw err;
+    }
     return [];
   }
 }
@@ -1451,7 +2392,7 @@ app.get("/api/characters", (_req, res) => {
 });
 
 // POST upsert a character
-app.post("/api/characters", (req, res) => {
+app.post("/api/characters", requireAdmin, (req, res) => {
   const ch = migrateCharacterRecord(req.body);
   if (!ch) {
     return res.status(400).json({ error: "Character must have an id" });
@@ -1461,16 +2402,21 @@ app.post("/api/characters", (req, res) => {
   if (idx === -1) chars.unshift(ch);
   else chars[idx] = ch;
   saveCharactersFile(chars);
+  broadcastLiveEventToAll("characters", { count: chars.length });
   res.json({ ok: true });
 });
 
-// POST bulk upsert (for migration / import)
-app.post("/api/characters/bulk", (req, res) => {
-  const items = req.body;
+// POST bulk upsert or replace (for migration / import)
+app.post("/api/characters/bulk", requireAdmin, (req, res) => {
+  const items = Array.isArray(req.body) ? req.body : req.body?.characters;
   if (!Array.isArray(items)) {
     return res.status(400).json({ error: "Expected array" });
   }
-  const chars = loadCharacters();
+  const replace =
+    req.query.replace === "1" ||
+    req.query.mode === "replace" ||
+    (req.body && !Array.isArray(req.body) && req.body.replace === true);
+  const chars = replace ? [] : loadCharacters();
   const existingIds = new Set(chars.map((c) => c.id));
   for (const ch of items) {
     const migrated = migrateCharacterRecord(ch);
@@ -1484,17 +2430,20 @@ app.post("/api/characters/bulk", (req, res) => {
     }
   }
   saveCharactersFile(chars);
+  broadcastLiveEventToAll("characters", { count: chars.length, replace });
   res.json({ ok: true, count: chars.length });
 });
 
 // DELETE a character by id
-app.delete("/api/characters/:id", (req, res) => {
+app.delete("/api/characters/:id", requireAdmin, (req, res) => {
   const id = req.params.id;
   let chars = loadCharacters();
   const before = chars.length;
   chars = chars.filter((c) => c.id !== id);
   saveCharactersFile(chars);
-  res.json({ ok: true, deleted: chars.length < before });
+  const deleted = chars.length < before;
+  if (deleted) broadcastLiveEventToAll("characters", { count: chars.length, deletedId: id });
+  res.json({ ok: true, deleted });
 });
 
 const publicDir = path.join(__dirname, "public");
@@ -1504,7 +2453,8 @@ app.get("*", (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
-const server = app.listen(PORT, "0.0.0.0", () => {
+function startServer() {
+  const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Web UI: http://localhost:${PORT}`);
   const nets = require("os").networkInterfaces();
   for (const ifaces of Object.values(nets)) {
@@ -1517,12 +2467,27 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`LM Studio base: ${LMSTUDIO_BASE_URL}`);
 });
 
-server.on("error", (err) => {
+  server.on("error", (err) => {
   if (err && err.code === "EADDRINUSE") {
     console.error(`Port ${PORT} is already in use. If the app is already running, open http://localhost:${PORT}`);
     process.exit(1);
   }
 
-  console.error("Failed to start server:", err);
-  process.exit(1);
-});
+    console.error("Failed to start server:", err);
+    process.exit(1);
+  });
+
+  return server;
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  app,
+  startServer,
+  stripSlashes,
+  deriveRestBaseUrl,
+  deriveOpenAiBaseUrl
+};

@@ -2,7 +2,7 @@
 setlocal
 
 set "ROOT_DIR=%~dp0"
-set "APP_DIR=%ROOT_DIR%lmstudio-chat"
+set "APP_DIR=%ROOT_DIR%NLMW"
 set "APP_URL=http://localhost:3000"
 set "SERVER_SCRIPT=%APP_DIR%\server.js"
 set "SERVER_PID="

@@ -49,11 +49,11 @@
 
 ## How To Create a PR
 
-Default branch is currently `feature/lmstudio-chat-improvements`.
+Default branch is currently `feature/NLMW-improvements`.
 
 If you want a separate PR branch:
 
 1. `git checkout -b feature/polybuzz-import-ux`
 2. Commit changes
 3. Push: `git push -u origin feature/polybuzz-import-ux`
-4. Open PR on GitHub from `feature/polybuzz-import-ux` into `feature/lmstudio-chat-improvements`.
+4. Open PR on GitHub from `feature/polybuzz-import-ux` into `feature/NLMW-improvements`.

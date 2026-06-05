@@ -1,0 +1,121 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e1568]:
+        - generic [ref=e1569]: Профиль
+        - combobox "Модель" [disabled] [ref=e1571]:
+          - option "—" [selected]
+      - generic [ref=e11]: LM Studio недоступна. Проверьте, что сервер запущен.
+    - main [ref=e12]:
+      - generic [ref=e1574]:
+        - generic [ref=e1575]:
+          - generic [ref=e1578]:
+            - generic [ref=e1579]: Аватар (файл)
+            - button "Аватар (файл)" [ref=e1580]
+          - generic [ref=e1581]:
+            - generic [ref=e1582]: Имя
+            - textbox "Имя" [ref=e1583]:
+              - /placeholder: Ваше имя
+              - text: Вы
+          - generic [ref=e1584]:
+            - generic [ref=e1585]: Пол
+            - combobox "Пол" [ref=e1586]:
+              - option "Не указывать" [selected]
+              - option "Женский"
+              - option "Мужской"
+              - option "Другое"
+          - button "Сохранить профиль" [ref=e1587] [cursor=pointer]
+        - generic [ref=e1588]:
+          - generic [ref=e1589]: Провайдер LLM
+          - generic [ref=e1590]:
+            - generic [ref=e1591]: Источник моделей
+            - combobox "Источник моделей" [ref=e1592]:
+              - option "LM Studio (локальный)" [selected]
+              - option "Mistral (официальный API)"
+        - generic [ref=e1593]:
+          - generic [ref=e1594]: Резервная копия
+          - generic [ref=e1595]:
+            - button "Экспорт данных" [ref=e1596] [cursor=pointer]
+            - button "Импорт данных" [ref=e1597] [cursor=pointer]
+    - navigation "Навигация" [ref=e111]:
+      - button "Чаты" [ref=e112] [cursor=pointer]:
+        - img [ref=e113]
+      - button "PolyBuzz" [ref=e116] [cursor=pointer]:
+        - img [ref=e117]
+      - button "Персонажи" [active] [ref=e119] [cursor=pointer]:
+        - img [ref=e120]
+      - button "Профиль" [ref=e121] [cursor=pointer]:
+        - img [ref=e122]
+  - dialog "Персонажи" [ref=e1601]:
+    - generic [ref=e1602]:
+      - generic [ref=e1603]: Персонажи
+      - generic [ref=e1604]:
+        - button "Импорт" [ref=e1605] [cursor=pointer]
+        - button "Экспорт" [ref=e1606] [cursor=pointer]
+        - button "Новый" [ref=e1607] [cursor=pointer]
+        - button "Закрыть" [ref=e1608] [cursor=pointer]
+    - generic [ref=e1609]:
+      - generic [ref=e1610]:
+        - generic [ref=e1611]:
+          - generic [ref=e1612]: Импорт персонажа
+          - generic [ref=e1613]:
+            - button "Вставить" [ref=e1614] [cursor=pointer]
+            - button "Файл" [ref=e1615] [cursor=pointer]
+            - button "Импортировать" [ref=e1616] [cursor=pointer]
+        - textbox "Вставьте ссылку PolyBuzz или JSON карточки персонажа" [ref=e1617]
+        - generic [ref=e1618]: "Поддерживается: ссылка polybuzz.ai, JSON, PNG character card."
+      - generic [ref=e1619]:
+        - generic [ref=e1621] [cursor=pointer]:
+          - generic [ref=e1622]: Наоми — твоя бывшая девушка.
+          - generic [ref=e1623]: женский • Естественно
+        - generic [ref=e1625] [cursor=pointer]:
+          - generic [ref=e1626]: Катя
+          - generic [ref=e1627]: женский • Естественно
+        - generic [ref=e1629] [cursor=pointer]:
+          - generic [ref=e1630]: Демитра Калогерас
+          - generic [ref=e1631]: женский • Естественно
+        - generic [ref=e1633] [cursor=pointer]:
+          - generic [ref=e1634]: Амелия
+          - generic [ref=e1635]: женский • Естественно
+        - generic [ref=e1637] [cursor=pointer]:
+          - generic [ref=e1638]: Амара Синклер
+          - generic [ref=e1639]: женский • Естественно
+        - generic [ref=e1641] [cursor=pointer]:
+          - generic [ref=e1642]: В лифте с Селеной Гомес
+          - generic [ref=e1643]: женский • Флирт
+        - generic [ref=e1645] [cursor=pointer]:
+          - generic [ref=e1646]: Демона
+          - generic [ref=e1647]: женский • Естественно
+        - generic [ref=e1649] [cursor=pointer]:
+          - generic [ref=e1650]: Мария
+          - generic [ref=e1651]: женский • Флирт
+        - generic [ref=e1653] [cursor=pointer]:
+          - generic [ref=e1654]: Люси
+          - generic [ref=e1655]: женский • Естественно
+        - generic [ref=e1657] [cursor=pointer]:
+          - generic [ref=e1658]: Маришка
+          - generic [ref=e1659]: женский • Естественно
+        - generic [ref=e1661] [cursor=pointer]:
+          - generic [ref=e1662]: Карина
+          - generic [ref=e1663]: женский • Естественно
+        - generic [ref=e1665] [cursor=pointer]:
+          - generic [ref=e1666]: Ильза — бортпроводник
+          - generic [ref=e1667]: женский • Естественно
+        - generic [ref=e1669] [cursor=pointer]:
+          - generic [ref=e1670]: Студентка медсестринского дела Лена
+          - generic [ref=e1671]: женский • Естественно
+        - generic [ref=e1673] [cursor=pointer]:
+          - generic [ref=e1674]: Lana
+          - generic [ref=e1675]: женский • Естественно
+        - generic [ref=e1677] [cursor=pointer]:
+          - generic [ref=e1678]: Эмма
+          - generic [ref=e1679]: женский • Естественно
+        - generic [ref=e1681] [cursor=pointer]:
+          - generic [ref=e1682]: Ариэль
+          - generic [ref=e1683]: женский • Ролевой (RP)
+        - generic [ref=e1685] [cursor=pointer]:
+          - generic [ref=e1686]: Лиза
+          - generic [ref=e1687]: женский • Ролевой (RP)
+        - generic [ref=e1689] [cursor=pointer]:
+          - generic [ref=e1690]: Амари
+          - generic [ref=e1691]: женский • Естественно

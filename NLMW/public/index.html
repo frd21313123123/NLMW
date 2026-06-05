@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
@@ -6,10 +6,47 @@
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#0a0a0a" />
     <title>Chat Studio</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260521-mobile-state-panel" />
   </head>
   <body>
-    <div class="app" id="app">
+    <section class="authScreen" id="authScreen" aria-label="Вход в Chat Studio">
+      <div class="authScreen__panel">
+        <div class="authScreen__brand">
+          <svg class="authScreen__logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <div>
+            <div class="authScreen__title">Chat Studio</div>
+            <div class="authScreen__subtitle">Общее пространство персонажей</div>
+          </div>
+        </div>
+
+        <div class="authTabs" role="tablist" aria-label="Авторизация">
+          <button class="authTabs__item authTabs__item--active" id="authLoginTab" type="button">Вход</button>
+          <button class="authTabs__item" id="authRegisterTab" type="button">Регистрация</button>
+        </div>
+
+        <form class="authForm" id="authForm" autocomplete="on">
+          <label class="field authForm__nameField" id="authNameField" hidden>
+            <span class="field__label">Имя</span>
+            <input class="field__input" id="authName" type="text" autocomplete="name" placeholder="Как вас называть" />
+          </label>
+
+          <label class="field">
+            <span class="field__label">Логин или email</span>
+            <input class="field__input" id="authLogin" type="text" autocomplete="username" placeholder="user@example.com" required />
+          </label>
+
+          <label class="field">
+            <span class="field__label">Пароль</span>
+            <input class="field__input" id="authPassword" type="password" autocomplete="current-password" placeholder="Минимум 6 символов" required />
+          </label>
+
+          <button class="btn btn--accent authForm__submit" id="authSubmit" type="submit">Войти</button>
+          <div class="smallNote authForm__note" id="authNote" aria-live="polite"></div>
+        </form>
+      </div>
+    </section>
+
+    <div class="app" id="app" hidden>
       <!-- Desktop sidebar -->
       <aside class="sidebar" id="sidebar">
         <div class="sidebar__logo">
@@ -32,6 +69,10 @@
           <button class="sidebar__item" id="sideProfile" type="button">
             <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             <span>Профиль</span>
+          </button>
+          <button class="sidebar__item" id="sideAdmin" type="button" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6l-8-3z"/><path d="m9 12 2 2 4-5"/></svg>
+            <span>Админ</span>
           </button>
         </nav>
       </aside>
@@ -61,7 +102,7 @@
           <button class="iconBtn" id="btnBackToChats" type="button" aria-label="Назад">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></svg>
           </button>
-          <button class="chatTitle" id="btnOpenCharacters" type="button" aria-label="Персонаж">
+          <button class="chatTitle" id="btnOpenCharacters" type="button" aria-label="Состояние персонажа">
             <img class="avatar" id="charAvatar" alt="" />
             <span class="chatTitle__text">
               <span class="chatTitle__name" id="charName"></span>
@@ -72,6 +113,9 @@
             <select class="model__select model__select--compact" id="modelSelect" aria-label="Модель"></select>
             <button class="iconBtn iconBtn--panel" id="btnOpenPrompts" type="button" aria-label="Сохраненные промты" title="Сохраненные промты">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg>
+            </button>
+            <button class="iconBtn iconBtn--panel" id="btnExportSystemPrompt" type="button" aria-label="Экспорт системного промпта" title="Экспорт системного промпта">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="4" width="12" height="16" rx="2"/><path d="M16 4V2H4v14h4"/><path d="M11 9h6"/><path d="M11 13h6"/><path d="M11 17h4"/></svg>
             </button>
             <button class="iconBtn iconBtn--panel" id="btnAddNpc" type="button" aria-label="Добавить персонажа в чат" title="Добавить NPC в сцену">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
@@ -106,6 +150,25 @@
               Парни
             </button>
           </div>
+          <div class="pbSettingsBar" id="pbSettingsBar" aria-label="Настройки загрузки PolyBuzz">
+            <label class="pbSetting">
+              <span>Пачка</span>
+              <select class="pbSetting__select" id="polybuzzPageSize">
+                <option value="20">20</option>
+                <option value="30">30</option>
+                <option value="50" selected>50</option>
+              </select>
+            </label>
+            <label class="pbSetting pbSetting--toggle">
+              <input id="polybuzzAutoload" type="checkbox" checked />
+              <span>Автодогрузка</span>
+            </label>
+            <div class="pbAccuracy" role="group" aria-label="Точность определения пола">
+              <button class="pbAccuracyBtn" data-accuracy="fast" type="button">Быстрее</button>
+              <button class="pbAccuracyBtn pbAccuracyBtn--active" data-accuracy="balanced" type="button">Баланс</button>
+              <button class="pbAccuracyBtn" data-accuracy="precise" type="button">Точнее</button>
+            </div>
+          </div>
         </div>
 
         <!-- Group chat appbar -->
@@ -136,6 +199,11 @@
           </div>
         </div>
 
+        <!-- Admin view appbar -->
+        <div class="appbar__row" id="appbarAdmin" hidden>
+          <div class="appbar__title">Админ</div>
+        </div>
+
         <div class="appbar__status" id="lmStatus" aria-live="polite"></div>
       </header>
 
@@ -145,6 +213,7 @@
           <div class="chatsSubTabs">
             <button class="chatsSubTabs__btn chatsSubTabs__btn--active" id="subTabPersonal" type="button">Личные</button>
             <button class="chatsSubTabs__btn" id="subTabMulti" type="button">Мульти</button>
+            <button class="chatsSubTabs__btn" id="subTabRoleplay" type="button">Ролевки</button>
           </div>
           <div class="chatList" id="chatList"></div>
         </section>
@@ -152,12 +221,19 @@
         <!-- Active chat -->
         <section class="view" id="viewChat">
           <div class="chat" id="chatPanel">
+            <aside class="chat__statePanel" id="chatStatePanel" aria-label="Состояние персонажа"></aside>
             <div class="chat__center">
               <div class="chat__messages" id="messages" role="log" aria-live="polite"></div>
+              <section class="chat__mobileStatePanel" id="chatMobileStatePanel" aria-label="Состояние персонажа" hidden></section>
 
               <div class="npcStrip" id="npcStrip" hidden></div>
               <form class="chat__composer" id="composerForm" autocomplete="off">
                 <div class="composer__row">
+                  <button class="composer__stateToggle" id="btnToggleMobileState" type="button" aria-label="Состояние персонажа" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/>
+                    </svg>
+                  </button>
                   <textarea class="composer__input" id="userInput" rows="1" placeholder="Сообщение..."></textarea>
                   <button class="composer__utility" id="btnPromptQuick" type="button" aria-label="Дополнительно">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
@@ -203,6 +279,14 @@
         <section class="view" id="viewProfile">
           <div class="panel panel--flat">
             <div class="panel__body">
+              <div class="profile__card profile__card--account">
+                <div>
+                  <div class="profile__sectionTitle">Аккаунт</div>
+                  <div class="smallNote" id="accountSummary">Вход выполнен.</div>
+                </div>
+                <button class="btn btn--ghost" id="btnLogout" type="button">Выйти</button>
+              </div>
+
               <div class="profile__card">
                 <div class="profile__avatarRow">
                   <img class="avatar avatar--xl" id="userAvatarPreview" alt="" />
@@ -240,6 +324,7 @@
                   <select class="field__input" id="providerSelect">
                     <option value="lmstudio">LM Studio (локальный)</option>
                     <option value="mistral">Mistral (официальный API)</option>
+                    <option value="openrouter">OpenRouter</option>
                   </select>
                 </label>
 
@@ -252,16 +337,52 @@
                     Ключ обязателен для доступа к Mistral API.
                   </div>
                 </div>
+
+                <div id="openrouterSettings" hidden>
+                  <label class="field">
+                    <span class="field__label">OpenRouter API Key</span>
+                    <input class="field__input" id="openrouterKeyInput" type="password" placeholder="sk-or-v1-..." autocomplete="off" />
+                  </label>
+                  <div style="font-size: 0.78rem; color: rgba(255,255,255,0.45); margin-top: 0.25rem;">
+                    Ключ нужен для генерации ответов через OpenRouter.
+                  </div>
+                </div>
               </div>
 
               <div class="profile__card" style="margin-top: 1rem;">
                 <div style="font-weight: 600; margin-bottom: 0.5rem; font-size: 0.95rem; color: rgba(255,255,255,0.7);">Резервная копия</div>
                 <div class="row row--actions">
+                  <button class="btn btn--accent" id="btnPushDialogsCloud" type="button">Диалоги в облако</button>
                   <button class="btn btn--ghost" id="btnExportAllData" type="button">Экспорт данных</button>
                   <button class="btn btn--accent" id="btnImportAllData" type="button">Импорт данных</button>
                 </div>
                 <input id="importAllDataFile" type="file" accept="application/json,.json" hidden />
                 <div class="smallNote" id="profileDataNote"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Admin -->
+        <section class="view" id="viewAdmin">
+          <div class="panel panel--flat">
+            <div class="panel__body">
+              <div class="adminPanel__header">
+                <div>
+                  <div class="adminPanel__title">Администрирование</div>
+                  <div class="smallNote" id="adminAccountSummary">Настройки общего рабочего пространства.</div>
+                </div>
+              </div>
+
+              <div class="adminPanel__card" id="adminSettingsCard" hidden>
+                <div class="profile__sectionTitle">Регистрация пользователей</div>
+                <label class="toggleRow">
+                  <input id="registrationEnabledToggle" type="checkbox" />
+                  <span>
+                    <span class="toggleRow__title">Разрешить регистрацию</span>
+                    <span class="smallNote" id="registrationEnabledNote">Новые пользователи смогут создавать аккаунты.</span>
+                  </span>
+                </label>
               </div>
             </div>
           </div>
@@ -282,9 +403,46 @@
         <button class="tab" id="tabProfile" type="button" aria-label="Профиль">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         </button>
+        <button class="tab" id="tabAdmin" type="button" aria-label="Админ" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6l-8-3z"/><path d="m9 12 2 2 4-5"/></svg>
+        </button>
       </nav>
 
       </div><!-- /mainContent -->
+
+      <!-- Free Roleplay (custom plot) modal -->
+      <div class="modal" id="freeRoleplayModal" hidden>
+        <div class="modal__overlay" id="freeRoleplayOverlay"></div>
+        <div class="modal__window modal__window--sm" role="dialog" aria-modal="true" aria-label="Ролевая по сюжету">
+          <div class="modal__header">
+            <div class="modal__title">Свободная ролевая</div>
+            <div class="modal__headerActions">
+              <button class="btn" id="freeRoleplayClose" type="button">Закрыть</button>
+            </div>
+          </div>
+          <div class="modal__content" style="padding: 16px; overflow-y: auto;">
+            <form id="freeRoleplayForm" autocomplete="off">
+              <label class="field">
+                <span class="field__label">Имя вашего персонажа/собеседника</span>
+                <input class="field__input" id="frCharNameInput" type="text" placeholder="Например: Рассказчик, Таинственный незнакомец" maxlength="25" />
+                <div class="smallNote">По умолчанию: Рассказчик.</div>
+              </label>
+              
+              <label class="field" style="margin-top: 12px;">
+                <span class="field__label">Сюжет сценария / Обстановка *</span>
+                <textarea class="field__input field__input--area" id="frPlotInput" rows="5" required
+                  placeholder="Опишите, где вы находитесь, что происходит и в чем суть сценария. Например: Мы оказались заперты в старом заброшенном особняке, на улице бушует гроза, и мы слышим шаги на втором этаже..." maxlength="2000"></textarea>
+                <div class="smallNote">Опишите завязку сюжета, роли, локацию и правила игры.</div>
+              </label>
+              
+              <div class="row row--actions" style="margin-top: 18px;">
+                <button class="btn btn--ghost" id="btnFrCancel" type="button">Отмена</button>
+                <button class="btn btn--accent" type="submit" id="btnFrSubmit">Начать ролевую</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
 
       <!-- NPC (temporary character) modal -->
       <div class="modal" id="npcModal" hidden>
@@ -359,6 +517,12 @@
                 rows="3"
                 placeholder="Вставьте ссылку PolyBuzz или JSON карточки персонажа"
               ></textarea>
+              <div class="importPanel__preview" id="importVideoPreview" hidden>
+                <div class="importPanel__previewMediaWrap">
+                  <img class="importPanel__previewMedia" id="importVideoPreviewImage" alt="Превью видео" />
+                </div>
+                <div class="importPanel__previewInfo" id="importVideoPreviewInfo"></div>
+              </div>
               <div class="importPanel__note" id="importPanelNote">Поддерживается: ссылка polybuzz.ai, JSON, PNG character card.</div>
             </div>
             <div class="charList" id="charList"></div>
@@ -388,6 +552,7 @@
                     </div>
                     <div class="charCreator__chips">
                       <span class="chip" id="charHeroGenderTag">Пол</span>
+                      <span class="chip" id="charHeroStyleTag">Стиль</span>
                     </div>
                   </div>
                 </div>
@@ -403,8 +568,9 @@
                 </div>
 
                 <input id="charGenderInput" type="hidden" value="unspecified" />
-                <input id="charAvatarFile" type="file" accept="image/*" hidden />
-                <input id="charBgFile" type="file" accept="image/*" hidden />
+                <input id="charStyleInput" type="hidden" value="roleplay" />
+                <input class="fileInput" id="charAvatarFile" type="file" accept="image/*" />
+                <input class="fileInput" id="charBgFile" type="file" accept="image/*" />
 
                 <section class="charSection">
                   <div class="field__labelRow">
@@ -423,6 +589,12 @@
                     <button class="segmented__item" data-value="other" type="button">Небинарный</button>
                     <button class="segmented__item" data-value="unspecified" type="button">Любой</button>
                   </div>
+                </section>
+
+                <section class="charSection">
+                  <div class="charSection__title">Стиль общения</div>
+                  <div class="segmented segmented--style" id="charStyleSegment" role="group" aria-label="Стиль общения персонажа"></div>
+                  <div class="smallNote" id="charStyleNote">Этот стиль будет добавлен в системный промт персонажа.</div>
                 </section>
 
                 <section class="charSection">
@@ -464,6 +636,15 @@
                 </section>
 
                 <section class="charSection">
+                  <div class="charSection__title" style="margin-bottom:0.5rem">Аватар</div>
+                  <div class="row row--actions">
+                    <label class="btn btn--ghost fileTriggerBtn" id="btnUploadAvatar" for="charAvatarFile" role="button" tabindex="0">Загрузить фото</label>
+                    <button class="btn btn--ghost" id="btnGenAvatar" type="button">Сгенерировать</button>
+                  </div>
+                  <div class="smallNote" id="genAvatarNote">Загрузите своё изображение или сгенерируйте аватар по описанию персонажа.</div>
+                </section>
+
+                <section class="charSection">
                   <div class="charSection__title" style="margin-bottom:0.5rem">Инструменты</div>
                   <div class="row row--actions">
                     <button class="btn btn--ghost" id="btnTranslateAll" type="button">Перевести все поля</button>
@@ -489,8 +670,8 @@
         <div class="sheet__panel sheet__panel--prompts" role="dialog" aria-modal="true" aria-label="Сохраненные промты">
           <!-- Header -->
           <div class="promptsHeader">
-            <button class="iconBtn" id="btnPromptsClose" type="button" aria-label="Закрыть" data-close-prompts="1">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></svg>
+            <button class="iconBtn iconBtn--close" id="btnPromptsClose" type="button" aria-label="Закрыть" data-close-prompts="1">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </button>
             <div class="promptsHeader__title">Промты</div>
             <div class="promptsHeader__actions">
@@ -534,6 +715,7 @@
               </label>
               <div class="promptEditor__actions">
                 <button class="btn btn--accent" id="btnSavePrompt" type="button">Сохранить</button>
+                <button class="btn btn--ghost" id="btnCopyPrompt" type="button">Копировать</button>
                 <button class="btn btn--ghost" id="btnClearPromptDraft" type="button">Отмена</button>
               </div>
               <div class="smallNote" id="promptSheetNote"></div>
@@ -541,6 +723,7 @@
           </div>
         </div>
       </div>
+
       <!-- Multi-chat creation modal -->
       <div class="modal" id="multiChatModal" hidden>
         <div class="modal__overlay" data-close-multi="1"></div>
@@ -578,8 +761,96 @@
           </button>
         </div>
       </div>
-    </div>
 
-    <script src="./app.js"></script>
+      <!-- Speaker state modal -->
+      <div class="modal" id="speakerStateModal" hidden>
+        <div class="modal__overlay" data-close-state="1"></div>
+        <div class="modal__window modal__window--state" role="dialog" aria-modal="true" aria-labelledby="speakerStateTitle">
+          <div class="modal__header">
+            <div class="speakerState__head">
+              <img class="avatar speakerState__avatar" id="speakerStateAvatar" alt="" />
+              <div class="speakerState__headText">
+                <div class="modal__title" id="speakerStateTitle">Состояние</div>
+                <div class="speakerState__updated" id="speakerStateUpdated"></div>
+              </div>
+            </div>
+            <button class="iconBtn" data-close-state="1" type="button" aria-label="Закрыть">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
+          <div class="speakerState">
+            <div class="speakerState__empty" id="speakerStateEmpty">Состояние появится после следующего ответа персонажа.</div>
+
+            <section class="speakerState__section">
+              <div class="speakerState__label">Настроение</div>
+              <div class="speakerState__value" id="speakerStateMood"></div>
+            </section>
+
+            <section class="speakerState__section">
+              <div class="speakerState__row">
+                <div class="speakerState__label">Неуверенность</div>
+                <div class="speakerState__percent" id="speakerStateUncertaintyValue">0%</div>
+              </div>
+              <div class="speakerState__track">
+                <div class="speakerState__bar" id="speakerStateUncertaintyBar"></div>
+              </div>
+            </section>
+
+            <section class="speakerState__section">
+              <div class="speakerState__label">Эмоции</div>
+              <div class="speakerState__emotions" id="speakerStateEmotions"></div>
+            </section>
+
+            <section class="speakerState__section">
+              <div class="speakerState__label">Ощущения</div>
+              <div class="speakerState__chips" id="speakerStateSensations"></div>
+            </section>
+
+            <section class="speakerState__section">
+              <div class="speakerState__label">Отношение</div>
+              <div class="speakerState__value" id="speakerStateAttitude"></div>
+            </section>
+
+            <section class="speakerState__section">
+              <div class="speakerState__label">Намерение</div>
+              <div class="speakerState__value" id="speakerStateIntent"></div>
+            </section>
+
+            <section class="speakerState__section">
+              <div class="speakerState__label">Кратко</div>
+              <div class="speakerState__value" id="speakerStateSummary"></div>
+            </section>
+          </div>
+          <div class="speakerState__footer">
+            <button class="btn btn--ghost" id="btnSpeakerStateEdit" type="button">Редактировать</button>
+            <button class="btn btn--accent" data-close-state="1" type="button">Закрыть</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Copy to Clipboard fallback modal -->
+      <div class="modal" id="copyModal" hidden>
+        <div class="modal__overlay" data-close-copy="1"></div>
+        <div class="modal__window modal__window--tiny">
+          <div class="modal__header">
+            <div class="modal__title">Скопировать текст</div>
+            <button class="modal__close" data-close-copy="1" type="button" aria-label="Закрыть">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
+          <div class="modal__body">
+            <div class="field__label">Скопируйте текст ниже вручную:</div>
+            <textarea class="field__input field__input--area" id="copyModalText" rows="10" readonly></textarea>
+          </div>
+          <div class="modal__footer">
+            <button class="btn btn--accent" id="btnCopyModalAction" type="button">Копировать в буфер</button>
+            <button class="btn btn--ghost" data-close-copy="1" type="button">Закрыть</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /app -->
+
+    <script src="./app.js?v=20260522-scroll-lock"></script>
   </body>
 </html>

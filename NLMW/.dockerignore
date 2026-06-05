@@ -1,0 +1,11 @@
+node_modules
+.npm-cache
+.npm
+.yarn
+data
+temp
+*.log
+server.out.log
+server.err.log
+.env
+.env.*

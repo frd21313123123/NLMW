@@ -5,7 +5,8 @@
   "description": "Local web chat UI for LM Studio with characters and profile",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=18"

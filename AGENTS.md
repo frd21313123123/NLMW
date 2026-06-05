@@ -14,9 +14,9 @@
 
 ## Где находится проект
 
-- Основной проект: `lmstudio-chat/`
-- Сервер (proxy + static): `lmstudio-chat/server.js`
-- Клиент (SPA без сборки): `lmstudio-chat/public/`
+- Основной проект: `NLMW/`
+- Сервер (proxy + static): `NLMW/server.js`
+- Клиент (SPA без сборки): `NLMW/public/`
 
 ## Быстрый старт
 
@@ -28,7 +28,7 @@
 2) Запуск сайта:
 
 ```bash
-cd lmstudio-chat
+cd NLMW
 npm install
 npm start
 ```
@@ -47,9 +47,9 @@ npm start
 
 ## Архитектура
 
-### Server: `lmstudio-chat/server.js`
+### Server: `NLMW/server.js`
 
-- Раздает статику из `lmstudio-chat/public/`
+- Раздает статику из `NLMW/public/`
 - Проксирует запросы к LM Studio, чтобы UI не упирался в CORS
 - Эндпоинты (proxy):
   - `GET /api/lmstudio/models`
@@ -62,7 +62,7 @@ npm start
   - `POST /api/openrouter/chat` — проксирует запросы к OpenRouter API
   - `GET /api/health` — отдает вычисленные base URL
 
-### Client: `lmstudio-chat/public/app.js`
+### Client: `NLMW/public/app.js`
 
 - SPA на plain JS (без сборки)
 - UI похож на мобильные мессенджеры:

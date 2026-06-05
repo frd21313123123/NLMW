@@ -1,0 +1,297 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - img [ref=e5]
+      - text: Chat Studio
+    - navigation [ref=e7]:
+      - button "Чаты" [ref=e8] [cursor=pointer]:
+        - img [ref=e9]
+        - generic [ref=e12]: Чаты
+      - button "PolyBuzz" [ref=e13] [cursor=pointer]:
+        - img [ref=e14]
+        - generic [ref=e16]: PolyBuzz
+      - button "Создать персонажа" [ref=e17] [cursor=pointer]:
+        - img [ref=e18]
+        - generic [ref=e21]: Создать персонажа
+      - button "Профиль" [ref=e22] [cursor=pointer]:
+        - img [ref=e23]
+        - generic [ref=e26]: Профиль
+  - generic [ref=e27]:
+    - banner [ref=e28]:
+      - generic [ref=e140]:
+        - generic [ref=e142]:
+          - generic:
+            - img
+          - searchbox "Поиск на PolyBuzz..." [ref=e143]: tom
+        - group "Фильтр по полу" [ref=e144]:
+          - button "Все" [ref=e145] [cursor=pointer]:
+            - img [ref=e146]
+            - text: Все
+          - button "Девушки" [ref=e149] [cursor=pointer]:
+            - img [ref=e150]
+            - text: Девушки
+          - button "Парни" [active] [ref=e152] [cursor=pointer]:
+            - img [ref=e153]
+            - text: Парни
+        - generic "Настройки загрузки PolyBuzz" [ref=e157]:
+          - generic [ref=e158]:
+            - generic [ref=e159]: Пачка
+            - combobox "Пачка" [ref=e160]:
+              - option "20" [selected]
+              - option "30"
+              - option "50"
+          - generic [ref=e161] [cursor=pointer]:
+            - checkbox "Автодогрузка" [ref=e162]
+            - generic [ref=e163]: Автодогрузка
+          - group "Точность определения пола" [ref=e164]:
+            - button "Быстрее" [ref=e165] [cursor=pointer]
+            - button "Баланс" [ref=e166] [cursor=pointer]
+            - button "Точнее" [ref=e167] [cursor=pointer]
+      - generic [ref=e35]: LM Studio недоступна. Проверьте, что сервер запущен.
+    - main [ref=e36]:
+      - generic [ref=e170]:
+        - generic [ref=e2176] [cursor=pointer]:
+          - generic [ref=e2177]:
+            - img "Tom" [ref=e2178]
+            - generic [ref=e2180]:
+              - img [ref=e2181]
+              - generic [ref=e2183]: 15.3M чатов
+            - button "Добавить" [ref=e2184]
+          - generic [ref=e2185]:
+            - generic [ref=e2187]: Tom
+            - generic [ref=e2188]: Your enemy thinks you don't understand Spanish...
+            - generic [ref=e2189]:
+              - generic [ref=e2190]: Dominant
+              - generic [ref=e2191]: Easy Angered
+              - generic [ref=e2192]: Enemies to Lovers
+        - generic [ref=e2193] [cursor=pointer]:
+          - generic [ref=e2194]:
+            - img "Tom Kaulitz" [ref=e2195]
+            - generic [ref=e2197]:
+              - img [ref=e2198]
+              - generic [ref=e2200]: 3.4M чатов
+            - button "Добавить" [ref=e2201]
+          - generic [ref=e2202]:
+            - generic [ref=e2204]: Tom Kaulitz
+            - generic [ref=e2205]: For a kiss from the girl, I’d give anything...
+            - generic [ref=e2206]:
+              - generic [ref=e2207]: Romance
+              - generic [ref=e2208]: Shy
+              - generic [ref=e2209]: Cute
+        - generic [ref=e2210] [cursor=pointer]:
+          - generic [ref=e2211]:
+            - img "Tom Kaulitz" [ref=e2212]
+            - generic [ref=e2214]:
+              - img [ref=e2215]
+              - generic [ref=e2217]: 386.1K чатов
+            - button "Добавить" [ref=e2218]
+          - generic [ref=e2219]:
+            - generic [ref=e2221]: Tom Kaulitz
+            - generic [ref=e2222]: Sleepy Tom
+            - generic [ref=e2223]:
+              - generic [ref=e2224]: OC
+              - generic [ref=e2225]: Clingy
+              - generic [ref=e2226]: Cute
+        - generic [ref=e2227] [cursor=pointer]:
+          - generic [ref=e2228]:
+            - generic [ref=e2230]:
+              - img [ref=e2231]
+              - generic [ref=e2233]: 1.4M чатов
+            - button "Добавить" [ref=e2234]
+          - generic [ref=e2235]:
+            - generic [ref=e2237]: Tom
+            - generic [ref=e2238]: 𔘓 ¡! 📌 | Don't make me choose, doll.
+            - generic [ref=e2239]:
+              - generic [ref=e2240]: OC
+              - generic [ref=e2241]: Cold
+              - generic [ref=e2242]: Manipulative
+        - generic [ref=e2243] [cursor=pointer]:
+          - generic [ref=e2244]:
+            - img "tom" [ref=e2245]
+            - generic [ref=e2247]:
+              - img [ref=e2248]
+              - generic [ref=e2250]: 3M чатов
+            - button "Добавить" [ref=e2251]
+          - generic [ref=e2252]:
+            - generic [ref=e2254]: tom
+            - generic [ref=e2255]: 😳// He thought you were a girl, and he even used "I'm gay" to turn down your confession.. //🌷
+            - generic [ref=e2256]:
+              - generic [ref=e2257]: Badboy
+              - generic [ref=e2258]: BL
+              - generic [ref=e2259]: Obsessive
+        - generic [ref=e2260] [cursor=pointer]:
+          - generic [ref=e2261]:
+            - generic [ref=e2263]:
+              - img [ref=e2264]
+              - generic [ref=e2266]: 549.5K чатов
+            - button "Добавить" [ref=e2267]
+          - generic [ref=e2268]:
+            - generic [ref=e2270]: Tom Kaulitz-crying
+            - generic [ref=e2271]: Tom broke down on your shoulder
+            - generic [ref=e2272]:
+              - generic [ref=e2273]: Movies&TV
+              - generic [ref=e2274]: Celebrity
+              - generic [ref=e2275]: Gentle
+        - generic [ref=e2276] [cursor=pointer]:
+          - generic [ref=e2277]:
+            - img "Tom" [ref=e2278]
+            - generic [ref=e2280]:
+              - img [ref=e2281]
+              - generic [ref=e2283]: 988K чатов
+            - button "Добавить" [ref=e2284]
+          - generic [ref=e2285]:
+            - generic [ref=e2287]: Tom
+            - generic [ref=e2288]: Locked in a cramped closet with your enemy..
+            - generic [ref=e2289]:
+              - generic [ref=e2290]: Cold
+              - generic [ref=e2291]: Funny
+              - generic [ref=e2292]: Jealous
+        - generic [ref=e2293] [cursor=pointer]:
+          - generic [ref=e2294]:
+            - img "Tom Kaulitz" [ref=e2295]
+            - generic [ref=e2297]:
+              - img [ref=e2298]
+              - generic [ref=e2300]: 2M чатов
+            - button "Добавить" [ref=e2301]
+          - generic [ref=e2302]:
+            - generic [ref=e2304]: Tom Kaulitz
+            - generic [ref=e2305]: ⋆ | Tom Kaulitz - new girl in the high school?
+            - generic [ref=e2306]:
+              - generic [ref=e2307]: Celebrity
+              - generic [ref=e2308]: Student
+              - generic [ref=e2309]: Flirtatious
+        - generic [ref=e2310] [cursor=pointer]:
+          - generic [ref=e2311]:
+            - img "Tom Qh" [ref=e2312]
+            - generic [ref=e2314]:
+              - img [ref=e2315]
+              - generic [ref=e2317]: 395.7K чатов
+            - button "Добавить" [ref=e2318]
+          - generic [ref=e2319]:
+            - generic [ref=e2321]: Tom Qh
+            - generic [ref=e2322]: Tom, your boyfriend, but....
+            - generic [ref=e2323]:
+              - generic [ref=e2324]: Caring
+              - generic [ref=e2325]: Jealous
+              - generic [ref=e2326]: Loyal
+        - generic [ref=e2327] [cursor=pointer]:
+          - generic [ref=e2328]:
+            - img "Tom Kaulitz" [ref=e2329]
+            - generic [ref=e2331]:
+              - img [ref=e2332]
+              - generic [ref=e2334]: 1.6M чатов
+            - button "Добавить" [ref=e2335]
+          - generic [ref=e2336]:
+            - generic [ref=e2338]: Tom Kaulitz
+            - generic [ref=e2339]: •your naughty boyfriend•
+            - generic [ref=e2340]:
+              - generic [ref=e2341]: Celebrity
+              - generic [ref=e2342]: Dominant
+              - generic [ref=e2343]: Flirtatious
+        - generic [ref=e2344] [cursor=pointer]:
+          - generic [ref=e2345]:
+            - img "Tom Kaulitz" [ref=e2346]
+            - generic [ref=e2348]:
+              - img [ref=e2349]
+              - generic [ref=e2351]: 860.6K чатов
+            - button "Добавить" [ref=e2352]
+          - generic [ref=e2353]:
+            - generic [ref=e2355]: Tom Kaulitz
+            - generic [ref=e2356]: Did he give you an autograph in a different way...?
+            - generic [ref=e2357]:
+              - generic [ref=e2358]: Dominant
+              - generic [ref=e2359]: Funny
+              - generic [ref=e2360]: Loyal
+        - generic [ref=e2361] [cursor=pointer]:
+          - generic [ref=e2362]:
+            - img "your brother's buddies" [ref=e2363]
+            - generic [ref=e2365]:
+              - img [ref=e2366]
+              - generic [ref=e2368]: 6.6M чатов
+            - button "Добавить" [ref=e2369]
+          - generic [ref=e2370]:
+            - generic [ref=e2372]: your brother's buddies
+            - generic [ref=e2373]: "It's \"boys' night,\" and your brother invited all his buddies to stay over. You don't know any of them: there's Tom, Nat…"
+            - generic [ref=e2374]:
+              - generic [ref=e2375]: Friend
+              - generic [ref=e2376]: Student
+              - generic [ref=e2377]: Cute
+        - generic [ref=e2378] [cursor=pointer]:
+          - generic [ref=e2379]:
+            - img "Tom Kaulitz" [ref=e2380]
+            - generic [ref=e2382]:
+              - img [ref=e2383]
+              - generic [ref=e2385]: 429.9K чатов
+            - button "Добавить" [ref=e2386]
+          - generic [ref=e2387]:
+            - generic [ref=e2389]: Tom Kaulitz
+            - generic [ref=e2390]: Tom Kaulitz, your whiny, tantrum-prone boyfriend
+            - generic [ref=e2392]: OC
+        - generic [ref=e2393] [cursor=pointer]:
+          - generic [ref=e2394]:
+            - img "Tom Kaulitz" [ref=e2395]
+            - generic [ref=e2397]:
+              - img [ref=e2398]
+              - generic [ref=e2400]: 671.1K чатов
+            - button "Добавить" [ref=e2401]
+          - generic [ref=e2402]:
+            - generic [ref=e2404]: Tom Kaulitz
+            - generic [ref=e2405]: "\"Tom—damn, is she the nerd? So sexy\" *🫦*"
+            - generic [ref=e2406]:
+              - generic [ref=e2407]: Clingy
+              - generic [ref=e2408]: Flirtatious
+              - generic [ref=e2409]: Naughty
+        - generic [ref=e2410] [cursor=pointer]:
+          - generic [ref=e2411]:
+            - img "Mini Tom Kaulitz" [ref=e2412]
+            - generic [ref=e2414]:
+              - img [ref=e2415]
+              - generic [ref=e2417]: 1.5M чатов
+            - button "Добавить" [ref=e2418]
+          - generic [ref=e2419]:
+            - generic [ref=e2421]: Mini Tom Kaulitz
+            - generic [ref=e2422]: Tom likes you. Tom is a shy boy—he's handsome and cute. He's in a band called Tokio Hotel, but he gets bullied a lot be…
+            - generic [ref=e2423]:
+              - generic [ref=e2424]: Clingy
+              - generic [ref=e2425]: Cute
+              - generic [ref=e2426]: Clumsy
+        - generic [ref=e2427] [cursor=pointer]:
+          - generic [ref=e2428]:
+            - img "Tom Kaulitz" [ref=e2429]
+            - generic [ref=e2431]:
+              - img [ref=e2432]
+              - generic [ref=e2434]: 527.8K чатов
+            - button "Добавить" [ref=e2435]
+          - generic [ref=e2436]:
+            - generic [ref=e2438]: Tom Kaulitz
+            - generic [ref=e2439]: Tom Kaulitz and you have been enemies since you were 5 years old.
+            - generic [ref=e2441]: OC
+        - generic [ref=e2442] [cursor=pointer]:
+          - generic [ref=e2443]:
+            - img "Tom Kaulitz" [ref=e2444]
+            - generic [ref=e2446]:
+              - img [ref=e2447]
+              - generic [ref=e2449]: 870K чатов
+            - button "Добавить" [ref=e2450]
+          - generic [ref=e2451]:
+            - generic [ref=e2453]: Tom Kaulitz
+            - generic [ref=e2454]: ✮ | Tom Kaulitz (Looking at u during an interview)
+            - generic [ref=e2455]:
+              - generic [ref=e2456]: Celebrity
+              - generic [ref=e2457]: Gentle
+              - generic [ref=e2458]: Romance
+        - generic [ref=e2459] [cursor=pointer]:
+          - generic [ref=e2460]:
+            - img "Tom Riddle" [ref=e2461]
+            - generic [ref=e2463]:
+              - img [ref=e2464]
+              - generic [ref=e2466]: 2.4M чатов
+            - button "Добавить" [ref=e2467]
+          - generic [ref=e2468]:
+            - generic [ref=e2470]: Tom Riddle
+            - generic [ref=e2471]: "\"What's my type?\""
+            - generic [ref=e2472]:
+              - generic [ref=e2473]: Cold
+              - generic [ref=e2474]: Manipulative
+              - generic [ref=e2475]: Obsessive
+        - button "Загрузить ещё" [ref=e2476] [cursor=pointer]

@@ -1,0 +1,38 @@
+- generic [ref=e3]:
+  - banner:
+    - generic [ref=e369]:
+      - button "Назад" [ref=e370] [cursor=pointer]:
+        - img [ref=e371]
+      - button "Персонаж" [ref=e373] [cursor=pointer]:
+        - generic [ref=e375]: Наоми — твоя бывшая девушка.
+      - generic [ref=e376]:
+        - combobox "Модель" [disabled] [ref=e377]:
+          - option "—" [selected]
+        - button "Сохраненные промты" [ref=e378] [cursor=pointer]:
+          - img [ref=e379]
+        - button "Добавить персонажа в чат" [ref=e381] [cursor=pointer]:
+          - img [ref=e382]
+        - button "Очистить чат" [ref=e385] [cursor=pointer]:
+          - img [ref=e386]
+    - generic: LM Studio недоступна. Проверьте, что сервер запущен.
+  - main [ref=e12]:
+    - generic [ref=e391]:
+      - log [ref=e392]:
+        - generic [ref=e393]: Все ответы сгенерированы искусственным интеллектом и являются вымышленными.
+        - generic [ref=e395]:
+          - generic [ref=e396]: Не думал, что увижу тебя здесь. Ну так… чем ты последнее время занимаешься?
+          - generic [ref=e397]: 01:51
+          - generic [ref=e398]:
+            - button "R" [disabled] [ref=e399]
+            - button ">>" [disabled] [ref=e400]
+            - button "💭" [disabled] [ref=e401]
+      - generic [ref=e403]:
+        - generic [ref=e404]: Дима
+        - button "✎" [ref=e405] [cursor=pointer]
+        - button "×" [ref=e406] [cursor=pointer]
+      - generic [ref=e408]:
+        - textbox "Сообщение..." [ref=e409]
+        - button "Дополнительно" [ref=e410] [cursor=pointer]:
+          - img [ref=e411]
+        - button "Отправить" [ref=e412] [cursor=pointer]:
+          - img [ref=e413]

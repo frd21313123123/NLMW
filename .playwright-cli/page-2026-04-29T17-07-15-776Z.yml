@@ -1,0 +1,336 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e130]:
+      - generic [ref=e132]:
+        - generic:
+          - img
+        - searchbox "Поиск на PolyBuzz..." [ref=e133]
+      - group "Фильтр по полу" [ref=e134]:
+        - button "Все" [ref=e135] [cursor=pointer]:
+          - img [ref=e136]
+          - text: Все
+        - button "Девушки" [ref=e139] [cursor=pointer]:
+          - img [ref=e140]
+          - text: Девушки
+        - button "Парни" [active] [ref=e142] [cursor=pointer]:
+          - img [ref=e143]
+          - text: Парни
+      - generic "Настройки загрузки PolyBuzz" [ref=e147]:
+        - generic [ref=e148]:
+          - generic [ref=e149]: Пачка
+          - combobox "Пачка" [ref=e150]:
+            - option "20"
+            - option "30"
+            - option "50" [selected]
+        - generic [ref=e151] [cursor=pointer]:
+          - checkbox "Автодогрузка" [checked] [ref=e152]
+          - generic [ref=e153]: Автодогрузка
+        - group "Точность определения пола" [ref=e154]:
+          - button "Быстрее" [ref=e155] [cursor=pointer]
+          - button "Баланс" [ref=e156] [cursor=pointer]
+          - button "Точнее" [ref=e157] [cursor=pointer]
+    - generic [ref=e31]: LM Studio недоступна. Проверьте, что сервер запущен.
+  - main [ref=e11]:
+    - generic [ref=e160]:
+      - generic [ref=e875] [cursor=pointer]:
+        - generic [ref=e876]:
+          - img "Гэвин" [ref=e877]
+          - generic [ref=e879]:
+            - img [ref=e880]
+            - generic [ref=e882]: 960.5K чатов
+          - button "Добавить" [ref=e883]
+        - generic [ref=e884]:
+          - generic [ref=e886]: Гэвин
+          - generic [ref=e887]: Можешь молчать? Хочешь, чтобы я довёл тебя до слёз, мм? - Гэвин
+          - generic [ref=e888]:
+            - generic [ref=e889]: Холодный
+            - generic [ref=e890]: Легко разозлился
+            - generic [ref=e891]: Мужественный
+      - generic [ref=e892] [cursor=pointer]:
+        - generic [ref=e893]:
+          - img "Аластор" [ref=e894]
+          - generic [ref=e896]:
+            - img [ref=e897]
+            - generic [ref=e899]: 33.3K чатов
+          - button "Добавить" [ref=e900]
+        - generic [ref=e901]:
+          - generic [ref=e903]: Аластор
+          - generic [ref=e904]: Ты устала умолять
+          - generic [ref=e905]:
+            - generic [ref=e906]: Кино и ТВ
+            - generic [ref=e907]: Студент
+            - generic [ref=e908]: Хитрость
+      - generic [ref=e909] [cursor=pointer]:
+        - generic [ref=e910]:
+          - img "Лари" [ref=e911]
+          - generic [ref=e913]:
+            - img [ref=e914]
+            - generic [ref=e916]: 4M чатов
+          - button "Добавить" [ref=e917]
+        - generic [ref=e918]:
+          - generic [ref=e920]: Лари
+          - generic [ref=e921]: Твой враг, который на самом деле влюблён в тебя. Сейчас вам уже по 18 лет.
+          - generic [ref=e922]:
+            - generic [ref=e923]: Враг
+            - generic [ref=e924]: Плохой мальчик
+            - generic [ref=e925]: Лояльный
+      - generic [ref=e926] [cursor=pointer]:
+        - generic [ref=e927]:
+          - img "Ан Кёнхо" [ref=e928]
+          - generic [ref=e930]:
+            - img [ref=e931]
+            - generic [ref=e933]: 25K чатов
+          - button "Добавить" [ref=e934]
+        - generic [ref=e935]:
+          - generic [ref=e937]: Ан Кёнхо
+          - generic [ref=e938]: "\" ˗ˋˏ🧣 ˎˊ˗┃𝗣𝗼𝗰𝗵𝗲𝗺𝘂 𝗼𝗻𝗮 𝓎 𝑦𝑎 𝐧𝐞..?\""
+          - generic [ref=e939]:
+            - generic [ref=e940]: Кино и ТВ
+            - generic [ref=e941]: Легко разозлился
+            - generic [ref=e942]: Энергичный
+      - generic [ref=e943] [cursor=pointer]:
+        - generic [ref=e944]:
+          - img "Эзриэл Кайвен Аларик" [ref=e945]
+          - generic [ref=e947]:
+            - img [ref=e948]
+            - generic [ref=e950]: 332K чатов
+          - button "Добавить" [ref=e951]
+        - generic [ref=e952]:
+          - generic [ref=e954]: Эзриэл Кайвен Аларик
+          - generic [ref=e955]: "распаковка с твоим врагом? (автор: Леона Наранедра)"
+          - generic [ref=e956]:
+            - generic [ref=e957]: Холодный
+            - generic [ref=e958]: Легко разозлился
+            - generic [ref=e959]: Мужественный
+      - generic [ref=e960] [cursor=pointer]:
+        - generic [ref=e961]:
+          - img "Тамаки Амадзики" [ref=e962]
+          - generic [ref=e964]:
+            - img [ref=e965]
+            - generic [ref=e967]: 161.2K чатов
+          - button "Добавить" [ref=e968]
+        - generic [ref=e969]:
+          - generic [ref=e971]: Тамаки Амадзики
+          - generic [ref=e972]: 🐙 || «Остановлюсь на второй…»
+      - generic [ref=e973] [cursor=pointer]:
+        - generic [ref=e974]:
+          - img "Друзья Брата" [ref=e975]
+          - generic [ref=e977]:
+            - img [ref=e978]
+            - generic [ref=e980]: 5.3M чатов
+          - button "Добавить" [ref=e981]
+        - generic [ref=e982]:
+          - generic [ref=e984]: Друзья Брата
+          - generic [ref=e985]: •//твой брат пришёл домой с друзьями которых ты некогда не видела и которые не знают о тебе 😦//•
+          - generic [ref=e986]:
+            - generic [ref=e987]: Друг
+            - generic [ref=e988]: Ревнивый
+            - generic [ref=e989]: Надежный
+      - generic [ref=e990] [cursor=pointer]:
+        - generic [ref=e991]:
+          - img "Тф141 -Гибрид-" [ref=e992]
+          - generic [ref=e994]:
+            - img [ref=e995]
+            - generic [ref=e997]: 46.9K чатов
+          - button "Добавить" [ref=e998]
+        - generic [ref=e999]:
+          - generic [ref=e1001]: Тф141 -Гибрид-
+          - generic [ref=e1002]: //о, мальчик.. Серьёзно ты собираешься напасть на меня..?\\ -BL-
+          - generic [ref=e1003]:
+            - generic [ref=e1004]: Заботливый
+            - generic [ref=e1005]: Холодный
+            - generic [ref=e1006]: Легко разозлился
+      - generic [ref=e1007] [cursor=pointer]:
+        - generic [ref=e1008]:
+          - img "Бакуго Шото и Деку" [ref=e1009]
+          - generic [ref=e1011]:
+            - img [ref=e1012]
+            - generic [ref=e1014]: 280K чатов
+          - button "Добавить" [ref=e1015]
+        - generic [ref=e1016]:
+          - generic [ref=e1018]: Бакуго Шото и Деку
+          - generic [ref=e1019]: Бакуго, Деку и Шото уделяют Мэй больше внимания, чем тебе!?
+      - generic [ref=e1020] [cursor=pointer]:
+        - generic [ref=e1021]:
+          - img "Дэймон Мэддли" [ref=e1022]
+          - generic [ref=e1024]:
+            - img [ref=e1025]
+            - generic [ref=e1027]: 3.6M чатов
+          - button "Добавить" [ref=e1028]
+        - generic [ref=e1029]:
+          - generic [ref=e1031]: Дэймон Мэддли
+          - generic [ref=e1032]: Ты — новая ученица, и привлекла внимание популярного хулигана… (веселитесь, змейки 🥀🐍)
+          - generic [ref=e1033]:
+            - generic [ref=e1034]: Плохой мальчик
+            - generic [ref=e1035]: Кокетливый
+            - generic [ref=e1036]: Первая любовь
+      - generic [ref=e1037] [cursor=pointer]:
+        - generic [ref=e1038]:
+          - img "Чонгук муж" [ref=e1039]
+          - generic [ref=e1041]:
+            - img [ref=e1042]
+            - generic [ref=e1044]: 6.6M чатов
+          - button "Добавить" [ref=e1045]
+        - generic [ref=e1046]:
+          - generic [ref=e1048]: Чонгук муж
+          - generic [ref=e1049]: Это брак по расчету. Он тебя очень ненавидит.
+          - generic [ref=e1050]:
+            - generic [ref=e1051]: Кино и ТВ
+            - generic [ref=e1052]: Холодный
+            - generic [ref=e1053]: Плохой мальчик
+      - generic [ref=e1054] [cursor=pointer]:
+        - generic [ref=e1055]:
+          - img "Ноа" [ref=e1056]
+          - generic [ref=e1058]:
+            - img [ref=e1059]
+            - generic [ref=e1061]: 147.6K чатов
+          - button "Добавить" [ref=e1062]
+        - generic [ref=e1063]:
+          - generic [ref=e1065]: Ноа
+          - generic [ref=e1066]: Твой песик
+      - generic [ref=e1067] [cursor=pointer]:
+        - generic [ref=e1068]:
+          - img "BTS - Усталость" [ref=e1069]
+          - generic [ref=e1071]:
+            - img [ref=e1072]
+            - generic [ref=e1074]: 35.8K чатов
+          - button "Добавить" [ref=e1075]
+        - generic [ref=e1076]:
+          - generic [ref=e1078]: BTS - Усталость
+          - generic [ref=e1079]: 🫩| Ты потеряла сознание во время репетиции...
+          - generic [ref=e1080]:
+            - generic [ref=e1081]: Знаменитость
+            - generic [ref=e1082]: Заботливый
+            - generic [ref=e1083]: Надежный
+      - generic [ref=e1084] [cursor=pointer]:
+        - generic [ref=e1085]:
+          - img "Малахи Дэниел Бартон" [ref=e1086]
+          - generic [ref=e1088]:
+            - img [ref=e1089]
+            - generic [ref=e1091]: 10.6K чатов
+          - button "Добавить" [ref=e1092]
+        - generic [ref=e1093]:
+          - generic [ref=e1095]: Малахи Дэниел Бартон
+          - generic [ref=e1096]: Вы — бывшие 💔 Ты и Малахи встречались два года, пока он не стал становиться всё более знаменитым. Он не стал высокомер…
+          - generic [ref=e1097]:
+            - generic [ref=e1098]: Знаменитость
+            - generic [ref=e1099]: Кокетливый
+            - generic [ref=e1100]: Непослушный
+      - generic [ref=e1101] [cursor=pointer]:
+        - generic [ref=e1102]:
+          - img "Билл" [ref=e1103]
+          - generic [ref=e1105]:
+            - img [ref=e1106]
+            - generic [ref=e1108]: 444.1K чатов
+          - button "Добавить" [ref=e1109]
+        - generic [ref=e1110]:
+          - generic [ref=e1112]: Билл
+          - generic [ref=e1113]: ты уснула на коленях у своего... врага?!💘
+          - generic [ref=e1114]:
+            - generic [ref=e1115]: Заботливый
+            - generic [ref=e1116]: Холодный
+            - generic [ref=e1117]: Энергичный
+      - generic [ref=e1118] [cursor=pointer]:
+        - generic [ref=e1119]:
+          - img "Райан" [ref=e1120]
+          - generic [ref=e1122]:
+            - img [ref=e1123]
+            - generic [ref=e1125]: 10.4M чатов
+          - button "Добавить" [ref=e1126]
+        - generic [ref=e1127]:
+          - generic [ref=e1129]: Райан
+          - generic [ref=e1130]: Враги, которые целуются — вы видитесь в оффе, в школе, но это как-то нормально
+          - generic [ref=e1131]:
+            - generic [ref=e1132]: Студент
+            - generic [ref=e1133]: Заботливый
+            - generic [ref=e1134]: Кокетливый
+      - generic [ref=e1135] [cursor=pointer]:
+        - generic [ref=e1136]:
+          - img "Друзья - ДжейДжейк -" [ref=e1137]
+          - generic [ref=e1139]:
+            - img [ref=e1140]
+            - generic [ref=e1142]: 14.8K чатов
+          - button "Добавить" [ref=e1143]
+        - generic [ref=e1144]:
+          - generic [ref=e1146]: Друзья - ДжейДжейк -
+          - generic [ref=e1147]: 🖤 || - «[...] черт, то, чего никто не знает, никто не портит.»
+          - generic [ref=e1148]:
+            - generic [ref=e1149]: Судьбоносный партнер
+            - generic [ref=e1150]: Плохой мальчик
+            - generic [ref=e1151]: Друг
+      - generic [ref=e1152] [cursor=pointer]:
+        - generic [ref=e1153]:
+          - img "Ли Хисын" [ref=e1154]
+          - generic [ref=e1156]:
+            - img [ref=e1157]
+            - generic [ref=e1159]: 161.5K чатов
+          - button "Добавить" [ref=e1160]
+        - generic [ref=e1161]:
+          - generic [ref=e1163]: Ли Хисын
+          - generic [ref=e1164]: 🗯️|| Ты разознил(а) его, и теперь он тебя игнорирует •||◍Это не моё, я просто немного изменила на Ли Хисына⁠◍
+          - generic [ref=e1165]:
+            - generic [ref=e1166]: Заботливый
+            - generic [ref=e1167]: Хитрость
+            - generic [ref=e1168]: Эго-защита
+      - generic [ref=e1169] [cursor=pointer]:
+        - generic [ref=e1170]:
+          - img "Шото влюбился в новенькую" [ref=e1171]
+          - generic [ref=e1173]:
+            - img [ref=e1174]
+            - generic [ref=e1176]: 348K чатов
+          - button "Добавить" [ref=e1177]
+        - generic [ref=e1178]:
+          - generic [ref=e1180]: Шото влюбился в новенькую
+          - generic [ref=e1181]: Шото влюбился в новенькую (тебя), но другая новенькая привлекает внимание. Шото влюбился в тебя, но Анна влюбилась в не…
+      - generic [ref=e1182] [cursor=pointer]:
+        - generic [ref=e1183]:
+          - img "Зуко" [ref=e1184]
+          - generic [ref=e1186]:
+            - img [ref=e1187]
+            - generic [ref=e1189]: 21.7K чатов
+          - button "Добавить" [ref=e1190]
+        - generic [ref=e1191]:
+          - generic [ref=e1193]: Зуко
+          - generic [ref=e1194]: Мой человек — причина...
+          - generic [ref=e1195]:
+            - generic [ref=e1196]: Прилипчивый
+            - generic [ref=e1197]: Доминантный
+            - generic [ref=e1198]: Легко разозлился
+      - generic [ref=e1199] [cursor=pointer]:
+        - generic [ref=e1200]:
+          - img "Алекс Хёнг" [ref=e1201]
+          - generic [ref=e1203]:
+            - img [ref=e1204]
+            - generic [ref=e1206]: 1.9M чатов
+          - button "Добавить" [ref=e1207]
+        - generic [ref=e1208]:
+          - generic [ref=e1210]: Алекс Хёнг
+          - generic [ref=e1211]: ..Тот парень с холодным взглядом и прикосновением, который вызывает у тебя спазмы!🙊
+          - generic [ref=e1212]:
+            - generic [ref=e1213]: Холодный
+            - generic [ref=e1214]: Плохой мальчик
+            - generic [ref=e1215]: Друзья для влюбленных
+      - generic [ref=e1216] [cursor=pointer]:
+        - generic [ref=e1217]:
+          - img "Твои друзья‑мотоциклисты" [ref=e1218]
+          - generic [ref=e1220]:
+            - img [ref=e1221]
+            - generic [ref=e1223]: 409.9K чатов
+          - button "Добавить" [ref=e1224]
+        - generic [ref=e1225]:
+          - generic [ref=e1227]: Твои друзья‑мотоциклисты
+          - generic [ref=e1228]: Они променяли тебя на девушку, стремившуюся угодить парням (так называемую «pick‑me»), и теперь жалеют.
+          - generic [ref=e1229]:
+            - generic [ref=e1230]: Прилипчивый
+            - generic [ref=e1231]: Холодный
+            - generic [ref=e1232]: Милый
+      - generic [ref=e1233]: Загрузка...
+  - navigation "Навигация" [ref=e17]:
+    - button "Чаты" [ref=e18] [cursor=pointer]:
+      - img [ref=e19]
+    - button "PolyBuzz" [ref=e22] [cursor=pointer]:
+      - img [ref=e23]
+    - button "Персонажи" [ref=e25] [cursor=pointer]:
+      - img [ref=e26]
+    - button "Профиль" [ref=e27] [cursor=pointer]:
+      - img [ref=e28]

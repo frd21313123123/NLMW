@@ -1,0 +1,47 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e1568]:
+      - generic [ref=e1569]: Профиль
+      - combobox "Модель" [disabled] [ref=e1571]:
+        - option "—" [selected]
+    - generic [ref=e11]: LM Studio недоступна. Проверьте, что сервер запущен.
+  - main [ref=e12]:
+    - generic [ref=e1574]:
+      - generic [ref=e1575]:
+        - generic [ref=e1578]:
+          - generic [ref=e1579]: Аватар (файл)
+          - button "Аватар (файл)" [ref=e1580]
+        - generic [ref=e1581]:
+          - generic [ref=e1582]: Имя
+          - textbox "Имя" [ref=e1583]:
+            - /placeholder: Ваше имя
+            - text: Вы
+        - generic [ref=e1584]:
+          - generic [ref=e1585]: Пол
+          - combobox "Пол" [ref=e1586]:
+            - option "Не указывать" [selected]
+            - option "Женский"
+            - option "Мужской"
+            - option "Другое"
+        - button "Сохранить профиль" [ref=e1587] [cursor=pointer]
+      - generic [ref=e1588]:
+        - generic [ref=e1589]: Провайдер LLM
+        - generic [ref=e1590]:
+          - generic [ref=e1591]: Источник моделей
+          - combobox "Источник моделей" [ref=e1592]:
+            - option "LM Studio (локальный)" [selected]
+            - option "Mistral (официальный API)"
+      - generic [ref=e1593]:
+        - generic [ref=e1594]: Резервная копия
+        - generic [ref=e1595]:
+          - button "Экспорт данных" [ref=e1596] [cursor=pointer]
+          - button "Импорт данных" [ref=e1597] [cursor=pointer]
+  - navigation "Навигация" [ref=e111]:
+    - button "Чаты" [ref=e112] [cursor=pointer]:
+      - img [ref=e113]
+    - button "PolyBuzz" [ref=e116] [cursor=pointer]:
+      - img [ref=e117]
+    - button "Персонажи" [ref=e119] [cursor=pointer]:
+      - img [ref=e120]
+    - button "Профиль" [active] [ref=e121] [cursor=pointer]:
+      - img [ref=e122]

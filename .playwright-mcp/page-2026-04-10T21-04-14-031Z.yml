@@ -1,0 +1,28 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - generic:
+          - img
+        - searchbox "Поиск персонажей" [ref=e8]
+      - button "Профиль" [ref=e10] [cursor=pointer]
+    - generic [ref=e11]: LM Studio недоступна. Проверьте, что сервер запущен.
+  - main [ref=e12]:
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - button "Личные" [ref=e15] [cursor=pointer]
+        - button "Мульти" [active] [ref=e16] [cursor=pointer]
+      - generic [ref=e17]:
+        - button "Создать мульти-чат" [ref=e1786] [cursor=pointer]:
+          - img [ref=e1787]
+          - generic [ref=e1788]: Создать мульти-чат
+        - generic [ref=e1789]: Нет мульти-чатов. Создайте первый!
+  - navigation "Навигация" [ref=e111]:
+    - button "Чаты" [ref=e112] [cursor=pointer]:
+      - img [ref=e113]
+    - button "PolyBuzz" [ref=e116] [cursor=pointer]:
+      - img [ref=e117]
+    - button "Персонажи" [ref=e119] [cursor=pointer]:
+      - img [ref=e120]
+    - button "Профиль" [ref=e121] [cursor=pointer]:
+      - img [ref=e122]

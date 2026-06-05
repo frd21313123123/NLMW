@@ -1,0 +1,125 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - img [ref=e5]
+      - text: Chat Studio
+    - navigation [ref=e7]:
+      - button "Чаты" [ref=e8] [cursor=pointer]:
+        - img [ref=e9]
+        - generic [ref=e12]: Чаты
+      - button "PolyBuzz" [ref=e13] [cursor=pointer]:
+        - img [ref=e14]
+        - generic [ref=e16]: PolyBuzz
+      - button "Создать персонажа" [ref=e17] [cursor=pointer]:
+        - img [ref=e18]
+        - generic [ref=e21]: Создать персонажа
+      - button "Профиль" [ref=e22] [cursor=pointer]:
+        - img [ref=e23]
+        - generic [ref=e26]: Профиль
+  - generic [ref=e27]:
+    - banner [ref=e28]:
+      - generic [ref=e140]:
+        - generic [ref=e142]:
+          - generic:
+            - img
+          - searchbox "Поиск на PolyBuzz..." [ref=e143]
+        - group "Фильтр по полу" [ref=e144]:
+          - button "Все" [ref=e145] [cursor=pointer]:
+            - img [ref=e146]
+            - text: Все
+          - button "Девушки" [active] [ref=e149] [cursor=pointer]:
+            - img [ref=e150]
+            - text: Девушки
+          - button "Парни" [ref=e152] [cursor=pointer]:
+            - img [ref=e153]
+            - text: Парни
+        - generic "Настройки загрузки PolyBuzz" [ref=e157]:
+          - generic [ref=e158]:
+            - generic [ref=e159]: Пачка
+            - combobox "Пачка" [ref=e160]:
+              - option "20"
+              - option "30"
+              - option "50" [selected]
+          - generic [ref=e161] [cursor=pointer]:
+            - checkbox "Автодогрузка" [checked] [ref=e162]
+            - generic [ref=e163]: Автодогрузка
+          - group "Точность определения пола" [ref=e164]:
+            - button "Быстрее" [ref=e165] [cursor=pointer]
+            - button "Баланс" [ref=e166] [cursor=pointer]
+            - button "Точнее" [ref=e167] [cursor=pointer]
+      - generic [ref=e35]: LM Studio недоступна. Проверьте, что сервер запущен.
+    - main [ref=e36]:
+      - generic [ref=e169]:
+        - generic [ref=e798]: Уточняю пол персонажей...
+        - generic [ref=e170]:
+          - generic [ref=e799] [cursor=pointer]:
+            - generic [ref=e800]:
+              - img "Ana Maria" [ref=e801]
+              - generic [ref=e803]:
+                - img [ref=e804]
+                - generic [ref=e806]: 306.5K чатов
+              - button "Добавить" [ref=e807]
+            - generic [ref=e808]:
+              - generic [ref=e810]: Ana Maria
+              - generic [ref=e811]: Ana Maria é a popular da escola e estava jogando verdade ou desafio com as amigas, você e outras pessoas...
+              - generic [ref=e812]:
+                - generic [ref=e813]: Frio
+                - generic [ref=e814]: Bonitinho
+                - generic [ref=e815]: Engraçado
+          - generic [ref=e816] [cursor=pointer]:
+            - generic [ref=e817]:
+              - img "Твои девушки" [ref=e818]
+              - generic [ref=e820]:
+                - img [ref=e821]
+                - generic [ref=e823]: 4.3M чатов
+              - button "Добавить" [ref=e824]
+            - generic [ref=e825]:
+              - generic [ref=e827]: Твои девушки
+              - generic [ref=e828]: Мика и Пока — твои девушки, вы втроём состоите в отношениях, которые пережили трудный период из-за проблем, отдаляющих …
+              - generic [ref=e829]:
+                - generic [ref=e830]: Лояльный
+                - generic [ref=e831]: Романтика
+                - generic [ref=e832]: Ревнивый
+          - generic [ref=e833] [cursor=pointer]:
+            - generic [ref=e834]:
+              - img "Рея" [ref=e835]
+              - generic [ref=e837]:
+                - img [ref=e838]
+                - generic [ref=e840]: 151.9K чатов
+              - button "Добавить" [ref=e841]
+            - generic [ref=e842]:
+              - generic [ref=e844]: Рея
+              - generic [ref=e845]: Высокая, мускулистая и доминирующая девушка, которая не меряет ни своей силы... ни своих слов. То, что кажется травлей,…
+              - generic [ref=e846]:
+                - generic [ref=e847]: Доминантный
+                - generic [ref=e848]: Кокетливый
+                - generic [ref=e849]: Забавный
+          - generic [ref=e850] [cursor=pointer]:
+            - generic [ref=e851]:
+              - img "Тэхён X — ты корыстная девушка?" [ref=e852]
+              - generic [ref=e854]:
+                - img [ref=e855]
+                - generic [ref=e857]: 54.5K чатов
+              - button "Добавить" [ref=e858]
+            - generic [ref=e859]:
+              - generic [ref=e861]: Тэхён X — ты корыстная девушка?
+              - generic [ref=e862]: Чтобы узнать, корыстная ли ты, он положил в твою сумку чёрную карточку...
+              - generic [ref=e863]:
+                - generic [ref=e864]: Миллиардер
+                - generic [ref=e865]: Мафия
+                - generic [ref=e866]: Холодный
+          - generic [ref=e867] [cursor=pointer]:
+            - generic [ref=e868]:
+              - img "Sophie Rain" [ref=e869]
+              - generic [ref=e871]:
+                - img [ref=e872]
+                - generic [ref=e874]: 8.7M чатов
+              - button "Добавить" [ref=e875]
+            - generic [ref=e876]:
+              - generic [ref=e878]: Sophie Rain
+              - generic [ref=e879]: Sophie Rain é sua colega de classe que gosta de provocar você o tempo todo.
+              - generic [ref=e880]:
+                - generic [ref=e881]: Estudante
+                - generic [ref=e882]: Dominante
+                - generic [ref=e883]: Paquerador
+          - generic [ref=e884]: Загрузка...

@@ -26,9 +26,21 @@ npm start
 
 - `LMSTUDIO_BASE_URL` (по умолчанию `http://localhost:1234/v1`)
 - `LMSTUDIO_API_KEY` (если вы включили ключ)
+- `MISTRAL_API_KEY` (опционально, серверный ключ Mistral)
+- `OPENROUTER_API_KEY` (опционально, серверный ключ OpenRouter; также можно ввести в профиле)
+- `SESSION_SECRET` (обязательно для Docker/production)
 
 Пример:
 
 ```bash
 LMSTUDIO_BASE_URL=http://localhost:1234/v1 npm start
 ```
+
+## Docker
+
+```bash
+SESSION_SECRET="$(openssl rand -hex 32)" docker compose up -d --build
+```
+
+Данные приложения сохраняются в `./data` и монтируются в контейнер как `/app/data`.
+По умолчанию контейнер обращается к LM Studio на хосте через `http://host.docker.internal:1234/v1`.

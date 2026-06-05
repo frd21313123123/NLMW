@@ -1,0 +1,38 @@
+{
+  "name": "microsoft-office",
+  "version": "0.1.0",
+  "description": "Local Codex plugin for detailed work with Microsoft Word documents and Excel workbooks.",
+  "author": {
+    "name": "Local User"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "microsoft-office",
+    "word",
+    "excel",
+    "docx",
+    "xlsx",
+    "documents",
+    "spreadsheets"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Microsoft Office",
+    "shortDescription": "Create, inspect, edit, and verify Word and Excel files.",
+    "longDescription": "Adds detailed Codex workflows for Microsoft Word .docx documents and Excel .xlsx/.xlsm workbooks, including structure inspection, content extraction, safe edits, formatting-aware guidance, and validation steps.",
+    "developerName": "Local User",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Analyze",
+      "Transform"
+    ],
+    "defaultPrompt": [
+      "Review this Word document and fix formatting.",
+      "Analyze this Excel workbook and explain formulas.",
+      "Create a polished DOCX or XLSX file."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

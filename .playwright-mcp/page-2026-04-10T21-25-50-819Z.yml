@@ -1,0 +1,189 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - generic:
+            - img
+          - searchbox "Поиск персонажей" [ref=e8]
+        - button "Профиль" [ref=e10] [cursor=pointer]
+      - generic [ref=e11]: LM Studio недоступна. Проверьте, что сервер запущен.
+    - main [ref=e12]:
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - button "Личные" [ref=e15] [cursor=pointer]
+          - button "Мульти" [ref=e16] [cursor=pointer]
+        - generic [ref=e19]:
+          - generic [ref=e20]: Сегодня
+          - button "Наоми — твоя бывшая девушка. Не думал, что увижу тебя здесь. Ну так… чем ты последнее время занимаешься? …" [ref=e21] [cursor=pointer]:
+            - generic [ref=e22]:
+              - generic [ref=e23]: Наоми — твоя бывшая девушка.
+              - generic [ref=e24]: Не думал, что увижу тебя здесь. Ну так… чем ты последнее время занимаешься?
+            - button "…" [ref=e25]
+          - button "Люси Наблюдательная собеседница с мягкой иронией и вниманием к деталям. …" [ref=e26] [cursor=pointer]:
+            - generic [ref=e27]:
+              - generic [ref=e28]: Люси
+              - generic [ref=e29]: Наблюдательная собеседница с мягкой иронией и вниманием к деталям.
+            - button "…" [ref=e30]
+          - button "Маришка Наблюдательная собеседница с мягкой иронией и вниманием к деталям. …" [ref=e31] [cursor=pointer]:
+            - generic [ref=e32]:
+              - generic [ref=e33]: Маришка
+              - generic [ref=e34]: Наблюдательная собеседница с мягкой иронией и вниманием к деталям.
+            - button "…" [ref=e35]
+          - button "Карина Наблюдательная собеседница с мягкой иронией и вниманием к деталям. …" [ref=e36] [cursor=pointer]:
+            - generic [ref=e37]:
+              - generic [ref=e38]: Карина
+              - generic [ref=e39]: Наблюдательная собеседница с мягкой иронией и вниманием к деталям.
+            - button "…" [ref=e40]
+          - button "Ильза — бортпроводник Наблюдательная собеседница с мягкой иронией и вниманием к деталям. …" [ref=e41] [cursor=pointer]:
+            - generic [ref=e42]:
+              - generic [ref=e43]: Ильза — бортпроводник
+              - generic [ref=e44]: Наблюдательная собеседница с мягкой иронией и вниманием к деталям.
+            - button "…" [ref=e45]
+          - button "Студентка медсестринского дела Лена Наблюдательная собеседница с мягкой иронией и вниманием к деталям. …" [ref=e46] [cursor=pointer]:
+            - generic [ref=e47]:
+              - generic [ref=e48]: Студентка медсестринского дела Лена
+              - generic [ref=e49]: Наблюдательная собеседница с мягкой иронией и вниманием к деталям.
+            - button "…" [ref=e50]
+          - button "Lana Наблюдательная собеседница с мягкой иронией и вниманием к деталям. …" [ref=e51] [cursor=pointer]:
+            - generic [ref=e52]:
+              - generic [ref=e53]: Lana
+              - generic [ref=e54]: Наблюдательная собеседница с мягкой иронией и вниманием к деталям.
+            - button "…" [ref=e55]
+          - button "Эмма Наблюдательная собеседница с мягкой иронией и вниманием к деталям. …" [ref=e56] [cursor=pointer]:
+            - generic [ref=e57]:
+              - generic [ref=e58]: Эмма
+              - generic [ref=e59]: Наблюдательная собеседница с мягкой иронией и вниманием к деталям.
+            - button "…" [ref=e60]
+          - button "Ариэль Наблюдательная собеседница с мягкой иронией и вниманием к деталям. …" [ref=e61] [cursor=pointer]:
+            - generic [ref=e62]:
+              - generic [ref=e63]: Ариэль
+              - generic [ref=e64]: Наблюдательная собеседница с мягкой иронией и вниманием к деталям.
+            - button "…" [ref=e65]
+          - button "Лиза Наблюдательная собеседница с мягкой иронией и вниманием к деталям. …" [ref=e66] [cursor=pointer]:
+            - generic [ref=e67]:
+              - generic [ref=e68]: Лиза
+              - generic [ref=e69]: Наблюдательная собеседница с мягкой иронией и вниманием к деталям.
+            - button "…" [ref=e70]
+          - button "Амари Наблюдательная собеседница с мягкой иронией и вниманием к деталям. …" [ref=e71] [cursor=pointer]:
+            - generic [ref=e72]:
+              - generic [ref=e73]: Амари
+              - generic [ref=e74]: Наблюдательная собеседница с мягкой иронией и вниманием к деталям.
+            - button "…" [ref=e75]
+          - button "Катя Твой друг просится переночевать. …" [ref=e76] [cursor=pointer]:
+            - generic [ref=e77]:
+              - generic [ref=e78]: Катя
+              - generic [ref=e79]: Твой друг просится переночевать.
+            - button "…" [ref=e80]
+          - button "Демитра Калогерас Ты и она встречаетесь... но вы двое постепенно отдаляетесь друг от друга. Ты попытаешься сохранить отношения или расста… …" [ref=e81] [cursor=pointer]:
+            - generic [ref=e82]:
+              - generic [ref=e83]: Демитра Калогерас
+              - generic [ref=e84]: Ты и она встречаетесь... но вы двое постепенно отдаляетесь друг от друга. Ты попытаешься сохранить отношения или расста…
+            - button "…" [ref=e85]
+          - button "Амелия Вампир-старейшина VI века, которая любит свой народ и правит им справедливо и мудро. Она давно мечтала о любви, и вот ч… …" [ref=e86] [cursor=pointer]:
+            - generic [ref=e87]:
+              - generic [ref=e88]: Амелия
+              - generic [ref=e89]: Вампир-старейшина VI века, которая любит свой народ и правит им справедливо и мудро. Она давно мечтала о любви, и вот ч…
+            - button "…" [ref=e90]
+          - button "Амара Синклер Ты всегда питал слабость к соседке, но никогда не решался сказать ей об этом, А потом однажды сломавшийся лифт оставляе… …" [ref=e91] [cursor=pointer]:
+            - generic [ref=e92]:
+              - generic [ref=e93]: Амара Синклер
+              - generic [ref=e94]: Ты всегда питал слабость к соседке, но никогда не решался сказать ей об этом, А потом однажды сломавшийся лифт оставляе…
+            - button "…" [ref=e95]
+          - button "В лифте с Селеной Гомес Застрял в лифте с Селеной Гомес …" [ref=e96] [cursor=pointer]:
+            - generic [ref=e97]:
+              - generic [ref=e98]: В лифте с Селеной Гомес
+              - generic [ref=e99]: Застрял в лифте с Селеной Гомес
+            - button "…" [ref=e100]
+          - button "Демона Наблюдательная собеседница с мягкой иронией и вниманием к деталям. …" [ref=e101] [cursor=pointer]:
+            - generic [ref=e102]:
+              - generic [ref=e103]: Демона
+              - generic [ref=e104]: Наблюдательная собеседница с мягкой иронией и вниманием к деталям.
+            - button "…" [ref=e105]
+          - button "Мария Наблюдательная собеседница с мягкой иронией и вниманием к деталям. …" [ref=e106] [cursor=pointer]:
+            - generic [ref=e107]:
+              - generic [ref=e108]: Мария
+              - generic [ref=e109]: Наблюдательная собеседница с мягкой иронией и вниманием к деталям.
+            - button "…" [ref=e110]
+    - navigation "Навигация" [ref=e111]:
+      - button "Чаты" [ref=e112] [cursor=pointer]:
+        - img [ref=e113]
+      - button "PolyBuzz" [ref=e116] [cursor=pointer]:
+        - img [ref=e117]
+      - button "Персонажи" [ref=e119] [cursor=pointer]:
+        - img [ref=e120]
+      - button "Профиль" [ref=e121] [cursor=pointer]:
+        - img [ref=e122]
+  - dialog "Персонажи" [ref=e127]:
+    - generic [ref=e128]:
+      - generic [ref=e132]: Персонажи
+      - generic [ref=e189]:
+        - button "Импорт" [ref=e190] [cursor=pointer]
+        - button "Экспорт" [ref=e191] [cursor=pointer]
+        - button "Новый" [ref=e192] [cursor=pointer]
+        - button "Закрыть" [ref=e193] [cursor=pointer]
+    - generic [ref=e133]:
+      - generic [ref=e194]:
+        - generic [ref=e195]:
+          - generic [ref=e196]: Импорт персонажа
+          - generic [ref=e197]:
+            - button "Вставить" [ref=e198] [cursor=pointer]
+            - button "Файл" [ref=e199] [cursor=pointer]
+            - button "Импортировать" [ref=e200] [cursor=pointer]
+        - textbox "Вставьте ссылку PolyBuzz или JSON карточки персонажа" [ref=e201]
+        - generic [ref=e202]: "Поддерживается: ссылка polybuzz.ai, JSON, PNG character card."
+      - generic [ref=e203]:
+        - generic [ref=e205] [cursor=pointer]:
+          - generic [ref=e206]: Наоми — твоя бывшая девушка.
+          - generic [ref=e207]: женский • Естественно
+        - generic [ref=e209] [cursor=pointer]:
+          - generic [ref=e210]: Катя
+          - generic [ref=e211]: женский • Естественно
+        - generic [ref=e213] [cursor=pointer]:
+          - generic [ref=e214]: Демитра Калогерас
+          - generic [ref=e215]: женский • Естественно
+        - generic [ref=e217] [cursor=pointer]:
+          - generic [ref=e218]: Амелия
+          - generic [ref=e219]: женский • Естественно
+        - generic [ref=e221] [cursor=pointer]:
+          - generic [ref=e222]: Амара Синклер
+          - generic [ref=e223]: женский • Естественно
+        - generic [ref=e225] [cursor=pointer]:
+          - generic [ref=e226]: В лифте с Селеной Гомес
+          - generic [ref=e227]: женский • Флирт
+        - generic [ref=e229] [cursor=pointer]:
+          - generic [ref=e230]: Демона
+          - generic [ref=e231]: женский • Естественно
+        - generic [ref=e233] [cursor=pointer]:
+          - generic [ref=e234]: Мария
+          - generic [ref=e235]: женский • Флирт
+        - generic [ref=e237] [cursor=pointer]:
+          - generic [ref=e238]: Люси
+          - generic [ref=e239]: женский • Естественно
+        - generic [ref=e241] [cursor=pointer]:
+          - generic [ref=e242]: Маришка
+          - generic [ref=e243]: женский • Естественно
+        - generic [ref=e245] [cursor=pointer]:
+          - generic [ref=e246]: Карина
+          - generic [ref=e247]: женский • Естественно
+        - generic [ref=e249] [cursor=pointer]:
+          - generic [ref=e250]: Ильза — бортпроводник
+          - generic [ref=e251]: женский • Естественно
+        - generic [ref=e253] [cursor=pointer]:
+          - generic [ref=e254]: Студентка медсестринского дела Лена
+          - generic [ref=e255]: женский • Естественно
+        - generic [ref=e257] [cursor=pointer]:
+          - generic [ref=e258]: Lana
+          - generic [ref=e259]: женский • Естественно
+        - generic [ref=e261] [cursor=pointer]:
+          - generic [ref=e262]: Эмма
+          - generic [ref=e263]: женский • Естественно
+        - generic [ref=e265] [cursor=pointer]:
+          - generic [ref=e266]: Ариэль
+          - generic [ref=e267]: женский • Ролевой (RP)
+        - generic [ref=e269] [cursor=pointer]:
+          - generic [ref=e270]: Лиза
+          - generic [ref=e271]: женский • Ролевой (RP)
+        - generic [ref=e273] [cursor=pointer]:
+          - generic [ref=e274]: Амари
+          - generic [ref=e275]: женский • Естественно

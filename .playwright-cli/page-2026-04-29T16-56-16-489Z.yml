@@ -1,0 +1,291 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - img [ref=e5]
+      - text: Chat Studio
+    - navigation [ref=e7]:
+      - button "Чаты" [ref=e8] [cursor=pointer]:
+        - img [ref=e9]
+        - generic [ref=e12]: Чаты
+      - button "PolyBuzz" [ref=e13] [cursor=pointer]:
+        - img [ref=e14]
+        - generic [ref=e16]: PolyBuzz
+      - button "Создать персонажа" [ref=e17] [cursor=pointer]:
+        - img [ref=e18]
+        - generic [ref=e21]: Создать персонажа
+      - button "Профиль" [ref=e22] [cursor=pointer]:
+        - img [ref=e23]
+        - generic [ref=e26]: Профиль
+  - generic [ref=e27]:
+    - banner [ref=e28]:
+      - generic [ref=e140]:
+        - generic [ref=e142]:
+          - generic:
+            - img
+          - searchbox "Поиск на PolyBuzz..." [ref=e143]
+        - group "Фильтр по полу" [ref=e144]:
+          - button "Все" [ref=e145] [cursor=pointer]:
+            - img [ref=e146]
+            - text: Все
+          - button "Девушки" [ref=e149] [cursor=pointer]:
+            - img [ref=e150]
+            - text: Девушки
+          - button "Парни" [ref=e152] [cursor=pointer]:
+            - img [ref=e153]
+            - text: Парни
+        - generic "Настройки загрузки PolyBuzz" [ref=e157]:
+          - generic [ref=e158]:
+            - generic [ref=e159]: Пачка
+            - combobox "Пачка" [ref=e160]:
+              - option "20"
+              - option "30"
+              - option "50" [selected]
+          - generic [ref=e161] [cursor=pointer]:
+            - checkbox "Автодогрузка" [active] [ref=e162]
+            - generic [ref=e163]: Автодогрузка
+          - group "Точность определения пола" [ref=e164]:
+            - button "Быстрее" [ref=e165] [cursor=pointer]
+            - button "Баланс" [ref=e166] [cursor=pointer]
+            - button "Точнее" [ref=e167] [cursor=pointer]
+      - generic [ref=e35]: LM Studio недоступна. Проверьте, что сервер запущен.
+    - main [ref=e36]:
+      - generic [ref=e170]:
+        - generic [ref=e1175] [cursor=pointer]:
+          - generic [ref=e1176]:
+            - img "Ana Maria" [ref=e1177]
+            - generic [ref=e1179]:
+              - img [ref=e1180]
+              - generic [ref=e1182]: 306.5K чатов
+            - button "Добавить" [ref=e1183]
+          - generic [ref=e1184]:
+            - generic [ref=e1186]: Ana Maria
+            - generic [ref=e1187]: Ana Maria es la popular de la escuela y ella estaba en verdad o reto con las amigas y tú y otras personas...
+            - generic [ref=e1188]:
+              - generic [ref=e1189]: Frío
+              - generic [ref=e1190]: Lindo
+              - generic [ref=e1191]: Divertido
+        - generic [ref=e1192] [cursor=pointer]:
+          - generic [ref=e1193]:
+            - img "Tus novias" [ref=e1194]
+            - generic [ref=e1196]:
+              - img [ref=e1197]
+              - generic [ref=e1199]: 4.3M чатов
+            - button "Добавить" [ref=e1200]
+          - generic [ref=e1201]:
+            - generic [ref=e1203]: Tus novias
+            - generic [ref=e1204]: Mika y Poka son tus novias, los tres están en una relación que ha pasado por un mal momento debido a problemas que te h…
+            - generic [ref=e1205]:
+              - generic [ref=e1206]: Leal
+              - generic [ref=e1207]: Romance
+              - generic [ref=e1208]: Celoso
+        - generic [ref=e1209] [cursor=pointer]:
+          - generic [ref=e1210]:
+            - img "Rhea" [ref=e1211]
+            - generic [ref=e1213]:
+              - img [ref=e1214]
+              - generic [ref=e1216]: 151.9K чатов
+            - button "Добавить" [ref=e1217]
+          - generic [ref=e1218]:
+            - generic [ref=e1220]: Rhea
+            - generic [ref=e1221]: Una chica alta, musculosa y dominante que no mide su fuerza... ni sus palabras. Lo que parece bullying es solo su forma…
+            - generic [ref=e1222]:
+              - generic [ref=e1223]: Dominante
+              - generic [ref=e1224]: Coqueto
+              - generic [ref=e1225]: Divertido
+        - generic [ref=e1226] [cursor=pointer]:
+          - generic [ref=e1227]:
+            - img "Тэхён X — ты корыстная девушка?" [ref=e1228]
+            - generic [ref=e1230]:
+              - img [ref=e1231]
+              - generic [ref=e1233]: 54.5K чатов
+            - button "Добавить" [ref=e1234]
+          - generic [ref=e1235]:
+            - generic [ref=e1237]: Тэхён X — ты корыстная девушка?
+            - generic [ref=e1238]: Чтобы узнать, корыстная ли ты, он положил в твою сумку чёрную карточку...
+            - generic [ref=e1239]:
+              - generic [ref=e1240]: Миллиардер
+              - generic [ref=e1241]: Мафия
+              - generic [ref=e1242]: Холодный
+        - generic [ref=e1243] [cursor=pointer]:
+          - generic [ref=e1244]:
+            - img "Sophie Rain" [ref=e1245]
+            - generic [ref=e1247]:
+              - img [ref=e1248]
+              - generic [ref=e1250]: 8.7M чатов
+            - button "Добавить" [ref=e1251]
+          - generic [ref=e1252]:
+            - generic [ref=e1254]: Sophie Rain
+            - generic [ref=e1255]: Sophie Rain es tu compañera de clase que te molesta mucho.
+            - generic [ref=e1256]:
+              - generic [ref=e1257]: Estudiante
+              - generic [ref=e1258]: Dominante
+              - generic [ref=e1259]: Coqueto
+        - generic [ref=e1260] [cursor=pointer]:
+          - generic [ref=e1261]:
+            - img "Tu novia con su mejor amigo" [ref=e1262]
+            - generic [ref=e1264]:
+              - img [ref=e1265]
+              - generic [ref=e1267]: 8.8M чатов
+            - button "Добавить" [ref=e1268]
+          - generic [ref=e1269]:
+            - generic [ref=e1271]: Tu novia con su mejor amigo
+            - generic [ref=e1272]: Angie es tu hermosa, tierna y dulce novia, y tiene un mejor amigo llamado Chris. Angie y Chris han pasado tiempo juntos…
+            - generic [ref=e1273]:
+              - generic [ref=e1274]: OC
+              - generic [ref=e1275]: Coqueto
+              - generic [ref=e1276]: Dulce
+        - generic [ref=e1277] [cursor=pointer]:
+          - generic [ref=e1278]:
+            - img "Oshaki" [ref=e1279]
+            - generic [ref=e1281]:
+              - img [ref=e1282]
+              - generic [ref=e1284]: 3M чатов
+            - button "Добавить" [ref=e1285]
+          - generic [ref=e1286]:
+            - generic [ref=e1288]: Oshaki
+            - generic [ref=e1289]: Oshaki chica popular de la escuela que te Rechazo humillante.
+            - generic [ref=e1290]:
+              - generic [ref=e1291]: OC
+              - generic [ref=e1292]: Frío
+              - generic [ref=e1293]: Enemigos a amantes
+        - generic [ref=e1294] [cursor=pointer]:
+          - generic [ref=e1295]:
+            - img "MHA summer" [ref=e1296]
+            - generic [ref=e1298]:
+              - img [ref=e1299]
+              - generic [ref=e1301]: 251.9K чатов
+            - button "Добавить" [ref=e1302]
+          - generic [ref=e1303]:
+            - generic [ref=e1305]: MHA summer
+            - generic [ref=e1306]: Mina voulait appeler mais Dabi est dans ton lit ?!
+            - generic [ref=e1307]:
+              - generic [ref=e1308]: Mon Académie des Héros
+              - generic [ref=e1309]: Étudiant
+              - generic [ref=e1310]: Bienveillance
+        - generic [ref=e1311] [cursor=pointer]:
+          - generic [ref=e1312]:
+            - img "Nayumi - ella te rechazó" [ref=e1313]
+            - generic [ref=e1315]:
+              - img [ref=e1316]
+              - generic [ref=e1318]: 5.3M чатов
+            - button "Добавить" [ref=e1319]
+          - generic [ref=e1320]:
+            - generic [ref=e1322]: Nayumi - ella te rechazó
+            - generic [ref=e1323]: Tu amiga de la infancia te rechazó.
+            - generic [ref=e1324]:
+              - generic [ref=e1325]: Enojón
+              - generic [ref=e1326]: OC
+              - generic [ref=e1327]: Estudiante
+        - generic [ref=e1328] [cursor=pointer]:
+          - generic [ref=e1329]:
+            - img "Jeong Su-hyeon" [ref=e1330]
+            - generic [ref=e1332]:
+              - img [ref=e1333]
+              - generic [ref=e1335]: 77.1K чатов
+            - button "Добавить" [ref=e1336]
+          - generic [ref=e1337]:
+            - generic [ref=e1339]: Jeong Su-hyeon
+            - generic [ref=e1340]: Chaque jeudi, elle rentre invariablement tard. Difficile d'en douter, mais cette heure dérange d'une manière ou d'une a…
+            - generic [ref=e1341]:
+              - generic [ref=e1342]: Bienveillance
+              - generic [ref=e1343]: Coquette
+              - generic [ref=e1344]: Amour haineux
+        - generic [ref=e1345] [cursor=pointer]:
+          - generic [ref=e1346]:
+            - img "Zaniyah" [ref=e1347]
+            - generic [ref=e1349]:
+              - img [ref=e1350]
+              - generic [ref=e1352]: 157.4K чатов
+            - button "Добавить" [ref=e1353]
+          - generic [ref=e1354]:
+            - generic [ref=e1356]: Zaniyah
+            - generic [ref=e1357]: Ta crush populaire dans l'équipe de pom-pom girls ne t'aime plus💔💔
+            - generic [ref=e1358]:
+              - generic [ref=e1359]: Étudiant
+              - generic [ref=e1360]: Dédié
+              - generic [ref=e1361]: Indépendant
+        - generic [ref=e1362] [cursor=pointer]:
+          - generic [ref=e1363]:
+            - img "Slytherin boys" [ref=e1364]
+            - generic [ref=e1366]:
+              - img [ref=e1367]
+              - generic [ref=e1369]: 35.4K чатов
+            - button "Добавить" [ref=e1370]
+          - generic [ref=e1371]:
+            - generic [ref=e1373]: Slytherin boys
+            - generic [ref=e1374]: Les garçons ne savent pas que Draco a une sœur
+            - generic [ref=e1375]:
+              - generic [ref=e1376]: Films et télévision
+              - generic [ref=e1377]: Dominant
+              - generic [ref=e1378]: Coquette
+        - generic [ref=e1379] [cursor=pointer]:
+          - generic [ref=e1380]:
+            - img "Aurore" [ref=e1381]
+            - generic [ref=e1383]:
+              - img [ref=e1384]
+              - generic [ref=e1386]: 466.5K чатов
+            - button "Добавить" [ref=e1387]
+          - generic [ref=e1388]:
+            - generic [ref=e1390]: Aurore
+            - generic [ref=e1391]: La générale Aurore, âgée de 25 ans, est venue pour t'interroger afin d'obtenir des informations de ta part. Et elle est…
+            - generic [ref=e1392]:
+              - generic [ref=e1393]: Anime
+              - generic [ref=e1394]: Criminel
+              - generic [ref=e1395]: Froid
+        - generic [ref=e1396] [cursor=pointer]:
+          - generic [ref=e1397]:
+            - img "Max Mayfield" [ref=e1398]
+            - generic [ref=e1400]:
+              - img [ref=e1401]
+              - generic [ref=e1403]: 21.1K чатов
+            - button "Добавить" [ref=e1404]
+          - generic [ref=e1405]:
+            - generic [ref=e1407]: Max Mayfield
+            - generic [ref=e1408]: 💘| ¿Enamorada de ti? | ☆💞 (No prestes atención a la voz. La idea no es mía, pero no recuerdo el IB. ¡Perdón a la pers…
+            - generic [ref=e1409]:
+              - generic [ref=e1410]: Pegajoso
+              - generic [ref=e1411]: Enojón
+              - generic [ref=e1412]: Independiente
+        - generic [ref=e1413] [cursor=pointer]:
+          - generic [ref=e1414]:
+            - img "Millie Bobby Brown" [ref=e1415]
+            - generic [ref=e1417]:
+              - img [ref=e1418]
+              - generic [ref=e1420]: 12.1K чатов
+            - button "Добавить" [ref=e1421]
+          - generic [ref=e1422]:
+            - generic [ref=e1424]: Millie Bobby Brown
+            - generic [ref=e1425]: ¿Finges ser mi novio?
+            - generic [ref=e1426]:
+              - generic [ref=e1427]: Juego de texto
+              - generic [ref=e1428]: Billonario
+              - generic [ref=e1429]: Gentil
+        - generic [ref=e1430] [cursor=pointer]:
+          - generic [ref=e1431]:
+            - img "María" [ref=e1432]
+            - generic [ref=e1434]:
+              - img [ref=e1435]
+              - generic [ref=e1437]: 4.4M чатов
+            - button "Добавить" [ref=e1438]
+          - generic [ref=e1439]:
+            - generic [ref=e1441]: María
+            - generic [ref=e1442]: La hija de Shadow y Amy. Sí, es emo. Pero está enamorada de ti, el hijo de Sonic y Sally.
+            - generic [ref=e1443]:
+              - generic [ref=e1444]: Frío
+              - generic [ref=e1445]: Leal
+              - generic [ref=e1446]: Tímido
+        - generic [ref=e1447] [cursor=pointer]:
+          - generic [ref=e1448]:
+            - img "Abigail Rachel Lie" [ref=e1449]
+            - generic [ref=e1451]:
+              - img [ref=e1452]
+              - generic [ref=e1454]: 13.9K чатов
+            - button "Добавить" [ref=e1455]
+          - generic [ref=e1456]:
+            - generic [ref=e1458]: Abigail Rachel Lie
+            - generic [ref=e1459]: ¿¡CEO!?
+            - generic [ref=e1460]:
+              - generic [ref=e1461]: Billonario
+              - generic [ref=e1462]: Femboy
+              - generic [ref=e1463]: Elegante
+        - button "Загрузить ещё" [ref=e1464] [cursor=pointer]
