@@ -645,6 +645,27 @@
                 </section>
 
                 <section class="charSection">
+                  <div class="charSection__title" style="margin-bottom:0.5rem">Фото по эмоциям (Sims 4)</div>
+                  <div class="smallNote" style="margin-bottom:0.75rem">Задайте специальные изображения для различных эмоций персонажа. Если фото для эмоции не задано, будет использоваться стандартный аватар.</div>
+                  <div class="emotionPhotoEditor">
+                    <div class="field">
+                      <select class="field__input" id="charEmotionPhotoSelect" style="margin-bottom: 0.75rem;"></select>
+                    </div>
+                    <div class="emotionPhotoRow" style="display: flex; gap: 1rem; align-items: center; background: rgba(255,255,255,0.03); padding: 12px; border-radius: 8px;">
+                      <img class="avatar avatar--xl" id="charEmotionPhotoPreview" alt="" style="width: 80px; height: 80px; border-radius: 8px; object-fit: cover;" />
+                      <div class="emotionPhotoControls" style="display: flex; flex-direction: column; gap: 0.5rem; flex: 1;">
+                        <div class="row row--actions" style="margin: 0; padding: 0;">
+                          <label class="btn btn--ghost fileTriggerBtn" id="btnUploadEmotionPhoto" for="charEmotionPhotoFile" role="button" tabindex="0" style="margin: 0;">Загрузить</label>
+                          <button class="btn btn--danger" id="btnDeleteEmotionPhoto" type="button" style="margin: 0;">Удалить</button>
+                        </div>
+                        <div class="smallNote" id="charEmotionPhotoNote">Фото не задано (используется стандартный аватар)</div>
+                      </div>
+                    </div>
+                    <input class="fileInput" id="charEmotionPhotoFile" type="file" accept="image/*" style="display: none;" />
+                  </div>
+                </section>
+
+                <section class="charSection">
                   <div class="charSection__title" style="margin-bottom:0.5rem">Инструменты</div>
                   <div class="row row--actions">
                     <button class="btn btn--ghost" id="btnTranslateAll" type="button">Перевести все поля</button>
@@ -780,6 +801,11 @@
           </div>
           <div class="speakerState">
             <div class="speakerState__empty" id="speakerStateEmpty">Состояние появится после следующего ответа персонажа.</div>
+
+            <section class="speakerState__section">
+              <div class="speakerState__label">Эмоция (Sims 4)</div>
+              <select class="field__input" id="speakerStateSimsEmotion" style="margin-top: 4px;"></select>
+            </section>
 
             <section class="speakerState__section">
               <div class="speakerState__label">Настроение</div>

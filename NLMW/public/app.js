@@ -421,7 +421,8 @@
       dialogueStyle: "roleplay",
       initialMessage: "Привет. Кажется, дождь решил задержаться. Ты сюда случайно — или искал именно это место?",
       createdAt: nowTs(),
-      updatedAt: nowTs()
+      updatedAt: nowTs(),
+      emotionPhotos: {}
     };
   }
 
@@ -486,6 +487,7 @@
     merged.dialogueStyle = normalizeDialogueStyleId(merged.dialogueStyle, "");
     merged.initialMessage = String(merged.initialMessage || "");
     merged.isQuickRoleplay = c?.isQuickRoleplay === true;
+    merged.emotionPhotos = (c && typeof c.emotionPhotos === "object" && c.emotionPhotos !== null) ? c.emotionPhotos : {};
 
     return merged;
   }
@@ -1719,7 +1721,8 @@
       intent: "",
       summary: "",
       updatedAt: 0,
-      sourceMessageId: ""
+      sourceMessageId: "",
+      simsEmotion: "neutral"
     };
   }
 
@@ -1779,8 +1782,89 @@
       intent: clampText(cleanOneLineText(raw.intent || raw.intention || raw.next_intent), 120),
       summary: clampText(cleanOneLineText(raw.summary || raw.note || raw.description), 220),
       updatedAt: typeof raw.updatedAt === "number" && Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
-      sourceMessageId: typeof raw.sourceMessageId === "string" ? raw.sourceMessageId : ""
+      sourceMessageId: typeof raw.sourceMessageId === "string" ? raw.sourceMessageId : "",
+      simsEmotion: (typeof raw.simsEmotion === "string" && SIMS_EMOTIONS.some((e) => e.id === raw.simsEmotion.trim().toLowerCase())) ? raw.simsEmotion.trim().toLowerCase() : "neutral"
     };
+  }
+
+  const SIMS_EMOTIONS = [
+    { id: "neutral", label: "😐 Нормальное состояние (Нейтральное)", name: "Нейтральное" },
+    { id: "happy", label: "😄 Счастливый", name: "Счастливый" },
+    { id: "very_happy", label: "😁 Очень счастливый", name: "Очень счастливый" },
+    { id: "playful", label: "😂 Игривый", name: "Игривый" },
+    { id: "flirty", label: "😍 Кокетливый", name: "Кокетливый" },
+    { id: "very_flirty", label: "🥵 Очень кокетливый", name: "Очень кокетливый" },
+    { id: "sad", label: "😢 Грустный", name: "Грустный" },
+    { id: "depressed", label: "😭 Подавленный", name: "Подавленный" },
+    { id: "angry", label: "😡 Злой", name: "Злой" },
+    { id: "furious", label: "🤬 В ярости (может привести к смерти от гнева)", name: "В ярости" },
+    { id: "tense", label: "😨 Напряжённый", name: "Напряжённый" },
+    { id: "very_tense", label: "😰 Очень напряжённый", name: "Очень напряжённый" },
+    { id: "dazed", label: "😱 Ошеломлённый", name: "Ошеломлённый" },
+    { id: "embarrassed", label: "😕 Смущённый", name: "Смущённый" },
+    { id: "very_embarrassed", label: "😳 Сильно смущённый", name: "Сильно смущённый" },
+    { id: "focused", label: "🤔 Внимательный", name: "Внимательный" },
+    { id: "very_focused", label: "🧐 Очень внимательный", name: "Очень внимательный" },
+    { id: "inspired", label: "🎨 Вдохновлённый", name: "Вдохновлённый" },
+    { id: "very_inspired", label: "✨ Очень вдохновлённый", name: "Очень вдохновлённый" },
+    { id: "confident", label: "💪 Уверенный", name: "Уверенный" },
+    { id: "very_confident", label: "😎 Очень уверенный", name: "Очень уверенный" }
+  ];
+
+  function getCharacterAvatarForEmotion(character, emotionId) {
+    if (!character) return "";
+    if (emotionId && character.emotionPhotos && character.emotionPhotos[emotionId]) {
+      return character.emotionPhotos[emotionId];
+    }
+    return character.avatar || "";
+  }
+
+  function getSpeakerDisplayAvatar(mainChar, speaker) {
+    if (!mainChar) return "";
+    if (state.view === "groupchat") {
+      const gc = activeGroupChat();
+      if (gc && speaker?.id) {
+        const char = state.characters.find((c) => c.id === speaker.id);
+        if (!char) return "";
+        const s = getGroupSpeakerState(gc, speaker.id);
+        return getCharacterAvatarForEmotion(char, s?.simsEmotion || "neutral");
+      }
+      return "";
+    }
+    if (speaker?.type === "npc") {
+      const npc = speaker.npc || { name: speaker.name, avatar: "" };
+      const s = getPersonalSpeakerState(mainChar, speaker);
+      return getCharacterAvatarForEmotion(npc, s?.simsEmotion || "neutral");
+    }
+    const s = getPersonalSpeakerState(mainChar, mainSpeakerFor(mainChar));
+    return getCharacterAvatarForEmotion(mainChar, s?.simsEmotion || "neutral");
+  }
+
+  function saveSpeakerStateFromContext(ctx, nextState) {
+    if (!ctx) return;
+    if (ctx.scope === "group") {
+      const gc = state.groupChats.find((g) => g.id === ctx.groupChatId) || activeGroupChat();
+      if (gc && ctx.characterId) {
+        saveGroupSpeakerState(gc, ctx.characterId, nextState);
+      }
+    } else {
+      const mainChar = state.characters.find((c) => c.id === ctx.characterId) || activeCharacter();
+      if (mainChar) {
+        let speaker;
+        if (ctx.speakerType === "npc") {
+          const npc =
+            findTempCharacterByRef(mainChar.id, { id: ctx.speakerId, name: ctx.speakerName }) ||
+            ctx.npc ||
+            { id: ctx.speakerId || "", name: ctx.speakerName || "НПС", avatar: "", gender: "unspecified" };
+          speaker = npcSpeakerFor(npc);
+        } else {
+          speaker = mainSpeakerFor(mainChar);
+        }
+        if (speaker) {
+          savePersonalSpeakerState(mainChar, speaker, nextState);
+        }
+      }
+    }
   }
 
   function normalizeSpeakerStatesMap(raw) {
@@ -2517,6 +2601,12 @@
     if (!s.updatedAt) return "";
     const lines = [];
     lines.push(`\n[Текущее внутреннее состояние ${speakerName || "персонажа"}]`);
+    if (s.simsEmotion && s.simsEmotion !== "neutral") {
+      const em = SIMS_EMOTIONS.find((e) => e.id === s.simsEmotion);
+      if (em) {
+        lines.push(`Эмоция (Sims 4): ${em.label}.`);
+      }
+    }
     if (s.mood) lines.push(`Настроение: ${s.mood}.`);
     lines.push(`Неуверенность: ${s.uncertainty}%.`);
     if (s.emotions.length) lines.push(`Эмоции: ${s.emotions.map((e) => `${e.name} ${e.percent}%`).join(", ")}.`);
@@ -2741,10 +2831,12 @@
 
   function speakerStateAnalysisMessages(payload) {
     const system =
-      "Ты обновляешь скрытое внутреннее состояние персонажа после его последней реплики. " +
-      "Не продолжай диалог и не оценивай пользователя. Верни только валидный JSON без Markdown. " +
-      "Формат: {\"mood\":\"...\",\"uncertainty\":0,\"emotions\":[{\"name\":\"...\",\"percent\":0}],\"sensations\":[\"...\"],\"attitude\":\"...\",\"intent\":\"...\",\"summary\":\"...\"}. " +
-      "uncertainty и percent должны быть числами от 0 до 100. Пиши значения по-русски, коротко и по ситуации.";
+      "Ты обновляешь скрытое внутреннее состояние персонажа после его последней реплики.\n" +
+      "Не продолжай диалог и не оценивай пользователя. Верни только валидный JSON без Markdown.\n" +
+      "Формат: {\"mood\":\"...\",\"uncertainty\":0,\"emotions\":[{\"name\":\"...\",\"percent\":0}],\"sensations\":[\"...\"],\"attitude\":\"...\",\"intent\":\"...\",\"summary\":\"...\",\"simsEmotion\":\"...\"}.\n" +
+      "uncertainty и percent должны быть числами от 0 до 100. Пиши значения по-русски, коротко и по ситуации.\n" +
+      "В поле simsEmotion выбери одно из строгих значений эмоции из Sims 4, наиболее подходящее персонажу:\n" +
+      "neutral (нейтральное), happy (счастливый), very_happy (очень счастливый), playful (игривый), flirty (кокетливый), very_flirty (очень кокетливый), sad (грустный), depressed (подавленный), angry (злой), furious (в ярости), tense (напряжённый), very_tense (очень напряжённый), dazed (ошеломлённый), embarrassed (смущённый), very_embarrassed (сильно смущённый), focused (внимательный), very_focused (очень внимательный), inspired (вдохновлённый), very_inspired (очень вдохновлённый), confident (уверенный), very_confident (очень уверенный).";
 
     return [
       { role: "system", content: system },
@@ -4804,7 +4896,8 @@
 
     $("#charName").textContent = ch?.name || "Персонаж";
     $("#charMeta").textContent = `${genderLabel(ch?.gender)} • стиль: ${styleById(ch?.dialogueStyle).label}`;
-    setImg($("#charAvatar"), ch?.avatar, ch?.name);
+    const dynamicAvatar = ch ? getSpeakerDisplayAvatar(ch, mainSpeakerFor(ch)) : "";
+    setImg($("#charAvatar"), dynamicAvatar || ch?.avatar, ch?.name);
     setImg($("#userAvatar"), state.profile?.avatar, state.profile?.name);
     setImg($("#userAvatarPreview"), state.profile?.avatar, state.profile?.name);
     setImg($("#topProfileAvatar"), state.profile?.avatar, state.profile?.name);
@@ -4822,11 +4915,13 @@
     if (!ch) return;
 
     // Character image
-    if (ch.avatar) {
+    const dynamicAvatar = getSpeakerDisplayAvatar(ch, mainSpeakerFor(ch));
+    const displayAvatar = dynamicAvatar || ch.avatar;
+    if (displayAvatar) {
       const img = document.createElement("img");
       img.className = "chat__rightPanel__img";
       img.alt = ch.name || "";
-      setImg(img, ch.avatar, ch.name);
+      setImg(img, displayAvatar, ch.name);
       panel.appendChild(img);
     }
 
@@ -5017,6 +5112,36 @@
     renderEmotionList($("#speakerStateEmotions"), s.emotions);
     renderStateChipList($("#speakerStateSensations"), s.sensations, "Пока нет данных");
 
+    const select = $("#speakerStateSimsEmotion");
+    if (select) {
+      // Only populate options once — don't destroy and recreate on every re-render
+      if (select.children.length === 0) {
+        for (const em of SIMS_EMOTIONS) {
+          const opt = document.createElement("option");
+          opt.value = em.id;
+          opt.textContent = em.label;
+          select.appendChild(opt);
+        }
+      }
+      // Just update the selected value
+      select.value = s.simsEmotion || "neutral";
+      select.onchange = (e) => {
+        const val = e.target.value;
+        const updatedState = { ...s, simsEmotion: val, updatedAt: nowTs() };
+        saveSpeakerStateFromContext(speakerStateModalContext, updatedState);
+        
+        // NOTE: Do NOT call refreshOpenSpeakerStateModal() here — it calls
+        // renderSpeakerStateModal() which does select.innerHTML = "" and destroys
+        // this select element before the browser can commit the new selected value.
+        // Instead, only refresh the chat panel and messages after a safe delay.
+        setTimeout(() => {
+          refreshChatStatePanel();
+          renderMessages({ preserveScroll: true });
+          renderHeader();
+        }, 100);
+      };
+    }
+
     const editBtn = $("#btnSpeakerStateEdit");
     if (editBtn) {
       editBtn.hidden = !(resolved.editCharacterId || resolved.editNpc);
@@ -5064,6 +5189,12 @@
 
   function renderChatStatePanelInto(panel, ch, opts = {}) {
     if (!panel) return;
+
+    // Guard: if a <select> inside this panel is focused (dropdown is open),
+    // skip the full rebuild to prevent the native dropdown from closing abruptly.
+    const focusedEl = document.activeElement;
+    if (focusedEl && focusedEl.tagName === "SELECT" && panel.contains(focusedEl)) return;
+
     panel.innerHTML = "";
     panel.hidden = Boolean(opts.mobile && !mobileStatePanelOpen);
     if (!ch) {
@@ -5121,6 +5252,45 @@
     empty.textContent = "Состояние появится после следующего ответа персонажа.";
     empty.hidden = stateHasVisibleData(s);
     body.appendChild(empty);
+
+    const simsSelect = document.createElement("select");
+    simsSelect.className = "field__input sims-emotion-select";
+    simsSelect.style.marginTop = "4px";
+    simsSelect.style.width = "100%";
+    simsSelect.style.padding = "6px 8px";
+    
+    for (const em of SIMS_EMOTIONS) {
+      const opt = document.createElement("option");
+      opt.value = em.id;
+      opt.textContent = em.label;
+      if ((s.simsEmotion || "neutral") === em.id) {
+        opt.selected = true;
+      }
+      simsSelect.appendChild(opt);
+    }
+    
+    simsSelect.addEventListener("change", (e) => {
+      const val = e.target.value;
+      const currentContext = {
+        scope: "personal",
+        characterId: ch.id,
+        speakerType: "main",
+        speakerId: ch.id,
+        speakerName: ch.name
+      };
+      const updatedState = { ...s, simsEmotion: val, updatedAt: nowTs() };
+      saveSpeakerStateFromContext(currentContext, updatedState);
+      
+      // NOTE: Do NOT call refreshChatStatePanel() here — it would destroy this
+      // very select element from the DOM before the browser commits the new value.
+      // Instead, only update the header portrait and messages after a safe delay.
+      setTimeout(() => {
+        renderMessages({ preserveScroll: true });
+        renderHeader();
+      }, 100);
+    });
+    
+    body.appendChild(makeSpeakerStateSection("Эмоция (Sims 4)", simsSelect));
 
     body.appendChild(makeSpeakerStateSection("Настроение", s.mood || "Пока не ясно"));
 
@@ -5378,8 +5548,11 @@
       let npcObj = null;
       if (speaker?.type === "npc") {
         npcObj = speaker.npc || { name: speaker.name, avatar: "" };
-        displayAvatar = npcObj.avatar || "";
         displayName = speaker.name;
+      }
+
+      if (m.role === "assistant") {
+        displayAvatar = getSpeakerDisplayAvatar(ch, speaker) || displayAvatar;
       }
 
       avatar.className = `avatar ${m.role === "user" ? "avatar--me" : ""}`;
@@ -5845,6 +6018,13 @@
   function fillCharacterForm() {
     const c = editingCharacter();
     if (!c) return;
+
+    // Guard: if a <select> inside the character form is focused (dropdown open),
+    // skip the full rebuild to prevent native dropdowns from closing abruptly.
+    const focusedEl = document.activeElement;
+    const charForm = $("#charForm");
+    if (focusedEl && focusedEl.tagName === "SELECT" && charForm && charForm.contains(focusedEl)) return;
+
     const dialogueStyle = normalizeDialogueStyleId(c.dialogueStyle, "");
 
     $("#charNameInput").value = c.name || "";
@@ -5865,8 +6045,41 @@
     syncCharacterCounters();
     renderCharacterHeroPreview({ ...c, dialogueStyle });
     renderChatSelectInSettings(c);
+    fillEmotionPhotoUI();
 
     renderCharacterList();
+  }
+
+  function fillEmotionPhotoUI() {
+    const c = editingCharacter();
+    const select = $("#charEmotionPhotoSelect");
+    const preview = $("#charEmotionPhotoPreview");
+    const note = $("#charEmotionPhotoNote");
+    const deleteBtn = $("#btnDeleteEmotionPhoto");
+    if (!c || !select || !preview || !note || !deleteBtn) return;
+
+    if (select.children.length === 0) {
+      for (const em of SIMS_EMOTIONS) {
+        const opt = document.createElement("option");
+        opt.value = em.id;
+        opt.textContent = em.label;
+        select.appendChild(opt);
+      }
+    }
+
+    const selectedEmotionId = select.value || "neutral";
+    const photos = c.emotionPhotos || {};
+    const imgUrl = photos[selectedEmotionId] || c.avatar || "";
+
+    setImg(preview, imgUrl, c.name);
+
+    if (photos[selectedEmotionId]) {
+      note.textContent = "Фото задано.";
+      deleteBtn.style.display = "";
+    } else {
+      note.textContent = "Фото не задано (используется стандартный аватар).";
+      deleteBtn.style.display = "none";
+    }
   }
 
   function renderChatSelectInSettings(c) {
@@ -7158,8 +7371,11 @@
     let npcObj = null;
     if (speaker?.type === "npc") {
       npcObj = speaker.npc || { name: speaker.name, avatar: "" };
-      displayAvatar = npcObj.avatar || "";
       displayName = speaker.name;
+    }
+
+    if (m.role === "assistant") {
+      displayAvatar = getSpeakerDisplayAvatar(ch, speaker) || displayAvatar;
     }
 
     if (m.npcDeleted) row.classList.add("msg--npc-deleted");
@@ -9778,6 +9994,7 @@
 
     bindFileTrigger("#btnUploadAvatar", "#charAvatarFile");
     bindFileTrigger("#btnUploadBackground", "#charBgFile");
+    bindFileTrigger("#btnUploadEmotionPhoto", "#charEmotionPhotoFile");
 
     const btnAddTag = $("#btnAddTag");
     const tagInput = $("#charTagInput");
@@ -9959,6 +10176,63 @@
       input.addEventListener("input", syncCharacterCounters);
       input.addEventListener("change", syncCharacterCounters);
     });
+
+    const emotionPhotoSelect = $("#charEmotionPhotoSelect");
+    if (emotionPhotoSelect) {
+      emotionPhotoSelect.addEventListener("change", () => {
+        fillEmotionPhotoUI();
+      });
+    }
+
+    const emotionPhotoFile = $("#charEmotionPhotoFile");
+    if (emotionPhotoFile) {
+      emotionPhotoFile.addEventListener("change", async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        try {
+          const url = await fileToDataUrl(file);
+          const c = editingCharacter();
+          if (c) {
+            const next = { ...c };
+            next.emotionPhotos = { ...next.emotionPhotos };
+            const selectedEmotionId = $("#charEmotionPhotoSelect").value || "neutral";
+            next.emotionPhotos[selectedEmotionId] = url;
+            next.updatedAt = nowTs();
+            upsertCharacter(next);
+            fillCharacterForm();
+            if (state.selectedCharacterId === next.id) {
+              renderHeader();
+              renderMessages({ preserveScroll: true });
+            }
+            refreshChatsView();
+          }
+        } catch (err) {
+          $("#charFormNote").textContent = String(err?.message || err);
+        } finally {
+          e.target.value = "";
+        }
+      });
+    }
+
+    const btnDeleteEmotionPhoto = $("#btnDeleteEmotionPhoto");
+    if (btnDeleteEmotionPhoto) {
+      btnDeleteEmotionPhoto.addEventListener("click", () => {
+        const c = editingCharacter();
+        if (!c) return;
+        const selectedEmotionId = $("#charEmotionPhotoSelect").value || "neutral";
+        const next = { ...c };
+        next.emotionPhotos = { ...next.emotionPhotos };
+        delete next.emotionPhotos[selectedEmotionId];
+        next.updatedAt = nowTs();
+        upsertCharacter(next);
+        fillCharacterForm();
+        if (state.selectedCharacterId === next.id) {
+          renderHeader();
+          renderMessages({ preserveScroll: true });
+        }
+        refreshChatsView();
+      });
+    }
 
     $("#charAvatarFile").addEventListener("change", async (e) => {
       const file = e.target.files && e.target.files[0];
@@ -10579,8 +10853,22 @@
           changed = true;
         } else {
           const local = state.characters[idx];
-          if ((norm.updatedAt || 0) > (local.updatedAt || 0)) {
+          if ((norm.updatedAt || 0) > (local.updatedAt || 0) || JSON.stringify(norm.emotionPhotos || {}) !== JSON.stringify(local.emotionPhotos || {})) {
             state.characters[idx] = norm;
+            changed = true;
+          }
+        }
+      }
+
+      // Automatically remove default Alice seed if we have server characters and no active messages/changes in Alice chat
+      if (serverChars.length > 0) {
+        const aliceIdx = state.characters.findIndex((c) => c.name === "Алиса" && !serverIds.has(c.id));
+        if (aliceIdx >= 0) {
+          const aliceId = state.characters[aliceIdx].id;
+          const aliceChat = activeChatFor(aliceId);
+          const hasMessages = aliceChat && Array.isArray(aliceChat.messages) && aliceChat.messages.filter(m => m && !m.pending && (m.role === 'user' || m.role === 'assistant')).length > 1;
+          if (!hasMessages) {
+            state.characters.splice(aliceIdx, 1);
             changed = true;
           }
         }
@@ -10662,7 +10950,7 @@
     await syncCharactersFromServer();
     await syncUserDataFromServer();
     userDataSyncReady = true;
-    clearServerBackedLocalStorage();
+    // clearServerBackedLocalStorage();
     startLiveServerPush();
     ensureInitialMessage();
     renderHeader();
