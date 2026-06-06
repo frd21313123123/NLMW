@@ -57,7 +57,7 @@ function deriveOpenAiBaseUrl(baseUrl) {
 const LMSTUDIO_REST_BASE_URL = deriveRestBaseUrl(LMSTUDIO_BASE_URL);
 const LMSTUDIO_OPENAI_BASE_URL = deriveOpenAiBaseUrl(LMSTUDIO_BASE_URL);
 
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "150mb" }));
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -2248,7 +2248,8 @@ const CORE_CHARACTER_KEYS = new Set([
   "createdAt",
   "updatedAt",
   "schemaVersion",
-  "legacy"
+  "legacy",
+  "emotionPhotos"
 ]);
 
 const LEGACY_CHARACTER_KEYS = [
@@ -2330,7 +2331,8 @@ function migrateCharacterRecord(raw) {
     createdAt: Number(raw.createdAt) || Date.now(),
     updatedAt: Number(raw.updatedAt) || Number(raw.createdAt) || Date.now(),
     schemaVersion: 2,
-    legacy: collectLegacyFields(raw)
+    legacy: collectLegacyFields(raw),
+    emotionPhotos: isPlainObject(raw.emotionPhotos) ? raw.emotionPhotos : (raw.legacy && isPlainObject(raw.legacy.emotionPhotos) ? raw.legacy.emotionPhotos : {})
   };
 
   migrated.visibility = normalizeString(raw.visibility).trim() || "public";
