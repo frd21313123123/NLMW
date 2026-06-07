@@ -2830,6 +2830,29 @@ body {
   display: none;
 }
 
+.chat__resizer-right {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: calc(var(--chat-right-width, 316px) - 4px);
+  width: 8px;
+  cursor: col-resize;
+  z-index: 100;
+  background: transparent;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  transition: background-color 0.2s, border-left-color 0.2s;
+}
+.chat__resizer-right:hover,
+.chat__resizer-right.is-dragging {
+  background-color: rgba(246, 176, 30, 0.25);
+  border-left-color: var(--accent);
+}
+@media (max-width: 1279px) {
+  .chat__resizer-right {
+    display: none;
+  }
+}
+
 .chat__rightPanel__img {
   width: 100%;
   height: 100%;
@@ -3544,9 +3567,10 @@ body {
   /* Chat panel: center + right panel */
   .chat {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 316px;
+    grid-template-columns: minmax(0, 1fr) var(--chat-right-width, 316px);
     grid-template-rows: 1fr;
     background: #111112 !important;
+    position: relative;
   }
 
   .chat__center {
@@ -3623,7 +3647,7 @@ body {
 
   @media (min-width: 1280px) {
     #viewChat .chat {
-      grid-template-columns: 304px minmax(0, 1fr) 316px;
+      grid-template-columns: 304px minmax(0, 1fr) var(--chat-right-width, 316px);
     }
 
     #viewChat .chat__statePanel {
@@ -5230,6 +5254,91 @@ body {
 /* Danger menu item */
 .messengerDropdown__item--danger {
   color: var(--danger);
+}
+
+/* GM State Initialization Panel */
+.initGamePanel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 32px auto;
+  padding: 24px;
+  max-width: 440px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: fadeIn 300ms ease both;
+}
+
+.initGamePanel__title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: -0.01em;
+}
+
+.initGamePanel__desc {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+
+.initGamePanel__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 12px;
+  border: none;
+  cursor: pointer;
+  background: var(--accent);
+  color: #000;
+  transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
+  box-shadow: 0 4px 16px rgba(246, 176, 30, 0.25);
+}
+
+.initGamePanel__btn:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(246, 176, 30, 0.35);
+}
+
+.initGamePanel__btn:active {
+  transform: translateY(1px);
+}
+
+.initGamePanel__btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.initGamePanel__spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
