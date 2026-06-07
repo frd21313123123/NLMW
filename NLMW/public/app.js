@@ -1722,7 +1722,7 @@
       summary: "",
       updatedAt: 0,
       sourceMessageId: "",
-      simsEmotion: "neutral"
+      activeEmotion: "neutral"
     };
   }
 
@@ -1783,11 +1783,14 @@
       summary: clampText(cleanOneLineText(raw.summary || raw.note || raw.description), 220),
       updatedAt: typeof raw.updatedAt === "number" && Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
       sourceMessageId: typeof raw.sourceMessageId === "string" ? raw.sourceMessageId : "",
-      simsEmotion: (typeof raw.simsEmotion === "string" && SIMS_EMOTIONS.some((e) => e.id === raw.simsEmotion.trim().toLowerCase())) ? raw.simsEmotion.trim().toLowerCase() : "neutral"
+      activeEmotion: (() => {
+        const rawEmotion = raw.activeEmotion ?? raw.simsEmotion;
+        return (typeof rawEmotion === "string" && CHARACTER_EMOTIONS.some((e) => e.id === rawEmotion.trim().toLowerCase())) ? rawEmotion.trim().toLowerCase() : "neutral";
+      })()
     };
   }
 
-  const SIMS_EMOTIONS = [
+  const CHARACTER_EMOTIONS = [
     { id: "neutral", label: "😐 Нормальное состояние (Нейтральное)", name: "Нейтральное" },
     { id: "happy", label: "😄 Счастливый", name: "Счастливый" },
     { id: "very_happy", label: "😁 Очень счастливый", name: "Очень счастливый" },
@@ -1827,17 +1830,17 @@
         const char = state.characters.find((c) => c.id === speaker.id);
         if (!char) return "";
         const s = getGroupSpeakerState(gc, speaker.id);
-        return getCharacterAvatarForEmotion(char, s?.simsEmotion || "neutral");
+        return getCharacterAvatarForEmotion(char, s?.activeEmotion || "neutral");
       }
       return "";
     }
     if (speaker?.type === "npc") {
       const npc = speaker.npc || { name: speaker.name, avatar: "" };
       const s = getPersonalSpeakerState(mainChar, speaker);
-      return getCharacterAvatarForEmotion(npc, s?.simsEmotion || "neutral");
+      return getCharacterAvatarForEmotion(npc, s?.activeEmotion || "neutral");
     }
     const s = getPersonalSpeakerState(mainChar, mainSpeakerFor(mainChar));
-    return getCharacterAvatarForEmotion(mainChar, s?.simsEmotion || "neutral");
+    return getCharacterAvatarForEmotion(mainChar, s?.activeEmotion || "neutral");
   }
 
   function saveSpeakerStateFromContext(ctx, nextState) {
@@ -2601,10 +2604,10 @@
     if (!s.updatedAt) return "";
     const lines = [];
     lines.push(`\n[Текущее внутреннее состояние ${speakerName || "персонажа"}]`);
-    if (s.simsEmotion && s.simsEmotion !== "neutral") {
-      const em = SIMS_EMOTIONS.find((e) => e.id === s.simsEmotion);
+    if (s.activeEmotion && s.activeEmotion !== "neutral") {
+      const em = CHARACTER_EMOTIONS.find((e) => e.id === s.activeEmotion);
       if (em) {
-        lines.push(`Эмоция (Sims 4): ${em.label}.`);
+        lines.push(`Эмоция: ${em.label}.`);
       }
     }
     if (s.mood) lines.push(`Настроение: ${s.mood}.`);
@@ -2833,9 +2836,9 @@
     const system =
       "Ты обновляешь скрытое внутреннее состояние персонажа после его последней реплики.\n" +
       "Не продолжай диалог и не оценивай пользователя. Верни только валидный JSON без Markdown.\n" +
-      "Формат: {\"mood\":\"...\",\"uncertainty\":0,\"emotions\":[{\"name\":\"...\",\"percent\":0}],\"sensations\":[\"...\"],\"attitude\":\"...\",\"intent\":\"...\",\"summary\":\"...\",\"simsEmotion\":\"...\"}.\n" +
+      "Формат: {\"mood\":\"...\",\"uncertainty\":0,\"emotions\":[{\"name\":\"...\",\"percent\":0}],\"sensations\":[\"...\"],\"attitude\":\"...\",\"intent\":\"...\",\"summary\":\"...\",\"activeEmotion\":\"...\"}.\n" +
       "uncertainty и percent должны быть числами от 0 до 100. Пиши значения по-русски, коротко и по ситуации.\n" +
-      "В поле simsEmotion выбери одно из строгих значений эмоции из Sims 4, наиболее подходящее персонажу:\n" +
+      "В поле activeEmotion выбери одно из строгих значений эмоции, наиболее подходящее персонажу:\n" +
       "neutral (нейтральное), happy (счастливый), very_happy (очень счастливый), playful (игривый), flirty (кокетливый), very_flirty (очень кокетливый), sad (грустный), depressed (подавленный), angry (злой), furious (в ярости), tense (напряжённый), very_tense (очень напряжённый), dazed (ошеломлённый), embarrassed (смущённый), very_embarrassed (сильно смущённый), focused (внимательный), very_focused (очень внимательный), inspired (вдохновлённый), very_inspired (очень вдохновлённый), confident (уверенный), very_confident (очень уверенный).";
 
     return [
@@ -2885,6 +2888,52 @@
       refreshChatStatePanel();
     } catch (err) {
       console.warn("[speaker state]", err);
+    }
+  }
+
+  async function initPersonalSpeakerStateFromGM(ch) {
+    if (!ch) return;
+    const btn = $("#btnInitGMState");
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<span class="initGamePanel__spinner"></span> Анализ состояния...`;
+    }
+
+    try {
+      const speaker = mainSpeakerFor(ch);
+      const greeting = (ch.initialMessage || "").trim();
+      const content = greeting || `Привет. Я ${ch.name}. О чем поговорим?`;
+
+      const nextState = await analyzeSpeakerState({
+        speakerName: ch.name,
+        speakerGender: ch.gender || "unspecified",
+        previousState: defaultSpeakerState(),
+        recentScene: [],
+        latestReply: content
+      });
+
+      const history = chatHistoryFor(ch.id);
+      const firstMsg = history.find((m) => m && m.role === "assistant");
+      const sourceMessageId = firstMsg ? firstMsg.id : "";
+
+      savePersonalSpeakerState(ch, speaker, {
+        ...nextState,
+        updatedAt: nowTs(),
+        sourceMessageId
+      });
+
+      setStatus("Состояние персонажа для начала игры задано!");
+
+      refreshOpenSpeakerStateModal();
+      refreshChatStatePanel();
+      renderMessages();
+    } catch (err) {
+      console.error("[init speaker state]", err);
+      setStatus("Не удалось задать состояние: " + String(err.message || err), false);
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "🎲 Задать состояние для начала игры";
+      }
     }
   }
 
@@ -5112,11 +5161,11 @@
     renderEmotionList($("#speakerStateEmotions"), s.emotions);
     renderStateChipList($("#speakerStateSensations"), s.sensations, "Пока нет данных");
 
-    const select = $("#speakerStateSimsEmotion");
+    const select = $("#speakerStateEmotion");
     if (select) {
       // Only populate options once — don't destroy and recreate on every re-render
       if (select.children.length === 0) {
-        for (const em of SIMS_EMOTIONS) {
+        for (const em of CHARACTER_EMOTIONS) {
           const opt = document.createElement("option");
           opt.value = em.id;
           opt.textContent = em.label;
@@ -5124,10 +5173,10 @@
         }
       }
       // Just update the selected value
-      select.value = s.simsEmotion || "neutral";
+      select.value = s.activeEmotion || "neutral";
       select.onchange = (e) => {
         const val = e.target.value;
-        const updatedState = { ...s, simsEmotion: val, updatedAt: nowTs() };
+        const updatedState = { ...s, activeEmotion: val, updatedAt: nowTs() };
         saveSpeakerStateFromContext(speakerStateModalContext, updatedState);
         
         // NOTE: Do NOT call refreshOpenSpeakerStateModal() here — it calls
@@ -5253,23 +5302,23 @@
     empty.hidden = stateHasVisibleData(s);
     body.appendChild(empty);
 
-    const simsSelect = document.createElement("select");
-    simsSelect.className = "field__input sims-emotion-select";
-    simsSelect.style.marginTop = "4px";
-    simsSelect.style.width = "100%";
-    simsSelect.style.padding = "6px 8px";
+    const emotionSelect = document.createElement("select");
+    emotionSelect.className = "field__input character-emotion-select";
+    emotionSelect.style.marginTop = "4px";
+    emotionSelect.style.width = "100%";
+    emotionSelect.style.padding = "6px 8px";
     
-    for (const em of SIMS_EMOTIONS) {
+    for (const em of CHARACTER_EMOTIONS) {
       const opt = document.createElement("option");
       opt.value = em.id;
       opt.textContent = em.label;
-      if ((s.simsEmotion || "neutral") === em.id) {
+      if ((s.activeEmotion || "neutral") === em.id) {
         opt.selected = true;
       }
-      simsSelect.appendChild(opt);
+      emotionSelect.appendChild(opt);
     }
     
-    simsSelect.addEventListener("change", (e) => {
+    emotionSelect.addEventListener("change", (e) => {
       const val = e.target.value;
       const currentContext = {
         scope: "personal",
@@ -5278,7 +5327,7 @@
         speakerId: ch.id,
         speakerName: ch.name
       };
-      const updatedState = { ...s, simsEmotion: val, updatedAt: nowTs() };
+      const updatedState = { ...s, activeEmotion: val, updatedAt: nowTs() };
       saveSpeakerStateFromContext(currentContext, updatedState);
       
       // NOTE: Do NOT call refreshChatStatePanel() here — it would destroy this
@@ -5290,7 +5339,7 @@
       }, 100);
     });
     
-    body.appendChild(makeSpeakerStateSection("Эмоция (Sims 4)", simsSelect));
+    body.appendChild(makeSpeakerStateSection("Эмоция", emotionSelect));
 
     body.appendChild(makeSpeakerStateSection("Настроение", s.mood || "Пока не ясно"));
 
@@ -5465,11 +5514,13 @@
 
     // OPTIMIZATION: Check if message elements match history exactly to avoid rebuilding the DOM
     const msgElements = Array.from(list.children).filter((el) => el.dataset.msgId);
+    const chat = activeChatFor(ch.id);
     const renderSignature = JSON.stringify([
       state.profile?.avatar,
       state.profile?.name,
       ch.avatar,
-      ch.name
+      ch.name,
+      chat?.speakerStates
     ]);
 
     if (list._renderSignature === renderSignature && msgElements.length === history.length) {
@@ -5760,6 +5811,37 @@
       }
 
       list.appendChild(row);
+    }
+
+    if (ch) {
+      const hasUserMsg = history.some((m) => m && m.role === "user");
+      const mainSpeaker = mainSpeakerFor(ch);
+      const mainState = getPersonalSpeakerState(ch, mainSpeaker);
+      if (!hasUserMsg && (!mainState || !mainState.updatedAt)) {
+        const initPanel = document.createElement("div");
+        initPanel.className = "initGamePanel";
+
+        const title = document.createElement("div");
+        title.className = "initGamePanel__title";
+        title.textContent = "🎲 Начало игры";
+
+        const desc = document.createElement("div");
+        desc.className = "initGamePanel__desc";
+        desc.textContent = `Вы ещё не начали общение с ${ch.name}. Гейм-мастер может проанализировать приветствие персонажа и настроить его начальное состояние.`;
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn btn--accent initGamePanel__btn";
+        btn.id = "btnInitGMState";
+        btn.textContent = "Задать состояние для начала игры";
+
+        btn.addEventListener("click", () => initPersonalSpeakerStateFromGM(ch));
+
+        initPanel.appendChild(title);
+        initPanel.appendChild(desc);
+        initPanel.appendChild(btn);
+        list.appendChild(initPanel);
+      }
     }
 
     if (preserveScroll) restoreScrollTop(list, scrollTop);
@@ -6059,7 +6141,7 @@
     if (!c || !select || !preview || !note || !deleteBtn) return;
 
     if (select.children.length === 0) {
-      for (const em of SIMS_EMOTIONS) {
+      for (const em of CHARACTER_EMOTIONS) {
         const opt = document.createElement("option");
         opt.value = em.id;
         opt.textContent = em.label;
@@ -10684,9 +10766,11 @@
       if (state.generating) return;
       const text = String(input.value || "").trim();
       if (!text) return;
+      input.value = "";
+      autoGrowTextarea(input);
       const sent = await sendMessage(text);
-      if (sent) {
-        input.value = "";
+      if (!sent) {
+        input.value = text;
         autoGrowTextarea(input);
       }
     });
@@ -10787,9 +10871,11 @@
         if (state.generating) return;
         const text = String(groupInput.value || "").trim();
         if (!text) return;
+        groupInput.value = "";
+        autoGrowTextarea(groupInput);
         const sent = await sendGroupMessage(text);
-        if (sent) {
-          groupInput.value = "";
+        if (!sent) {
+          groupInput.value = text;
           autoGrowTextarea(groupInput);
         }
       });
@@ -10937,10 +11023,75 @@
     };
   }
 
+  function initRightPanelResizer() {
+    const resizer = document.getElementById("chatRightResizer");
+    const chatPanel = document.getElementById("chatPanel");
+    if (!resizer || !chatPanel) return;
+
+    // Load saved width
+    const savedWidth = localStorage.getItem("chat-right-width");
+    if (savedWidth) {
+      chatPanel.style.setProperty("--chat-right-width", savedWidth + "px");
+    }
+
+    let isDragging = false;
+
+    resizer.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      isDragging = true;
+      resizer.classList.add("is-dragging");
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    });
+
+    resizer.addEventListener("touchstart", (e) => {
+      isDragging = true;
+      resizer.classList.add("is-dragging");
+      document.body.style.userSelect = "none";
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      if (!isDragging) return;
+      const containerRect = chatPanel.getBoundingClientRect();
+      const newWidth = containerRect.right - e.clientX;
+      const minWidth = 200;
+      const maxWidth = containerRect.width * 0.6;
+      const width = Math.max(minWidth, Math.min(maxWidth, newWidth));
+      chatPanel.style.setProperty("--chat-right-width", width + "px");
+    });
+
+    window.addEventListener("touchmove", (e) => {
+      if (!isDragging || e.touches.length === 0) return;
+      const clientX = e.touches[0].clientX;
+      const containerRect = chatPanel.getBoundingClientRect();
+      const newWidth = containerRect.right - clientX;
+      const minWidth = 200;
+      const maxWidth = containerRect.width * 0.6;
+      const width = Math.max(minWidth, Math.min(maxWidth, newWidth));
+      chatPanel.style.setProperty("--chat-right-width", width + "px");
+    });
+
+    const handleMouseUp = () => {
+      if (!isDragging) return;
+      isDragging = false;
+      resizer.classList.remove("is-dragging");
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      const currentWidth = chatPanel.style.getPropertyValue("--chat-right-width");
+      if (currentWidth) {
+        localStorage.setItem("chat-right-width", parseFloat(currentWidth).toString());
+      }
+    };
+
+    window.addEventListener("mouseup", handleMouseUp);
+    window.addEventListener("touchend", handleMouseUp);
+  }
+
   async function bootstrap() {
     ensureSeed();
     loadGroupChats();
     bootstrapCopyModal();
+    initRightPanelResizer();
     wireUI();
     window.addEventListener("pagehide", flushUserDataBeforeUnload);
     document.addEventListener("visibilitychange", () => {
